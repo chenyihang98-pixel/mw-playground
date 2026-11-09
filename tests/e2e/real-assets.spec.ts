@@ -180,6 +180,8 @@ if (!assetDir) {
         await page.getByRole('button', { name: '向右转 90°' }).click();
         await expect.poll(async () => (await read(page)).import.card?.quarterTurns).toBe(3);
         await page.getByRole('button', { name: '加入为新人物' }).click();
+        // P6：名册是顶栏“名册”打开的主面板
+        await page.getByRole('button', { name: '名册', exact: true }).click();
         await page.getByRole('combobox', { name: `${XINGXUAN} 的分工` }).selectOption('guard');
         await expect.poll(async () => (await read(page)).roster.saving, { timeout: 30_000 }).toBe(false);
         const before = (await read(page)).roster.entries;
@@ -214,6 +216,37 @@ if (!assetDir) {
         expect(after.game.guards).toHaveLength(1);
         expect(after.instances).toBe(2);
         await page.screenshot({ path: testInfo.outputPath('real-roster-restored.png') });
+
+        // P6：两种窗口大小下各截两张：名册里 soldier 和 xingxuan 的卡片（缩略图画好以后），soldier 当主角在关卡里
+        // （xingxuan 换下晨光草地的守卫）
+        for (const [i, size] of [
+          { width: 1280, height: 720 },
+          { width: 1920, height: 1080 },
+        ].entries()) {
+          const tag = `${String(size.width)}x${String(size.height)}`;
+          await page.setViewportSize(size);
+          if (i > 0) {
+            await page.goto('/?level=test-b');
+            await ready();
+          }
+          await page.getByRole('button', { name: '名册', exact: true }).click();
+          await expect.poll(async () => (await read(page)).ui.thumbnails.rendered, { timeout: 60_000 }).toBeGreaterThanOrEqual(2);
+          await expect(page.locator('#roster-list .person-thumb img:not([hidden])')).toHaveCount(2);
+          await expect(page.getByRole('textbox', { name: `${SOLDIER} 的显示名` })).toHaveValue(SOLDIER);
+          await expect(page.getByRole('textbox', { name: `${XINGXUAN} 的显示名` })).toHaveValue(XINGXUAN);
+          await page.screenshot({ path: testInfo.outputPath(`p6-real-${tag}-roster.png`) });
+          // 主角在关卡里：换到“晨光草地”（守卫在远处巡逻，不挡镜头）
+          await page.goto('/?level=gen-1');
+          await ready();
+          await page.getByRole('button', { name: '开始', exact: true }).click();
+          await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
+          await page.keyboard.down('KeyW');
+          await page.waitForTimeout(700);
+          await page.keyboard.up('KeyW');
+          await page.waitForTimeout(400);
+          expect((await read(page)).player).toMatchObject({ model: 'imported', personId: soldierKey });
+          await page.screenshot({ path: testInfo.outputPath(`p6-real-${tag}-soldier.png`) });
+        }
         expect(consoleErrors).toEqual([]);
       });
     }

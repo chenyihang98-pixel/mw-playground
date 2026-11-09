@@ -55,6 +55,12 @@ async function chooseFile(page: Page, name: string) {
   await expect.poll(async () => (await read(page)).import.busy).toBe(false);
 }
 
+/** 打开名册（P6：名册是顶栏“名册”打开的主面板）。 */
+async function openRoster(page: Page) {
+  await page.getByRole('button', { name: '名册', exact: true }).click();
+  await expect.poll(async () => (await read(page)).ui.panel).toBe('roster');
+}
+
 /** 等名册写完（刷新页面前）。 */
 async function settled(page: Page) {
   await expect.poll(async () => (await read(page)).roster.saving).toBe(false);
@@ -103,15 +109,17 @@ test('设为主角、设为守卫，刷新后名册和分工都还在；在测�
   await chooseFile(page, 'static-mesh.glb');
   await page.getByRole('button', { name: '加入为新人物' }).click();
   await expect.poll(async () => (await read(page)).roster.entries.length).toBe(2);
-  await page.getByRole('combobox', { name: 'static-mesh.glb 的分工' }).selectOption('guard');
-  await expect.poll(async () => (await read(page)).roster.entries[1]?.role).toBe('guard');
   // 同一个文件再加入一次：不新增，提示“已在名册里”，名册里标出那一项
+  // （P6：同时只显示一个主面板，先在卡片上点，再打开名册设分工）
   await page.getByRole('button', { name: '已在名册里' }).click();
   await expect.poll(async () => (await read(page)).roster.highlight).not.toBeNull();
   const marked = await read(page);
   expect(marked.roster.entries).toHaveLength(2);
   expect(marked.roster.highlight).toBe(keyOf(marked, 'static-mesh.glb'));
   expect(marked.roster.notices).toContain('“static-mesh.glb”已在名册里');
+  await openRoster(page);
+  await page.getByRole('combobox', { name: 'static-mesh.glb 的分工' }).selectOption('guard');
+  await expect.poll(async () => (await read(page)).roster.entries[1]?.role).toBe('guard');
   await settled(page);
   const before = await read(page);
   const hero = keyOf(before, 'skinned-humanoid.glb');
@@ -248,16 +256,21 @@ test('同伴：在测试小关 A 里移动时跟随主角；结算不受同伴�
   await open(page, '/?level=test-a');
   await chooseFile(page, 'skinned-humanoid.glb');
   await page.getByRole('button', { name: '加入为新人物' }).click();
+  await openRoster(page);
   await page.getByRole('combobox', { name: 'skinned-humanoid.glb 的分工' }).selectOption('companion');
   await expect.poll(async () => (await read(page)).game.companions.length).toBe(1);
-  await page.getByRole('button', { name: '关闭' }).click();
+  // 关掉名册，导入卡片回来，再关掉卡片
+  await page.getByRole('button', { name: '关闭名册' }).click();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
   const ready = await read(page);
   expect(ready.cast.companions).toEqual([{ personId: keyOf(ready, 'skinned-humanoid.glb'), model: 'imported' }]);
   expect(ready.player.model).toBe('default');
   const start = ready.game.companions[0];
   if (!start) throw new Error('没有同伴');
-  // 开局在主角身后
-  expect(start.z).toBeCloseTo(ready.game.player.z - SPEC.companion.followDistance, 5);
+  // 开局在主角的左后方（P6：同伴 0 在左后方；测试小关 A 的主角面向 +Z，左边是 +X）
+  const offset = SPEC.companion.follow[0];
+  expect(start.x).toBeCloseTo(ready.game.player.x - offset.right, 5);
+  expect(start.z).toBeCloseTo(ready.game.player.z - offset.back, 5);
 
   await page.getByRole('button', { name: '开始' }).click();
   await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
@@ -274,7 +287,7 @@ test('同伴：在测试小关 A 里移动时跟随主角；结算不受同伴�
   const followed = await read(page);
   const c = followed.game.companions[0];
   expect(followed.game.phase).toBe('playing');
-  expect(Math.hypot((c?.x ?? 0) - followed.game.player.x, (c?.z ?? 0) - followed.game.player.z)).toBeLessThan(SPEC.companion.followDistance + SPEC.companion.resumeRadius);
+  expect(Math.hypot((c?.x ?? 0) - followed.game.player.x, (c?.z ?? 0) - followed.game.player.z)).toBeLessThan(Math.hypot(offset.back, offset.right) + SPEC.companion.resumeRadius);
   await page.screenshot({ path: testInfo.outputPath('companion-following.png') });
 
   await page.keyboard.down('KeyW');
@@ -295,6 +308,7 @@ test('恢复默认主角；删除主角后恢复默认主角，实例和名册�
   expect((await read(page)).instances).toBe(1);
 
   // 恢复默认主角：原来的主角改为不出场
+  await openRoster(page);
   await page.getByRole('button', { name: '恢复默认主角' }).click();
   await expect.poll(async () => (await read(page)).player.model).toBe('default');
   expect((await read(page)).roster.entries[0]?.role).toBe('none');

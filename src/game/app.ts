@@ -1,7 +1,10 @@
 // 把模拟、渲染、输入、HUD 接在一起。模拟按固定步长推进（advance），渲染层每帧只读最新状态。
 // P5 起可以在页面里换关卡（内置、随机、已保存）：换关卡时释放旧的关卡视图和出场实例，按新的布局、规则和视觉预设重建。
+// P6：开始界面、顶栏、主面板（同时只显示一个，见 ui/panels.ts）、音效。界面只读游戏状态，不改玩法规则。
 
-import type { GameAppSnapshot, OverlayKind } from './appTypes';
+import { Box3, Vector3, type Object3D } from 'three';
+import type { GameAppSnapshot, OverlayKind, ScreenRect } from './appTypes';
+import { SoundBoard } from './audio/sound';
 import { Controls } from './input/controls';
 import { builtinEntries, builtinPackage, fallbackPackage } from './levels/catalog';
 import type { LevelPackage } from './levels/package';
@@ -24,6 +27,7 @@ import {
   type Phase,
 } from './sim';
 import { Hud, type LevelIntro } from './ui/hud';
+import { estimateDifficulty, sourceBadge } from './ui/levelInfo';
 import { LevelSelectPanel } from './ui/levelSelect';
 import type { SceneApp } from '../scene/createScene';
 import { InstanceRegistry, type ImportedAsset } from '../import/asset';
@@ -34,11 +38,19 @@ import { CastDirector } from '../roster/director';
 import { IndexedDbRosterStore } from '../roster/idbStore';
 import { Roster } from '../roster/roster';
 import { RosterPanel } from '../roster/ui/rosterPanel';
+import { ThumbnailRenderer } from '../roster/ui/thumbnails';
+import { PanelManager } from '../ui/panels';
+import { HomeScreen, TopBar } from '../ui/shell';
 
 export type { GameAppSnapshot } from './appTypes';
 
 export interface GameApp {
   snapshot(): GameAppSnapshot;
+}
+
+export interface GameAppOptions {
+  /** 先显示开始界面（没有 ?level= 时）；为 false 时直接进入这一关的开始面板（开发和测试用的 ?level=）。 */
+  readonly home: boolean;
 }
 
 function overlayFor(phase: Phase): OverlayKind | null {
@@ -63,14 +75,43 @@ function randomSeed(): string {
   return [...bytes].map((b) => b.toString(16).padStart(8, '0')).join('');
 }
 
-export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTMLElement): GameApp {
+/** 屏幕上的包围框：物体的世界包围盒的 8 个角投影到画面上（CSS 像素）。 */
+function screenRectOf(object: Object3D, scene: SceneApp, box: Box3, corner: Vector3): { rect: ScreenRect; depth: number } | null {
+  box.setFromObject(object);
+  if (box.isEmpty()) return null;
+  const canvas = scene.renderer.domElement;
+  const w = canvas.clientWidth;
+  const h = canvas.clientHeight;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < 8; i++) {
+    corner.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).project(scene.camera);
+    const x = ((corner.x + 1) / 2) * w;
+    const y = ((1 - corner.y) / 2) * h;
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+  const depth = box.getCenter(corner).distanceTo(scene.camera.position);
+  return { rect: { x: minX, y: minY, width: maxX - minX, height: maxY - minY }, depth };
+}
+
+export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTMLElement, options: GameAppOptions = { home: false }): GameApp {
   let current: LevelPackage = initial;
   let state: GameState = createInitialState(initial.layout, [], initial.rules);
   let accumulator = 0;
   let renderTime = 0;
+  /** 处在开始界面这一层（P6）：开始界面本身，或者从开始界面打开的面板。 */
+  let homeMode = options.home;
 
+  const sound = new SoundBoard();
+  const panels = new PanelManager();
   const environment = new Environment(scene.scene);
   environment.apply(initial.visual);
+  environment.setLevelSize(initial.layout.size.width, initial.layout.size.depth);
   let levelView = new LevelView(scene.scene, state, initial.visual.theme);
   const player = new CharacterView('player', PLAYER_PALETTE);
   scene.scene.add(player.root);
@@ -84,6 +125,9 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
       hud.showOverlay(overlayFor(state.phase), state);
       if (state.phase === 'playing') controls.engage();
       else controls.release();
+      if (state.phase === 'won') sound.play('win');
+      if (state.phase === 'lost') sound.play('lose');
+      syncLayout();
     }
   };
 
@@ -98,6 +142,15 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
       const fresh = restartGame(state);
       cameraRig.reset(fresh.level.spawn.yaw, fresh.player.position);
       setState(startGame(fresh));
+    },
+    onHome: () => {
+      // 回到开始界面：这一关重置到开局（和“重开”一样），停在开始面板，开始界面盖在上面
+      homeMode = true;
+      const fresh = restartGame(state);
+      cameraRig.reset(fresh.level.spawn.yaw, fresh.player.position);
+      accumulator = 0;
+      setState(fresh);
+      syncLayout();
     },
   });
 
@@ -122,6 +175,12 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
 
   const importPanel = new ImportPanel(uiRoot, {
     isPlaying: () => state.phase === 'playing',
+    cardOpened: () => {
+      panels.open('import');
+    },
+    cardClosed: () => {
+      panels.close('import');
+    },
     addPerson: (asset, file): HostResult => {
       if (!roster.has(asset.id) && !file) return { ok: false, error: '缺少原文件，请重新导入这个文件' };
       const result = roster.add(asset, file ?? new Blob());
@@ -153,20 +212,28 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
     },
   });
 
-  const rosterPanel = new RosterPanel(uiRoot, roster, {
-    isPlaying: () => state.phase === 'playing',
-    openCard: (key) => {
-      const asset = roster.assetOf(key);
-      if (asset) importPanel.openAsset(asset);
+  const thumbnails = new ThumbnailRenderer();
+  const rosterPanel = new RosterPanel(
+    uiRoot,
+    roster,
+    {
+      close: () => {
+        panels.close('roster');
+      },
+      openCard: (key) => {
+        const asset = roster.assetOf(key);
+        if (asset) importPanel.openAsset(asset);
+      },
+      remove: (key) => {
+        // 卡片上正打开着这个人物时先关掉卡片（名册负责释放资产）
+        const asset = roster.assetOf(key);
+        if (asset && importPanel.currentAsset() === asset) importPanel.close();
+        void roster.remove(key);
+      },
+      castNotices: () => director.notices,
     },
-    remove: (key) => {
-      // 卡片上正打开着这个人物时先关掉卡片（名册负责释放资产）
-      const asset = roster.assetOf(key);
-      if (asset && importPanel.currentAsset() === asset) importPanel.close();
-      void roster.remove(key);
-    },
-    castNotices: () => director.notices,
-  });
+    thumbnails,
+  );
 
   /** 开始面板里的开场白、台词和提示。 */
   const introOf = (pkg: LevelPackage, notices: readonly string[]): LevelIntro => ({
@@ -201,6 +268,17 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
   // ---------- 关卡（P5）----------
   const savedLevels = new SavedLevels(new IndexedDbRosterStore(SAVED_LEVELS_DB));
 
+  const builtinKindOf = (pkg: LevelPackage) => builtinEntries().find((e) => pkg.key === `builtin:${e.id}`)?.kind;
+
+  /** 当前关卡的来源和难度估计：顶栏、开始界面、开始面板都显示。 */
+  const showLevelInfo = () => {
+    const source = sourceBadge(current, builtinKindOf(current));
+    const difficulty = estimateDifficulty(current).label;
+    hud.setBadges({ source, difficulty });
+    topBar.setLevel(current.title);
+    home.setLevel({ title: current.title, source, difficulty });
+  };
+
   /** 换一关：释放旧的关卡视图和出场实例，按新的布局、规则和视觉预设重建，回到开始面板。不重新生成，也不重算时间。 */
   const loadLevel = (pkg: LevelPackage) => {
     director.releaseAll();
@@ -211,17 +289,25 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
     state = createInitialState(pkg.layout, [], pkg.rules);
     levelView = new LevelView(scene.scene, state, pkg.visual.theme);
     environment.apply(pkg.visual);
+    environment.setLevelSize(pkg.layout.size.width, pkg.layout.size.depth);
     director = new CastDirector({ player, guards: levelView.guards, guardIds: state.guards.map((g) => g.id), parent: scene.scene }, registry);
     cameraRig.reset(pkg.layout.spawn.yaw, state.player.position);
+    // 选好一关就离开开始界面，显示这一关的开始面板
+    homeMode = false;
+    showLevelInfo();
     hud.showOverlay('start', state);
     recast();
     levelSelect.refresh();
+    syncLayout();
   };
 
   const levelSelect = new LevelSelectPanel(uiRoot, {
-    isPlaying: () => state.phase === 'playing',
     current: () => current,
     builtins: () => builtinEntries(),
+    builtinPackage: (id) => builtinPackage(id),
+    close: () => {
+      panels.close('levels');
+    },
     loadBuiltin: (id) => {
       const pkg = builtinPackage(id);
       if (pkg) loadLevel(pkg);
@@ -255,26 +341,119 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
     saved: savedLevels,
   });
 
+  // ---------- 外壳（P6）：顶栏、开始界面、主面板 ----------
+  const topBar = new TopBar(
+    uiRoot,
+    {
+      onLevels: () => {
+        panels.toggle('levels');
+      },
+      onRoster: () => {
+        panels.toggle('roster');
+      },
+    },
+    importPanel.importButton,
+    sound,
+  );
+  const home = new HomeScreen(
+    uiRoot,
+    {
+      onStart: () => {
+        homeMode = false;
+        syncLayout();
+      },
+      onLevels: () => {
+        panels.open('levels');
+      },
+      onRoster: () => {
+        panels.open('roster');
+      },
+      onImport: () => {
+        importPanel.chooseFile();
+      },
+    },
+    sound,
+  );
+  panels.register('levels', {
+    setShown: (shown) => {
+      levelSelect.setShown(shown);
+    },
+    focusFirst: () => {
+      levelSelect.focusFirst();
+    },
+  });
+  panels.register('roster', {
+    setShown: (shown) => {
+      rosterPanel.setShown(shown);
+    },
+    focusFirst: () => {
+      rosterPanel.focusFirst();
+    },
+  });
+  panels.register('import', {
+    setShown: (shown) => {
+      importPanel.setShown(shown);
+    },
+    focusFirst: () => {
+      importPanel.focusFirst();
+    },
+    dismiss: () => {
+      importPanel.close();
+    },
+  });
+
+  /**
+   * 按当前状态摆放界面：同时只显示一个主面板（M7）。关卡选择打开时开始面板隐藏；名册（左）和导入卡片（右）打开时，
+   * 开始面板、暂停菜单和结算让到另一侧。开始界面这一层不显示顶栏和 HUD。游玩中只显示 HUD。
+   */
+  function syncLayout(): void {
+    const playing = state.phase === 'playing';
+    panels.setSuspended(playing);
+    const shown = panels.shown;
+    home.setVisible(homeMode && shown === null && !playing, true);
+    topBar.setVisible(!homeMode && !playing);
+    topBar.setPanel(shown === 'levels', shown === 'roster');
+    hud.setHudVisible(!homeMode);
+    hud.setDock(shown === 'roster' ? 'right' : shown === 'import' ? 'left' : 'center');
+    hud.setSuppressed(homeMode || shown === 'levels');
+  }
+  panels.onChange(syncLayout);
+
+  // 按钮的音效：页面里任何按钮被点击（鼠标或键盘）都响一下
+  // （捕获阶段：覆盖层的按钮会阻止点击继续冒泡）
+  uiRoot.addEventListener(
+    'click',
+    (e) => {
+      if (e.target instanceof Element && e.target.closest('button')) sound.play('button');
+    },
+    { capture: true },
+  );
+
   hud.setIntro(introOf(current, []));
+  showLevelInfo();
   hud.showOverlay(overlayFor(state.phase), state);
+  syncLayout();
   recast();
   // 页面加载时恢复名册（每个人物的原文件重新走一遍导入流程）和已保存的关卡
   void roster.restore();
   void savedLevels.load();
 
+  const box = new Box3();
+  const corner = new Vector3();
+
   scene.onFrame((delta) => {
     importPanel.update(delta);
-    rosterPanel.update();
-    levelSelect.update();
     // 暂停时连装饰性的动画（宝石旋转、待机呼吸、雨）也停下
     if (state.phase !== 'paused') renderTime += delta;
     if (state.phase === 'playing') {
       const look = controls.lookKeys();
       cameraRig.turn(look.turn, look.tilt, delta);
       const axes = controls.axes();
+      const collectedBefore = state.collected.length;
       const result = advance(state, { ...axes, cameraYaw: cameraRig.yaw }, accumulator, delta);
       accumulator = result.accumulator;
       if (result.steps > 0) controls.consumeJump();
+      if (result.state.collected.length > collectedBefore) sound.play('collect');
       setState(result.state);
     } else {
       accumulator = 0;
@@ -289,10 +468,25 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
     );
     levelView.update(state, dt, renderTime);
     director.updateCompanions(state.companions, state.phase === 'playing', dt, renderTime);
-    environment.update(dt, p.position);
     cameraRig.update(p.position, delta);
-    hud.update(state);
+    environment.update(dt, p.position, scene.camera.position);
+    if (hud.update(state)) sound.play('penalty');
   });
+
+  /** 主角和同伴在屏幕上的包围框（只读）。 */
+  const screenSnapshot = (): GameAppSnapshot['screen'] => {
+    scene.scene.updateMatrixWorld();
+    const canvas = scene.renderer.domElement;
+    const playerBox = screenRectOf(player.root, scene, box, corner);
+    const companions = director.companionRoots().map((root) => screenRectOf(root, scene, box, corner));
+    return {
+      width: canvas.clientWidth,
+      height: canvas.clientHeight,
+      player: playerBox?.rect ?? null,
+      companions: companions.map((c) => c?.rect ?? null),
+      depth: { player: playerBox?.depth ?? null, companions: companions.map((c) => c?.depth ?? null) },
+    };
+  };
 
   return {
     snapshot: () => ({
@@ -317,6 +511,8 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
         schemaVersion: current.schemaVersion,
         generatorVersion: current.generatorVersion,
         adjustment: current.adjustment ? { reason: current.adjustment.reason, change: current.adjustment.change } : null,
+        sourceLabel: sourceBadge(current, builtinKindOf(current)).text,
+        difficulty: estimateDifficulty(current).label,
       },
       levels: {
         select: levelSelect.snapshot(),
@@ -326,6 +522,19 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
         notices: [...savedLevels.notices],
       },
       environment: environment.snapshot(),
+      ui: {
+        home: home.visible,
+        homeMode,
+        panel: panels.shown,
+        panelStack: panels.stack,
+        overlayVisible: hud.overlayShown,
+        overlayDock: hud.dock,
+        topBar: !topBar.root.hidden,
+        hud: hud.hudShown,
+        thumbnails: thumbnails.snapshot(),
+      },
+      audio: sound.snapshot(),
+      screen: screenSnapshot(),
     }),
   };
 }

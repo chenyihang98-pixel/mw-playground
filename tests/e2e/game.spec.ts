@@ -18,6 +18,12 @@ function read(page: Page): Promise<GameAppSnapshot> {
 async function open(page: Page, url: string, levelId: string) {
   await page.goto(url);
   await page.waitForFunction(() => (window.__MW_TEST__ as Hooks | undefined)?.kind === 'game');
+  // P6：没有 ?level= 时先出现开始界面，点开始界面上的“开始”进入当前关卡的开始面板
+  if (!url.includes('level=')) {
+    expect((await read(page)).ui.home).toBe(true);
+    await page.getByRole('button', { name: '开始', exact: true }).click();
+    await expect.poll(async () => (await read(page)).ui.overlayVisible).toBe(true);
+  }
   const state = await read(page);
   expect(state.game.levelId).toBe(levelId);
   expect(state.game.phase).toBe('ready');

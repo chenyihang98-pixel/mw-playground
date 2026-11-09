@@ -1,6 +1,8 @@
+import './ui/theme.css';
 import { startGameApp } from './game/app';
 import { resolveLevelPackage } from './game/boot';
 import { createScene } from './scene/createScene';
+import { devLevelPackage } from './dev/devLevels';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#scene');
 if (!canvas) throw new Error('页面里缺少 #scene 画布');
@@ -17,8 +19,10 @@ if (devMode && params.get('view') === 'fixtures') {
   });
 } else {
   const scene = createScene(canvas, { ground: false });
-  const level = resolveLevelPackage(devMode ? params.get('level') : null);
-  const game = startGameApp(scene, level, document.body);
+  const requested = devMode ? params.get('level') : null;
+  const level = (requested !== null ? devLevelPackage(requested) : null) ?? resolveLevelPackage(requested);
+  // 没有 ?level= 时先显示开始界面；有 ?level=（开发和测试）时直接进入这一关的开始面板
+  const game = startGameApp(scene, level, document.body, { home: requested === null });
   if (devMode) {
     void Promise.all([import('./dev/gameTestHooks'), import('./game/boot')]).then(([hooks, boot]) => {
       hooks.installGameTestHooks(hooks.createGameTestHooks(game, boot.levelList()));

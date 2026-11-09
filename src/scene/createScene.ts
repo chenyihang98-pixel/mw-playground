@@ -1,12 +1,14 @@
 // 空场景：地面、灯光、相机和渲染循环。
 
 import {
+  ACESFilmicToneMapping,
   Color,
   DirectionalLight,
   GridHelper,
   HemisphereLight,
   Mesh,
   MeshStandardMaterial,
+  PCFShadowMap,
   PerspectiveCamera,
   PlaneGeometry,
   Scene,
@@ -39,6 +41,11 @@ export interface SceneOptions {
 export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {}): SceneApp {
   const renderer = new WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // P6：柔和阴影和电影感的色调映射（只影响显示）
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = PCFShadowMap;
+  renderer.toneMapping = ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
 
   const scene = new Scene();
   scene.background = new Color(0xbfd8ee);
@@ -47,10 +54,17 @@ export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {
   camera.position.set(2.6, 1.7, 3.6);
   camera.lookAt(0, 0.9, 0);
 
-  scene.add(new HemisphereLight(0xffffff, 0x7a6a55, 1.4));
+  const hemi = new HemisphereLight(0xffffff, 0x7a6a55, 1.4);
+  hemi.name = 'hemi-light';
+  scene.add(hemi);
   const sun = new DirectionalLight(0xffffff, 2);
+  sun.name = 'sun-light';
   sun.position.set(3, 6, 4);
-  scene.add(sun);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.bias = -0.0005;
+  sun.shadow.normalBias = 0.02;
+  scene.add(sun, sun.target);
 
   if (options.ground ?? true) {
     const ground = new Mesh(new PlaneGeometry(40, 40), new MeshStandardMaterial({ color: 0x8fae7a, roughness: 1 }));

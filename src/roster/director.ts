@@ -154,6 +154,16 @@ export class CastDirector {
     this.companionOrder = [];
   }
 
+  /** 同伴的外层节点，按出场顺序（P6：测试快照里算屏幕上的包围框用，只读）。 */
+  companionRoots(): Object3D[] {
+    const out: Object3D[] = [];
+    for (const id of this.companionOrder) {
+      const view = this.companions.get(id)?.view;
+      if (view) out.push(view.root);
+    }
+    return out;
+  }
+
   /** 每帧：同伴的视图跟随模拟里的同伴（只读状态）。 */
   updateCompanions(companions: readonly CompanionState[], playing: boolean, dt: number, time: number): void {
     for (const c of companions) {

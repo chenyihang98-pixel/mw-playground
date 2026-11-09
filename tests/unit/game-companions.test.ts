@@ -7,6 +7,7 @@ import {
   NO_INPUT,
   blockingRects,
   createInitialState,
+  followOffset,
   followTarget,
   groundAt,
   restartGame,
@@ -38,18 +39,61 @@ function horizontal(a: { x: number; z: number }, b: { x: number; z: number }): n
 describe('同伴的规格', () => {
   it('参数都在 SPEC 里，并且彼此一致', () => {
     expect(specProblems()).toEqual([]);
-    expect(SPEC.companion.followDistance).toBeGreaterThan(0);
+    expect(SPEC.companion.follow).toHaveLength(3);
     expect(SPEC.companion.resumeRadius).toBeGreaterThan(SPEC.companion.arriveRadius);
   });
 });
 
+describe('跟随目标点（P6：不在主角正后方）', () => {
+  /** 目标点在主角自己的坐标里：right（右为正）和 forward（前为正）。 */
+  function local(facing: number, slot: number): { right: number; forward: number } {
+    const player = { position: { x: 3, y: 0, z: -2 }, vy: 0, grounded: true, facing, horizontalSpeed: 0, running: false };
+    const t = followTarget(player, slot);
+    const dx = t.x - player.position.x;
+    const dz = t.z - player.position.z;
+    // 前 = (sin f, cos f)；右 = (-cos f, sin f)
+    return { right: -Math.cos(facing) * dx + Math.sin(facing) * dz, forward: Math.sin(facing) * dx + Math.cos(facing) * dz };
+  }
+
+  it('同伴 0 在左后方，同伴 1 在右后方，同伴 2 在左后方、比同伴 0 更靠后；左右按主角的朝向算', () => {
+    for (const facing of [0, Math.PI / 2, Math.PI, -Math.PI / 3, 2.5]) {
+      const [c0, c1, c2] = [0, 1, 2].map((slot) => local(facing, slot));
+      if (!c0 || !c1 || !c2) throw new Error('缺目标点');
+      expect(c0.right).toBeLessThan(0);
+      expect(c0.forward).toBeLessThan(0);
+      expect(c1.right).toBeGreaterThan(0);
+      expect(c1.forward).toBeLessThan(0);
+      expect(c2.right).toBeLessThan(0);
+      expect(c2.forward).toBeLessThan(c0.forward);
+      // 偏移量就是 SPEC.companion.follow 里的值
+      for (const [slot, c] of [c0, c1, c2].entries()) {
+        expect(c.right).toBeCloseTo(followOffset(slot).right, 9);
+        expect(c.forward).toBeCloseTo(-followOffset(slot).back, 9);
+      }
+    }
+    expect(SPEC.companion.follow.map((f) => [f.back, f.right])).toEqual([
+      [1.6, -1.3],
+      [1.6, 1.3],
+      [2.6, -1.1],
+    ]);
+  });
+
+  it('朝向 0（面向 +Z）时：左边是 +X，同伴 0 的目标点在 (x + 1.3, z − 1.6)', () => {
+    const player = { position: { x: 0, y: 0, z: 0 }, vy: 0, grounded: true, facing: 0, horizontalSpeed: 0, running: false };
+    expect(followTarget(player, 0).x).toBeCloseTo(1.3, 9);
+    expect(followTarget(player, 0).z).toBeCloseTo(-1.6, 9);
+    expect(followTarget(player, 1).x).toBeCloseTo(-1.3, 9);
+  });
+});
+
 describe('开局位置', () => {
-  it('出现在主角身后附近', () => {
+  it('出现在各自的跟随目标点上（主角的左后方）', () => {
     const state = createInitialState(layout(), ['a']);
     const c = companion(state).body.position;
-    const target = followTarget(state.player, 0, 1);
+    const target = followTarget(state.player, 0);
     expect(horizontal(c, target)).toBeLessThan(1e-9);
-    expect(c.z).toBeCloseTo(state.player.position.z - SPEC.companion.followDistance, 9); // 朝向 0：身后是 −Z
+    expect(c.x).toBeCloseTo(state.player.position.x + 1.3, 9); // 朝向 0：左边是 +X
+    expect(c.z).toBeCloseTo(state.player.position.z - 1.6, 9); // 身后是 −Z
   });
 
   it('身后有障碍时换一个不和障碍重叠的位置；三个同伴各自不重叠', () => {
@@ -73,14 +117,15 @@ describe('开局位置', () => {
 });
 
 describe('跟随', () => {
-  it('主角走一段后停下：同伴跟上，停在主角身后跟随距离处', () => {
+  it('主角走一段后停下：同伴跟上，停在跟随目标点（左后方）', () => {
     let state = startGame(createInitialState(layout(), ['a']));
     state = run(state, input({ forward: 1 }), 3);
     expect(companion(state).body.horizontalSpeed).toBeGreaterThan(0);
     state = run(state, NO_INPUT, 3);
     const c = companion(state);
-    expect(horizontal(c.body.position, followTarget(state.player, 0, 1))).toBeLessThanOrEqual(SPEC.companion.arriveRadius + 1e-9);
-    expect(horizontal(c.body.position, state.player.position)).toBeCloseTo(SPEC.companion.followDistance, 0);
+    expect(horizontal(c.body.position, followTarget(state.player, 0))).toBeLessThanOrEqual(SPEC.companion.arriveRadius + 1e-9);
+    const offset = followOffset(0);
+    expect(horizontal(c.body.position, state.player.position)).toBeCloseTo(Math.hypot(offset.back, offset.right), 0);
     expect(c.following).toBe(false);
     expect(c.body.horizontalSpeed).toBe(0);
   });
@@ -121,12 +166,13 @@ describe('不和主角、守卫碰撞，不影响胜负', () => {
   });
 
   it('守卫的路线穿过同伴：守卫的位置不变，不扣时', () => {
-    // 守卫在主角身后来回走，正好经过同伴站的位置；主角离路线远，不会被碰到
-    const level = layout({ guards: [{ id: 'g', route: [{ x: -4, z: -1.8 }, { x: 4, z: -1.8 }] }] });
+    // 守卫在主角身后来回走，正好经过同伴站的位置 (1.3, −1.6)；主角离路线远，不会被碰到
+    const level = layout({ guards: [{ id: 'g', route: [{ x: -4, z: -1.6 }, { x: 4, z: -1.6 }] }] });
     let withCompanion = startGame(createInitialState(level, ['a']));
     let alone = startGame(createInitialState(level));
     const start = companion(withCompanion).body.position;
-    expect(start.z).toBeCloseTo(-1.8, 9);
+    expect(start.z).toBeCloseTo(-1.6, 9);
+    expect(start.x).toBeCloseTo(1.3, 9);
     for (let i = 0; i < 600; i++) {
       withCompanion = stepGame(withCompanion, NO_INPUT, STEP);
       alone = stepGame(alone, NO_INPUT, STEP);
@@ -138,11 +184,11 @@ describe('不和主角、守卫碰撞，不影响胜负', () => {
   });
 
   it('同伴站在收集点上也不收集', () => {
-    // 收集点就在同伴开局的位置（主角身后）
-    const level = layout({ collectibles: [{ id: 'behind', position: { x: 0, z: -1.8 } }] });
+    // 收集点就在同伴开局的位置（主角左后方）
+    const level = layout({ collectibles: [{ id: 'behind', position: { x: 1.3, z: -1.6 } }] });
     let state = startGame(createInitialState(level, ['a']));
     state = run(state, NO_INPUT, 2);
-    expect(horizontal(companion(state).body.position, { x: 0, z: -1.8 })).toBeLessThan(0.1);
+    expect(horizontal(companion(state).body.position, { x: 1.3, z: -1.6 })).toBeLessThan(0.1);
     expect(state.collected).toEqual([]);
     expect(state.phase).toBe('playing');
   });
@@ -175,17 +221,17 @@ describe('暂停和分出胜负', () => {
 });
 
 describe('被卡住', () => {
-  // 同伴开局在主角身后 (0, −1.8)，被一个开口朝 −Z 的“杯子”围住；主角往 +Z 走，同伴朝目标点直走，被杯底挡住
+  // 同伴开局在主角左后方 (1.3, −1.6)，被一个开口朝 −Z 的“杯子”围住；主角往 +Z 走，同伴朝目标点直走，被杯底挡住
   const cup = [
-    { id: 'cup-back', center: { x: 0, z: -0.8 }, size: { x: 3.2, z: 0.4 }, height: 2 },
+    { id: 'cup-back', center: { x: 1.3, z: -0.6 }, size: { x: 3.2, z: 0.4 }, height: 2 },
     // 侧壁和杯底之间留 5 cm 的缝（胶囊过不去），避免两个盒子在浮点误差下算作重叠
-    { id: 'cup-left', center: { x: -1.4, z: -2.325 }, size: { x: 0.4, z: 2.55 }, height: 2 },
-    { id: 'cup-right', center: { x: 1.4, z: -2.325 }, size: { x: 0.4, z: 2.55 }, height: 2 },
+    { id: 'cup-left', center: { x: -0.1, z: -2.125 }, size: { x: 0.4, z: 2.55 }, height: 2 },
+    { id: 'cup-right', center: { x: 2.7, z: -2.125 }, size: { x: 0.4, z: 2.55 }, height: 2 },
   ];
 
   it('离主角超过阈值并持续一段时间：传送到主角附近，站在地面上，不和障碍重叠', () => {
     let state = startGame(createInitialState(layout({ boxes: cup }), ['a']));
-    expect(companion(state).body.position.z).toBeCloseTo(-1.8, 9);
+    expect(companion(state).body.position.z).toBeCloseTo(-1.6, 9);
     state = run(state, input({ forward: 1 }), 4); // 主角走到 z ≈ 8.8，同伴被杯底挡住
     expect(companion(state).body.position.z).toBeLessThan(-0.9);
     expect(companion(state).teleports).toBe(0);
@@ -235,7 +281,8 @@ describe('被卡住', () => {
     state = { ...state, player: { ...state.player, position: open } };
     for (let i = 0; i < (SPEC.companion.retrySeconds + 0.05) / STEP; i++) state = stepGame(state, NO_INPUT, STEP);
     expect(companion(state).teleports).toBe(1);
-    expect(horizontal(companion(state).body.position, open)).toBeLessThanOrEqual(SPEC.companion.placeSpacing + 1e-9);
+    // 空地上第一个候选（这个同伴的跟随目标点）就能站
+    expect(horizontal(companion(state).body.position, followTarget(state.player, 0))).toBeLessThan(1e-9);
   });
 });
 

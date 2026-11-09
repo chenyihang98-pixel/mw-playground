@@ -17,7 +17,7 @@ export type { InputFrame, PlayerState } from './player';
 export { capsulesTouch, guardAt, pointOnRoute, spawnGuards, stepGuards } from './guards';
 export type { GuardState } from './guards';
 export { blockingRects, clampToBounds, moveCapsule } from './collision';
-export { canStand, findSpotNear, followTarget, regroupCompanions, spawnCompanions, stepCompanions } from './companions';
+export { canStand, findSpotNear, followOffset, followTarget, regroupCompanions, spawnCompanions, stepCompanions } from './companions';
 export type { CompanionState } from './companions';
 export { buildWorld, groundAt } from './world';
 export type { CollectibleSpot, GuardRoute, Vec3, World } from './world';

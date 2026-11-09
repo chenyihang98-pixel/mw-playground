@@ -153,7 +153,8 @@ test('加载一个出场人物已被删除的关卡：用默认替身代替，�
   if (listed?.role === 'companion') expect(withPerson.cast.companions).toContainEqual({ personId: person, model: 'imported' });
   else expect(withPerson.cast.guards.map((g) => g.personId)).toContain(person);
 
-  // 从名册里删除这个人物，刷新后再加载这一关
+  // 从名册里删除这个人物，刷新后再加载这一关（P6：名册在顶栏的“名册”里打开）
+  await page.getByRole('button', { name: '名册', exact: true }).click();
   await page.getByRole('button', { name: '删除 skinned-humanoid.glb' }).click();
   await page.getByRole('button', { name: '确认删除 skinned-humanoid.glb' }).click();
   await expect.poll(async () => (await read(page)).roster.entries.length).toBe(0);

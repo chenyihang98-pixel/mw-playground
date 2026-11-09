@@ -1,108 +1,239 @@
-#roster-panel {
-  position: fixed;
-  left: 12px;
-  bottom: 12px;
-  width: 400px;
-  max-height: 46vh;
-  overflow-y: auto;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: rgba(22, 27, 34, 0.94);
-  color: #e8edf2;
-  font-family: system-ui, sans-serif;
-  font-size: 12px;
-  z-index: 24;
-}
+/* 名册（P6：左侧的主面板，人物卡片）。变量见 src/ui/theme.css */
 
-#roster-panel[hidden] {
-  display: none;
+#roster-panel {
+  left: var(--mw-edge);
+  width: min(400px, calc(100vw - 2 * var(--mw-edge)));
 }
 
 #roster-panel h2 {
-  margin: 0;
-  font-size: 14px;
-  flex: 1;
-}
-
-#roster-panel .row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--mw-space-2);
 }
 
-#roster-panel button {
-  padding: 3px 8px;
-  border: 0;
-  border-radius: 5px;
-  background: #3f7fd9;
-  color: #fff;
-  font-size: 12px;
-  cursor: pointer;
+.roster-title-icon {
+  width: 20px;
+  height: 20px;
+  stroke: var(--mw-primary-hover);
 }
 
-#roster-panel button:disabled {
-  background: #5a6370;
-  cursor: not-allowed;
-}
-
-#roster-panel button.danger {
-  background: #c0392b;
-}
-
-#roster-panel button[hidden] {
-  display: none;
+.roster-restoring {
+  color: var(--mw-info);
+  font-size: var(--mw-text-xs);
 }
 
 #roster-storage {
-  margin-top: 6px;
-  padding: 4px 6px;
-  border-radius: 4px;
-  background: rgba(160, 40, 30, 0.9);
+  margin-bottom: var(--mw-space-3);
 }
 
-#roster-storage:empty {
+#roster-storage[hidden] {
   display: none;
 }
 
-#roster-notices {
-  margin: 6px 0;
-  padding-left: 18px;
-  color: #ffd98a;
+#roster-notices:not(:empty) {
+  margin-bottom: var(--mw-space-3);
 }
 
-#roster-notices:empty {
+.roster-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--mw-space-2);
+  padding: var(--mw-space-8) var(--mw-space-4);
+  border: 1px dashed var(--mw-border-strong);
+  border-radius: var(--mw-radius-m);
+  color: var(--mw-text-muted);
+  font-size: var(--mw-text-s);
+  text-align: center;
+}
+
+.roster-empty[hidden] {
   display: none;
 }
 
-#roster-panel .empty {
-  margin: 6px 0;
-  color: #a9b4c0;
+.roster-empty p {
+  margin: 0;
+  line-height: 1.6;
 }
 
-#roster-panel .empty[hidden] {
-  display: none;
+.roster-empty-icon {
+  width: 36px;
+  height: 36px;
+  stroke: var(--mw-text-subtle);
 }
 
-#roster-table {
+.person-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mw-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.person-card {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: var(--mw-space-3);
+  padding: var(--mw-space-3);
+  border-radius: var(--mw-radius-m);
+  border: 1px solid var(--mw-border);
+  background: var(--mw-surface-raised);
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+}
+
+.person-card[data-role='player'],
+.person-card[data-role='playerGuard'] {
+  border-color: rgba(255, 200, 69, 0.45);
+}
+
+.person-card.highlight {
+  border-color: var(--mw-info);
+  box-shadow: 0 0 0 2px rgba(92, 193, 255, 0.35);
+}
+
+.person-card.failed {
+  border-color: rgba(255, 93, 93, 0.5);
+  background: rgba(255, 93, 93, 0.08);
+}
+
+.person-thumb {
+  position: relative;
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--mw-radius-m);
+  background: radial-gradient(circle at 50% 35%, #34445a, #1b2330 75%);
+  overflow: hidden;
+}
+
+.person-thumb img {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  border-collapse: collapse;
+  height: 100%;
+  object-fit: contain;
 }
 
-#roster-table td {
-  padding: 3px 2px;
-  border-bottom: 1px solid #333c48;
-  vertical-align: middle;
+.person-thumb img[hidden] {
+  display: none;
 }
 
-#roster-table input[type='text'] {
-  width: 110px;
-  font-size: 12px;
+.person-placeholder {
+  width: 30px;
+  height: 30px;
+  stroke: var(--mw-text-subtle);
 }
 
-#roster-table tr.failed td.status {
-  color: #ff8a80;
+.person-thumb.has-image .person-placeholder {
+  display: none;
 }
 
-#roster-table tr.highlight {
-  outline: 2px solid #ffd34d;
+.person-card.loading .person-placeholder {
+  animation: thumb-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes thumb-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.person-main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mw-space-2);
+  min-width: 0;
+}
+
+.person-name-row {
+  display: flex;
+  gap: var(--mw-space-1);
+}
+
+.person-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  background: transparent;
+  border-color: transparent;
+}
+
+.person-name:hover:not(:disabled),
+.person-name:focus {
+  border-color: var(--mw-border-strong);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.person-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--mw-space-2);
+  min-width: 0;
+}
+
+.person-file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.person-status {
+  color: var(--mw-info);
+  font-size: var(--mw-text-xs);
+  line-height: 1.5;
+}
+
+.person-status.is-error {
+  color: #ff9a90;
+}
+
+.person-status[hidden] {
+  display: none;
+}
+
+.person-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--mw-space-1);
+}
+
+.person-role {
+  display: flex;
+  align-items: center;
+  gap: var(--mw-space-2);
+  flex: 1;
+  min-width: 0;
+  color: var(--mw-text-subtle);
+  font-size: var(--mw-text-xs);
+}
+
+.person-role .mw-select {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+}
+
+.person-actions [hidden],
+.person-confirm[hidden] {
+  display: none;
+}
+
+.person-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--mw-space-2);
+  padding: var(--mw-space-2);
+  border-radius: var(--mw-radius-s);
+  background: rgba(255, 93, 93, 0.1);
+  color: #ffd0cc;
+  font-size: var(--mw-text-xs);
+}
+
+.person-confirm span {
+  flex: 1;
 }

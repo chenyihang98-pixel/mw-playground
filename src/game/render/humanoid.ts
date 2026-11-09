@@ -1,7 +1,8 @@
 // 用基本几何体拼的低模小人。身高与物理胶囊高度一致（SPEC.capsule.height），脚底在原点，面向 +Z。
 // 结构：外层节点（物理位置、朝向）→ 模型槽 → 小人。P3 导入的模型挂在同一个模型槽里。
 
-import { BoxGeometry, Group, Mesh, MeshStandardMaterial, Object3D } from 'three';
+import { Group, Mesh, MeshStandardMaterial, Object3D } from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { SPEC } from '../spec';
 import type { Pose } from './pose';
 
@@ -13,8 +14,9 @@ export interface HumanoidPalette {
   readonly accent: number;
 }
 
-export const PLAYER_PALETTE: HumanoidPalette = { skin: 0xf1c7a1, shirt: 0x3f7fd9, pants: 0x2f3b55, shoes: 0x3a2a20, accent: 0xffd34d };
-export const GUARD_PALETTE: HumanoidPalette = { skin: 0xd9a27e, shirt: 0xc0392b, pants: 0x222222, shoes: 0x111111, accent: 0x111111 };
+// P6 整理过的配色：主角蓝衣金帽，守卫红衣深色头盔，和界面的主色、强调色、语义色一致。
+export const PLAYER_PALETTE: HumanoidPalette = { skin: 0xf2c9a3, shirt: 0x3d8bff, pants: 0x2c3a58, shoes: 0x2a2a30, accent: 0xffc845 };
+export const GUARD_PALETTE: HumanoidPalette = { skin: 0xd8a27c, shirt: 0xd8443c, pants: 0x23262e, shoes: 0x141418, accent: 0x2b2f38 };
 /** 默认替身（P5：关卡列出的同伴已不在名册里时用）。 */
 export const STAND_IN_PALETTE: HumanoidPalette = { skin: 0xe0b896, shirt: 0x7a8a99, pants: 0x3c4450, shoes: 0x2a2a2a, accent: 0xb0bec5 };
 
@@ -35,9 +37,13 @@ export interface HumanoidRig {
   readonly elbowR: Object3D;
 }
 
-function box(w: number, h: number, d: number, color: number, y: number, z = 0): Mesh {
-  const mesh = new Mesh(new BoxGeometry(w, h, d), new MeshStandardMaterial({ color, roughness: 0.85, flatShading: true }));
-  mesh.position.set(0, y, z);
+/** 圆角方块（尺寸和以前的方块完全相同，只把棱角磨圆），投下阴影。 */
+function box(w: number, h: number, d: number, color: number, y: number, z = 0, x = 0): Mesh {
+  const radius = Math.min(w, h, d) * 0.28;
+  const mesh = new Mesh(new RoundedBoxGeometry(w, h, d, 3, radius), new MeshStandardMaterial({ color, roughness: 0.72, metalness: 0.02 }));
+  mesh.position.set(x, y, z);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
   return mesh;
 }
 
@@ -86,8 +92,10 @@ export function buildHumanoid(palette: HumanoidPalette): HumanoidRig {
   const neck = pivot('neck', 0, 0.52);
   neck.add(box(0.1, 0.05, 0.1, palette.skin, 0.015));
   neck.add(box(0.24, 0.24, 0.24, palette.skin, 0.155)); // 头：0.95 + 0.52 + 0.035 … 0.275
-  neck.add(box(0.05, 0.05, 0.05, palette.skin, 0.14, 0.14)); // 鼻子：标出 +Z 朝向
-  neck.add(box(0.26, 0.03, 0.26, palette.accent, 0.265)); // 帽子，顶面在 0.95 + 0.52 + 0.28 = 1.75
+  neck.add(box(0.045, 0.05, 0.04, palette.skin, 0.13, 0.13)); // 鼻子：标出 +Z 朝向
+  for (const side of [-1, 1]) neck.add(box(0.04, 0.045, 0.02, 0x1b1f27, 0.175, 0.118, 0.055 * side)); // 眼睛
+  neck.add(box(0.26, 0.04, 0.26, palette.accent, 0.26)); // 帽子，顶面在 0.95 + 0.52 + 0.28 = 1.75
+  neck.add(box(0.2, 0.025, 0.08, palette.accent, 0.245, 0.15)); // 帽檐，朝 +Z
   torso.add(neck);
   const leftArm = arm(1, palette);
   const rightArm = arm(-1, palette);

@@ -9,12 +9,23 @@ import type { RandomJobState } from './levels/randomJob';
 import type { EnvironmentSnapshot } from './render/environment';
 import type { RenderStats } from '../scene/createScene';
 import type { GameSnapshot } from './sim/snapshot';
+import type { SoundSnapshot } from './audio/sound';
+
+/** 主面板（P6）：关卡选择、名册、导入卡片。 */
+export type PanelId = 'levels' | 'roster' | 'import';
+/** 覆盖层的位置（P6）：居中，或让到左侧、右侧。 */
+export type OverlayDock = 'center' | 'left' | 'right';
+/** 难度估计的三档（P6）。 */
+export type DifficultyLabel = '轻松' | '普通' | '紧张';
 
 export type LookMode = 'pointer-lock' | 'drag';
 
 /** 关卡选择界面的只读快照（P5）。 */
 export interface LevelSelectSnapshot {
+  /** 关卡选择面板显示在屏幕上。 */
   readonly open: boolean;
+  /** 列表里每一关的来源和难度估计（P6）。 */
+  readonly entries: readonly { readonly key: string; readonly title: string; readonly source: string; readonly difficulty: DifficultyLabel | null }[];
   readonly random: {
     readonly kind: RandomJobState['kind'] | 'idle';
     readonly tried: number;
@@ -30,6 +41,43 @@ export interface LevelSelectSnapshot {
   };
 }
 export type OverlayKind = 'start' | 'pause' | 'won' | 'lost';
+
+/** 屏幕上的矩形（CSS 像素，左上角为原点）。 */
+export interface ScreenRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** 界面的状态（P6）：开始界面、主面板、覆盖层的位置。 */
+export interface UiSnapshot {
+  /** 开始界面显示在屏幕上。 */
+  readonly home: boolean;
+  /** 处在开始界面这一层（开始界面本身，或从开始界面打开的面板）。 */
+  readonly homeMode: boolean;
+  /** 屏幕上显示的主面板。 */
+  readonly panel: PanelId | null;
+  /** 主面板的栈（最后一个在最上面；游玩中隐藏但保留）。 */
+  readonly panelStack: readonly PanelId[];
+  /** 覆盖层显示在屏幕上（overlay 是它的种类，被让位隐藏时仍是原来的种类）。 */
+  readonly overlayVisible: boolean;
+  readonly overlayDock: OverlayDock;
+  readonly topBar: boolean;
+  readonly hud: boolean;
+  /** 名册卡片的缩略图：已画好的个数、排队的个数、是否在等名册恢复完。 */
+  readonly thumbnails: { readonly rendered: number; readonly queued: number; readonly paused: boolean; readonly available: boolean };
+}
+
+/** 主角和同伴在屏幕上的包围框（P6：检查同伴有没有挡住主角）。 */
+export interface ScreenSnapshot {
+  readonly width: number;
+  readonly height: number;
+  readonly player: ScreenRect | null;
+  readonly companions: readonly (ScreenRect | null)[];
+  /** 相机到主角、各同伴包围盒中心的距离（米）。 */
+  readonly depth: { readonly player: number | null; readonly companions: readonly (number | null)[] };
+}
 
 export interface GameAppSnapshot {
   readonly game: GameSnapshot;
@@ -60,6 +108,9 @@ export interface GameAppSnapshot {
     readonly schemaVersion: number | null;
     readonly generatorVersion: number | null;
     readonly adjustment: { readonly reason: string; readonly change: string } | null;
+    /** 界面上的来源和难度估计（P6）。 */
+    readonly sourceLabel: string;
+    readonly difficulty: DifficultyLabel | null;
   };
   /** 关卡选择（P5）：随机生成的状态和预览、已保存的关卡。 */
   readonly levels: {
@@ -71,4 +122,10 @@ export interface GameAppSnapshot {
   };
   /** 视觉预设在场景里的效果（P5）。 */
   readonly environment: EnvironmentSnapshot;
+  /** 界面（P6）。 */
+  readonly ui: UiSnapshot;
+  /** 音效和静音（P6）。 */
+  readonly audio: SoundSnapshot;
+  /** 主角和同伴在屏幕上的位置（P6）。 */
+  readonly screen: ScreenSnapshot;
 }

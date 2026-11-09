@@ -35,12 +35,16 @@ export class PreviewViewport {
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
-    this.scene.background = new Color(0x26303c);
-    this.scene.add(new HemisphereLight(0xffffff, 0x556070, 1.6));
-    const sun = new DirectionalLight(0xffffff, 1.8);
+    // P6：和界面一致的深色底、柔和的天光和一盏暖色主光
+    this.scene.background = new Color(0x1a222d);
+    this.scene.add(new HemisphereLight(0xdfeaff, 0x3a4352, 1.7));
+    const sun = new DirectionalLight(0xfff1dc, 1.9);
     sun.position.set(2, 4, 3);
     this.scene.add(sun);
-    const grid = new GridHelper(4, 8, 0x5a6b7d, 0x3b4756);
+    const rim = new DirectionalLight(0x8fb8ff, 0.7);
+    rim.position.set(-3, 2.5, -3);
+    this.scene.add(rim);
+    const grid = new GridHelper(4, 8, 0x4a5a6e, 0x2c3644);
     this.scene.add(grid);
   }
 
@@ -58,9 +62,11 @@ export class PreviewViewport {
 
   private frame(): void {
     const height = this.instance?.normalizedSize().height ?? 1.75;
-    const distance = height * 2.3 + 1;
-    this.camera.position.set(distance * 0.45, height * 0.75, distance);
-    this.camera.lookAt(0, height * 0.5, 0);
+    const size = this.instance?.normalizedSize();
+    const extent = Math.max(height, size?.width ?? 0, size?.depth ?? 0);
+    const distance = extent * 1.75 + 0.6;
+    this.camera.position.set(distance * 0.42, height * 0.7, distance);
+    this.camera.lookAt(0, height * 0.48, 0);
   }
 
   /** 单独预览一个片段（用游戏里会用的片段：勾选了锁定水平位移时是锁定后的副本）。 */

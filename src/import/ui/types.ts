@@ -52,7 +52,10 @@ export interface ImportCardSnapshot {
   readonly bindPose: { readonly convention: 'scene' | 'mesh' } | null;
   /** 加载后材质里能读到尺寸的贴图。 */
   readonly textures: readonly { readonly width: number; readonly height: number }[];
+  /** 卡片上显示的提示文字（没有骨骼的模型把“绑定姿态”说成“静止姿态”，M3）。 */
   readonly notices: readonly string[];
+  /** 同样的提示按级别分（P6：错误、警告、说明），按显示顺序排列。 */
+  readonly noticeLevels: readonly NoticeSnapshot[];
   readonly clips: readonly ClipRowSnapshot[];
   readonly slots: Slots;
   readonly plan: { readonly idle: string; readonly walk: string; readonly run: string; readonly jump: string | null; readonly sway: boolean };
@@ -64,6 +67,14 @@ export interface ImportCardSnapshot {
   readonly rosterOwned: boolean;
   /** 设置被禁用的原因（名册里同一个文件还在恢复或恢复失败，这份副本上的修改不会保存）；能改时为 null（P4）。 */
   readonly settingsLockedReason: string | null;
+  /** 卡片现在显示在屏幕上（P6：别的主面板在上面或游玩中时隐藏，但没有关闭）。 */
+  readonly shown: boolean;
+}
+
+/** 一条提示和它的级别（P6）。 */
+export interface NoticeSnapshot {
+  readonly level: 'error' | 'warning' | 'info';
+  readonly text: string;
 }
 
 export interface ImportPanelSnapshot {

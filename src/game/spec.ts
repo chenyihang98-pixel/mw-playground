@@ -67,10 +67,16 @@ const collect = {
 } as const;
 
 const companion = {
-  /** 跟随的目标点在主角身后的距离（米）。 */
-  followDistance: 1.8,
-  /** 有多个同伴时，各自的目标点左右错开的间距（米）。 */
-  lateralSpacing: 1.1,
+  /**
+   * 跟随的目标点（P6 起不再在主角正后方，避免和第三人称相机在同一条线上挡住主角）。按同伴的顺序：
+   * 同伴 0 在左后方，同伴 1 在右后方，同伴 2 在左后方、比同伴 0 更靠后。
+   * back：沿主角朝向往后多少米；right：往主角的右边多少米（负数是左边）。左右按主角的朝向算。
+   */
+  follow: [
+    { back: 1.6, right: -1.3 },
+    { back: 1.6, right: 1.3 },
+    { back: 2.6, right: -1.1 },
+  ],
   /** 离目标点不超过这个距离就停下（米）。 */
   arriveRadius: 0.3,
   /** 停下之后，离目标点超过这个距离才重新起步（米），避免在目标点附近来回抖动。 */
@@ -133,6 +139,8 @@ export function specProblems(spec: GameplaySpec = SPEC): string[] {
   if (c.placeSpacing * c.placeRings >= c.stuckDistance) {
     problems.push('同伴找位置的最大范围不小于“被卡住”的距离：传送后可能马上又被判为卡住');
   }
-  if (c.followDistance + c.lateralSpacing >= c.stuckDistance) problems.push('同伴的跟随位置离主角太远，会被判为卡住');
+  for (const f of c.follow) {
+    if (Math.hypot(f.back, f.right) >= c.stuckDistance) problems.push('同伴的跟随位置离主角太远，会被判为卡住');
+  }
   return problems;
 }
