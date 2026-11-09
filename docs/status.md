@@ -55,4 +55,5 @@
 
 - `npm audit` 报 9 个 moderate，都是同一个 minimatch 的 ReDoS 公告（GHSA-g3hv-75wg-m249），在 eslint 10 和 typescript-eslint 的依赖链里，只在开发时运行 lint 用到，输入是本仓库自己的路径模式。修复方式是把 eslint 降到 9（不兼容变更），本任务不处理，等上游发布修复版本后再升级。
 - npm 11 安装时提示 `esbuild@0.28.2` 的 postinstall 安装脚本“没有被 allowScripts 覆盖”。本任务没有批准它，也没有改 npm 配置；esbuild 的二进制来自可选依赖 `@esbuild/win32-x64`，tsx 和 vite 都能正常工作。锁文件摘要的 “hasInstallScript” 一节列出了 esbuild 和 fsevents（fsevents 只在 macOS 上安装）。
+- 锁文件里的 `@dimforge/rapier3d-compat` 0.12.0 是 `@types/three` 0.187.0 自带的依赖（three 的 Rapier 物理插件的类型要用），不是本项目直接加的；只在开发时安装，不进生产构建。
 - 生产构建只有一个约 536 kB 的 JS 文件（主要是 three.js），已把 Vite 的体积提示阈值调到 1000 kB。以后需要时再拆分。
