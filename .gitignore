@@ -14,5 +14,5 @@ playwright-report/
 blob-report/
 playwright/.cache/
 
-# 本项目的本地目录（真实资产、临时输出等，不进仓库）
+# 本项目的本地目录（本机临时文件，不进仓库；真实资产放在项目外）
 .local/
