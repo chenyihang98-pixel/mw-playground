@@ -24,7 +24,10 @@ export type Importer = (source: ImportSource) => Promise<ImportOutcome>;
 export type ActionResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
 export type AddResult =
   | { readonly ok: true; readonly key: string }
-  | { readonly ok: false; readonly reason: 'duplicate' | 'full'; readonly error: string; readonly key: string | null };
+  | { readonly ok: false; readonly reason: 'duplicate' | 'full' | 'reading'; readonly error: string; readonly key: string | null };
+
+/** 存储里的记录还没读出来时加入的提示。 */
+export const ROSTER_READING_MESSAGE = '名册正在读取保存的人物，请稍后再加入';
 
 interface Entry {
   readonly key: string;
@@ -87,6 +90,8 @@ export class Roster {
   private noticeList: string[] = [];
   private storageError: string | null = null;
   private restoringNow = false;
+  /** 正在等存储读出所有记录：这期间名册还不完整，不能加入（去重、上限、顺序都要按完整的名册算）。 */
+  private reading = false;
   private highlightKey: string | null = null;
   private readonly pending = new Set<Promise<unknown>>();
   private readonly writes = new Map<string, Promise<void>>();
@@ -198,11 +203,13 @@ export class Roster {
 
   private async restoreAll(): Promise<void> {
     this.restoringNow = true;
+    this.reading = true;
     this.emit();
     let stored: StoredEntry[];
     try {
       stored = await this.store.loadAll();
     } catch (error) {
+      this.reading = false;
       this.restoringNow = false;
       this.storageFailed('读不了浏览器里保存的名册', error);
       return;
@@ -221,7 +228,9 @@ export class Roster {
       valid.push({ key: item.key, record: decoded.record, asset: null, status: 'loading', error: null, unsubscribe: null });
     }
     valid.sort((a, b) => (a.record?.order ?? 0) - (b.record?.order ?? 0));
+    // 先把所有记录（包括还在恢复的、认不出的）放进名册，再允许加入：去重、上限和顺序都按完整的名册算
     this.list.push(...valid, ...broken);
+    this.reading = false;
     try {
       this.emit();
       for (const entry of valid) {
@@ -329,6 +338,11 @@ export class Roster {
 
   /** 加入名册（分工为“不出场”）。同一个文件已在名册里时不新增，标出那一项。 */
   add(asset: ImportedAsset, file: Blob): AddResult {
+    if (this.reading) {
+      this.notice(ROSTER_READING_MESSAGE);
+      this.emit();
+      return { ok: false, reason: 'reading', error: ROSTER_READING_MESSAGE, key: null };
+    }
     const existing = this.find(asset.id);
     if (existing) {
       this.highlightKey = existing.key;
@@ -370,7 +384,8 @@ export class Roster {
     if (entry.status !== 'ready') return { ok: false, error: '这一项没有恢复，只能删除' };
     if (entry.record.role === role) return { ok: true };
     if (role === 'companion') {
-      const companions = this.list.filter((e) => e !== entry && e.status === 'ready' && e.record?.role === 'companion').length;
+      // 还在恢复、分工已经是同伴的人物也算在内（恢复完就会出场）
+      const companions = this.list.filter((e) => e !== entry && e.status !== 'failed' && e.record?.role === 'companion').length;
       if (companions >= ROSTER_LIMITS.maxCompanions) {
         const error = `${ROLE_LABELS.companion}最多 ${String(ROSTER_LIMITS.maxCompanions)} 个`;
         this.notice(error);

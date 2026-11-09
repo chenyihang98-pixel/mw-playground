@@ -60,6 +60,8 @@ export interface ImportCardSnapshot {
   readonly isPlayer: boolean;
   /** 同一个文件（SHA-256）已在名册里（P4）。 */
   readonly inRoster: boolean;
+  /** 卡片上的就是名册里的那一份资产（修改会保存到名册）（P4）。 */
+  readonly rosterOwned: boolean;
 }
 
 export interface ImportPanelSnapshot {

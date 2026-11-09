@@ -31,6 +31,11 @@ export interface ImportPanelHost {
   inRoster(asset: ImportedAsset): boolean;
   /** 同一个文件（SHA-256）是当前的主角。 */
   isPlayer(asset: ImportedAsset): boolean;
+  /**
+   * 名册里同一个文件（SHA-256）已经加载好的资产；不在名册里或还没恢复好时返回 asset 本身。
+   * 卡片总是操作名册里的那一份，修改才会被名册保存。
+   */
+  canonical(asset: ImportedAsset): ImportedAsset;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: { id?: string; className?: string; text?: string } = {}): HTMLElementTagNameMap[K] {
@@ -159,6 +164,14 @@ export class ImportPanel {
         this.status.textContent = '';
         return;
       }
+      const own = this.host.canonical(outcome.asset);
+      if (own !== outcome.asset) {
+        // 名册里已有同一个文件：卡片打开名册里的那一份（修改会保存），刚加载的副本释放掉
+        outcome.asset.dispose();
+        this.open(own, null);
+        this.status.textContent = `${file.name} 已在名册里：卡片显示的是名册里的这一项，修改会保存`;
+        return;
+      }
       this.open(outcome.asset, file);
       this.status.textContent = `已导入 ${file.name}`;
     } catch (error) {
@@ -210,6 +223,20 @@ export class ImportPanel {
     return this.asset;
   }
 
+  /**
+   * 卡片上的资产如果是名册里已有文件的另一份副本（例如导入时名册里那一项还在恢复），换成名册里的那一份。
+   * 返回是否换了。
+   */
+  private rebindToRoster(): boolean {
+    const asset = this.asset;
+    if (!asset) return false;
+    const own = this.host.canonical(asset);
+    if (own === asset) return false;
+    this.open(own, null);
+    this.status.textContent = `${own.fileName} 已在名册里：卡片改为显示名册里的这一项，修改会保存`;
+    return true;
+  }
+
   /** 卡片的固定部分：只在打开时建一次。 */
   private buildCard(asset: ImportedAsset): CardParts {
     const header = el('div', { className: 'row' });
@@ -252,15 +279,20 @@ export class ImportPanel {
     const notices = el('ul', { id: 'import-notices' });
     const planLine = el('div');
     const table = el('table', { id: 'import-clips' });
-    const report = (result: HostResult) => {
+    // 操作前先确认卡片上的是名册里的那一份（不是另一份副本）
+    const act = (action: (target: ImportedAsset, file: Blob | null) => HostResult) => {
+      this.rebindToRoster();
+      const target = this.asset;
+      if (!target) return;
+      const result = action(target, this.file);
       this.status.textContent = result.ok ? result.message : result.error;
       this.refresh();
     };
     const setPlayer = button('设为主角', () => {
-      report(this.host.setPlayer(asset, this.file));
+      act((target, file) => this.host.setPlayer(target, file));
     });
     const addPerson = button('加入为新人物', () => {
-      report(this.host.addPerson(asset, this.file));
+      act((target, file) => this.host.addPerson(target, file));
     });
     const actions = el('div', { className: 'row' });
     actions.append(setPlayer, addPerson);
@@ -402,9 +434,9 @@ export class ImportPanel {
     if (active) table.querySelector<HTMLElement>(`[data-control="${active}"]`)?.focus();
   }
 
-  /** 名册变化后刷新卡片上的按钮文字。 */
+  /** 名册变化后刷新卡片：名册里同一个文件恢复好了就换成那一份，否则只刷新按钮文字。 */
   refreshCard(): void {
-    this.refresh();
+    if (!this.rebindToRoster()) this.refresh();
   }
 
   update(dt: number): void {
@@ -483,6 +515,7 @@ export class ImportPanel {
         preview: this.preview.snapshot(),
         isPlayer: this.host.isPlayer(asset),
         inRoster: this.host.inRoster(asset),
+        rosterOwned: this.host.retains(asset),
       };
     }
     return { busy: this.busy, error: this.error, warnings: this.warnings, card };

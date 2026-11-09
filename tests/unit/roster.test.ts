@@ -8,10 +8,39 @@ import { sha256Hex } from '../../src/import/asset';
 import * as pipeline from '../../src/import/pipeline';
 import { ROSTER_LIMITS } from '../../src/roster/config';
 import { encodeRecord } from '../../src/roster/format';
-import { Roster } from '../../src/roster/roster';
-import { MemoryRosterStore } from '../../src/roster/store';
+import { ROSTER_READING_MESSAGE, Roster } from '../../src/roster/roster';
+import { MemoryRosterStore, type RosterStore, type StoredEntry } from '../../src/roster/store';
 import { layout } from '../helpers/game';
 import { Stage, addOrThrow, distinctGlb, importFixtureForRoster, importForRoster } from '../helpers/roster';
+
+/** 读出记录要等 gate 放行的存储（模拟 IndexedDB 读得慢）。 */
+class GatedStore implements RosterStore {
+  constructor(
+    private readonly inner: MemoryRosterStore,
+    private readonly gate: Promise<void>,
+  ) {}
+
+  async loadAll(): Promise<StoredEntry[]> {
+    await this.gate;
+    return this.inner.loadAll();
+  }
+
+  put(key: string, value: unknown): Promise<void> {
+    return this.inner.put(key, value);
+  }
+
+  delete(key: string): Promise<void> {
+    return this.inner.delete(key);
+  }
+}
+
+function gate(): { promise: Promise<void>; open: () => void } {
+  let open: () => void = () => undefined;
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+}
 
 /** 恢复后要和加入时一致的部分。 */
 function comparable(roster: Roster) {
@@ -157,6 +186,70 @@ describe('加入', () => {
     const keys = [];
     for (let i = 0; i < 3; i++) keys.push(addOrThrow(roster, await importForRoster(`n${String(i)}.glb`, distinctGlb(30 + i))));
     expect(roster.snapshot().entries.map((e) => [e.key, e.displayName, e.role, e.order])).toEqual(keys.map((k, i) => [k, `n${String(i)}.glb`, 'none', i]));
+  });
+});
+
+describe('恢复期间的加入和分工（第 1 轮审查）', () => {
+  it('存储里的记录读出来之前不能加入：已有 20 人时不会加入第 21 人，也不会产生重复的顺序', async () => {
+    const store = new MemoryRosterStore();
+    const first = new Roster(store);
+    for (let i = 0; i < ROSTER_LIMITS.maxPeople; i++) addOrThrow(first, await importForRoster(`s${String(i)}.glb`, distinctGlb(200 + i)));
+    await first.whenIdle();
+    const reading = gate();
+    const second = new Roster(new GatedStore(store, reading.promise));
+    const restoring = second.restore();
+    const extra = await importForRoster('extra.glb', distinctGlb(299));
+    expect(second.add(extra.asset, extra.file)).toEqual({ ok: false, reason: 'reading', error: ROSTER_READING_MESSAGE, key: null });
+    expect(second.snapshot().notices).toContain(ROSTER_READING_MESSAGE);
+    reading.open();
+    await restoring;
+    expect(second.size).toBe(20);
+    expect(second.add(extra.asset, extra.file)).toMatchObject({ ok: false, reason: 'full' });
+    await second.whenIdle();
+    expect(store.data.size).toBe(20);
+    const orders = second.snapshot().entries.map((e) => e.order);
+    expect(new Set(orders).size).toBe(20);
+  });
+
+  it('记录读出来以后（人物还在恢复）可以加入：去重认得还在恢复的项，新人物排在最后；同伴上限把还在恢复的同伴也算在内', async () => {
+    const store = new MemoryRosterStore();
+    const first = new Roster(store);
+    const idle = await importForRoster('idle.glb', distinctGlb(300));
+    const friends = [await importForRoster('c1.glb', distinctGlb(301)), await importForRoster('c2.glb', distinctGlb(302)), await importForRoster('c3.glb', distinctGlb(303))];
+    const idleKey = addOrThrow(first, idle);
+    const friendKeys = friends.map((f) => addOrThrow(first, f));
+    for (const key of friendKeys) expect(first.setRole(key, 'companion')).toEqual({ ok: true });
+    await first.whenIdle();
+
+    // 第一个人物（不出场）照常恢复，后面三个同伴的恢复卡在 importing 上
+    const importing = gate();
+    let calls = 0;
+    const second = new Roster(store, async (source) => {
+      calls++;
+      if (calls > 1) await importing.promise;
+      return pipeline.importModel(source);
+    });
+    const restoring = second.restore();
+    await vi.waitFor(() => {
+      expect(second.snapshot().entries[0]?.status).toBe('ready');
+    });
+    expect(second.snapshot().entries.slice(1).map((e) => e.status)).toEqual(['loading', 'loading', 'loading']);
+    // 第四个同伴设不上
+    expect(second.setRole(idleKey, 'companion')).toEqual({ ok: false, error: '同伴最多 3 个' });
+    // 去重认得还在恢复的项；新人物排在最后
+    const again = await importForRoster('c1-again.glb', distinctGlb(301));
+    expect(second.add(again.asset, again.file)).toMatchObject({ ok: false, reason: 'duplicate', key: friendKeys[0] });
+    const newcomer = await importForRoster('new.glb', distinctGlb(304));
+    const newKey = addOrThrow(second, newcomer);
+    importing.open();
+    await restoring;
+    await second.whenIdle();
+    const snap = second.snapshot();
+    expect(snap.entries.map((e) => [e.key, e.role, e.order, e.status])).toEqual([
+      [idleKey, 'none', 0, 'ready'],
+      ...friendKeys.map((k, i) => [k, 'companion', i + 1, 'ready']),
+      [newKey, 'none', 4, 'ready'],
+    ]);
   });
 });
 

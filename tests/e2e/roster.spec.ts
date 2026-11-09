@@ -155,6 +155,34 @@ test('设为主角、设为守卫，刷新后名册和分工都还在；在测�
   await page.screenshot({ path: testInfo.outputPath('roster-guard.png') });
 });
 
+test('再次导入名册里已有的文件：卡片打开的是名册里的那一项，在卡片上的修改会保存', async ({ page }) => {
+  await open(page, '/?level=test-a');
+  await chooseFile(page, 'skinned-humanoid.glb');
+  await page.getByRole('button', { name: '设为主角' }).click();
+  await expect.poll(async () => (await read(page)).player.model).toBe('imported');
+  await page.getByRole('button', { name: '关闭' }).click();
+
+  // 同一个文件再导入一次
+  await chooseFile(page, 'skinned-humanoid.glb');
+  const card = (await read(page)).import.card;
+  expect(card).toMatchObject({ inRoster: true, rosterOwned: true, isPlayer: true });
+  await expect(page.locator('#import-status')).toContainText('已在名册里');
+  await page.getByRole('slider', { name: '显示身高' }).fill('2.2');
+  await page.getByRole('button', { name: '向右转 90°' }).click();
+  await expect.poll(async () => (await read(page)).roster.entries[0]?.quarterTurns).toBe(3);
+  expect((await read(page)).roster.entries[0]?.displayHeight).toBeCloseTo(2.2, 6);
+  // 再点一次（显示“已设为主角”）：仍是同一个人物
+  await page.getByRole('button', { name: '已设为主角' }).click();
+  expect((await read(page)).roster.entries).toHaveLength(1);
+  await settled(page);
+
+  await open(page, '/?level=test-a');
+  const after = await read(page);
+  expect(after.roster.entries.map((e) => [e.role, e.quarterTurns, e.displayHeight])).toEqual([['player', 3, 2.2]]);
+  expect(after.roster.entries[0]?.size?.height).toBeCloseTo(2.2, 6);
+  expect(after.player.model).toBe('imported');
+});
+
 test('同伴：在测试小关 A 里移动时跟随主角；结算不受同伴影响', async ({ page }, testInfo) => {
   await open(page, '/?level=test-a');
   await chooseFile(page, 'skinned-humanoid.glb');

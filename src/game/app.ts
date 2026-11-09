@@ -133,6 +133,7 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
       const role = roster.roleOf(asset.id);
       return role !== null && isPlayerRole(role);
     },
+    canonical: (asset: ImportedAsset) => roster.assetOf(asset.id) ?? asset,
   });
 
   const rosterPanel = new RosterPanel(uiRoot, roster, {
