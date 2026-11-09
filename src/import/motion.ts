@@ -1,7 +1,7 @@
 // 带位移的片段：识别承担整体位移的节点，计算模型空间里的水平位移，以及生成“锁定水平位移”的片段副本。
 // 原片段永远不改；锁定只生成副本，取消锁定就回到原片段。
 
-import { Matrix3, Matrix4, PropertyBinding, Vector3, type AnimationClip, type KeyframeTrack, type Object3D } from 'three';
+import { Matrix3, Matrix4, PropertyBinding, Vector3, type AnimationClip, type Interpolant, type KeyframeTrack, type Object3D } from 'three';
 import { CLIP_RULES } from './limits';
 
 export const LOCK_UNSUPPORTED_MESSAGE = '该片段暂不支持锁定水平位移，请选择其他原地片段或使用兜底。';
@@ -113,6 +113,41 @@ function findRootNode(clip: AnimationClip, root: Object3D): { target: TrackTarge
   return { target: first, matrix };
 }
 
+/** CUBICSPLINE 轨道每个关键帧区间里额外取样的点数。 */
+const CUBIC_SAMPLES_PER_INTERVAL = 32;
+
+/**
+ * 位置轨道在模型空间里相对起点的水平位移（最大值和结束时的值）。
+ * 用轨道自己的插值器取值（与播放时一致）：线性和阶跃插值的最大值一定出现在关键帧上；
+ * CUBICSPLINE 在关键帧之间可能走得更远，所以每个区间再均匀取样。
+ */
+function horizontalDisplacement(track: KeyframeTrack, toModel: Matrix4): { maxHorizontal: number; endHorizontal: number } {
+  const times = track.times;
+  const keys = times.length;
+  if (keys === 0) return { maxHorizontal: 0, endHorizontal: 0 };
+  // createInterpolant 是 three 在运行时按插值方式设置的（GLTFLoader 给 CUBICSPLINE 换成了自己的插值器），类型声明里没有
+  const interpolant = (track as KeyframeTrack & { createInterpolant(): Interpolant }).createInterpolant();
+  const cubic = valueStride(track) === 9;
+  const p = new Vector3();
+  const at = (t: number) => p.fromArray(interpolant.evaluate(t)).applyMatrix4(toModel);
+  const start = at(times[0] ?? 0).clone();
+  let maxHorizontal = 0;
+  const visit = (t: number) => {
+    const q = at(t);
+    maxHorizontal = Math.max(maxHorizontal, Math.hypot(q.x - start.x, q.z - start.z));
+  };
+  for (let k = 0; k < keys; k++) {
+    const t0 = times[k] ?? 0;
+    visit(t0);
+    const t1 = times[k + 1];
+    if (cubic && t1 !== undefined) {
+      for (let s = 1; s < CUBIC_SAMPLES_PER_INTERVAL; s++) visit(t0 + ((t1 - t0) * s) / CUBIC_SAMPLES_PER_INTERVAL);
+    }
+  }
+  const end = at(times[keys - 1] ?? 0);
+  return { maxHorizontal, endHorizontal: Math.hypot(end.x - start.x, end.z - start.z) };
+}
+
 /** 识别带位移的片段（模型空间里，相对片段起点的水平位移超过阈值）。 */
 export function analyzeRootMotion(clip: AnimationClip, root: Object3D, threshold: number = CLIP_RULES.rootMotionThreshold): RootMotion {
   const found = findRootNode(clip, root);
@@ -120,19 +155,7 @@ export function analyzeRootMotion(clip: AnimationClip, root: Object3D, threshold
   if ('reason' in found) return { kind: 'unidentified', reason: found.reason };
   const track = clip.tracks[found.target.trackIndex];
   if (!track) return { kind: 'unidentified', reason: '位置轨道不存在' };
-  const stride = valueStride(track);
-  const keys = track.times.length;
-  const p = new Vector3();
-  const start = new Vector3();
-  let maxHorizontal = 0;
-  let endHorizontal = 0;
-  for (let k = 0; k < keys; k++) {
-    p.fromArray(track.values, keyValueOffset(stride, k)).applyMatrix4(found.matrix);
-    if (k === 0) start.copy(p);
-    const horizontal = Math.hypot(p.x - start.x, p.z - start.z);
-    maxHorizontal = Math.max(maxHorizontal, horizontal);
-    if (k === keys - 1) endHorizontal = horizontal;
-  }
+  const { maxHorizontal, endHorizontal } = horizontalDisplacement(track, found.matrix);
   return {
     kind: 'identified',
     nodeName: PropertyBinding.parseTrackName(track.name).nodeName,

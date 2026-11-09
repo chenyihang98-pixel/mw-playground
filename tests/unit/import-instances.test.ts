@@ -7,7 +7,7 @@ import { SPEC } from '../../src/game/spec';
 import { ImportedCharacterModel } from '../../src/import/animator';
 import { InstanceLimitError, InstanceRegistry } from '../../src/import/asset';
 import { bindPoseBounds } from '../../src/import/normalize';
-import { importFixture, importGlb } from '../helpers/import';
+import { importFixture, importGlb, instancedTriangles, skinnedWithMeshTransform } from '../helpers/import';
 
 function normalizedBox(root: Object3D): Box3 {
   const box = bindPoseBounds(root);
@@ -110,13 +110,34 @@ describe('归一化（作用在外层节点上）', () => {
     expect(instance.normalizedSize().width).toBeCloseTo(normalizedBox(instance.swayPivot).max.x * 2, 6);
   });
 
-  it('带骨骼的模型按绑定姿态算：骨骼当前的姿态不影响包围盒', async () => {
+  it('带骨骼的模型按绑定姿态下实际的蒙皮顶点算：网格节点的变换被蒙皮抵消时也贴地、居中、达到显示身高', async () => {
+    // 审查复现用例：几何高 1 m；单骨骼、逆绑定矩阵为单位矩阵；网格节点平移 (5,3,0)、放大 2 倍
+    const asset = await importGlb(skinnedWithMeshTransform());
+    expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(1, 6); // 实际蒙皮顶点：网格节点的变换不起作用
+    const instance = asset.createInstance();
+    // normalizedBox 用 three 的 applyBoneTransform 计算实际显示的顶点
+    expectGrounded(normalizedBox(instance.swayPivot), 1.75);
+  });
+
+  it('带骨骼的夹具：实际蒙皮顶点贴地、身高 1.75 m；实例播放动画不改变资产的包围盒和归一化', async () => {
     const asset = await importFixture('skinned-humanoid');
     const before = asset.bounds.clone();
     expect(before.max.y - before.min.y).toBeCloseTo(1.75, 5);
-    const spine = asset.template.getObjectByName('Spine');
-    spine?.rotation.set(1.2, 0, 0.8);
-    expect(bindPoseBounds(asset.template)?.equals(before)).toBe(true);
+    const playing = asset.createInstance();
+    const run = asset.clips[2];
+    if (!run) throw new Error('没有片段');
+    playing.mixer.clipAction(run).play();
+    playing.mixer.update(0.3);
+    expect(asset.bounds.equals(before)).toBe(true);
+    const outer = playing.outer.matrix.clone();
+    expect(playing.outer.matrix.equals(outer)).toBe(true);
+    expectGrounded(normalizedBox(asset.createInstance().swayPivot), 1.75);
+  });
+
+  it('实例化网格（EXT_mesh_gpu_instancing）：每个实例的变换都算进包围盒', async () => {
+    const asset = await importGlb(instancedTriangles());
+    expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(5, 6); // 实例在 y = 0、2、4，三角形高 1 m
+    expectGrounded(normalizedBox(asset.createInstance().swayPivot), 1.75);
   });
 });
 

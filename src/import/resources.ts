@@ -1,6 +1,6 @@
 // 加载后的统计（实际三角面数、贴图尺寸）和资源释放（几何、材质、贴图、骨骼贴图）。
 
-import type { BufferGeometry, Material, Mesh, Object3D, SkinnedMesh, Texture } from 'three';
+import type { BufferGeometry, InstancedMesh, Material, Mesh, Object3D, SkinnedMesh, Texture } from 'three';
 import { IMPORT_LIMITS, type ImportLimits } from './limits';
 import { formatCount, type CheckResult } from './precheck';
 
@@ -43,7 +43,24 @@ export function disposeResources(resources: Resources): { geometries: number; ma
 }
 
 export function disposeObject(root: Object3D): { geometries: number; materials: number; textures: number } {
+  disposeInstancedMeshes(root);
   return disposeResources(collectResources(root));
+}
+
+function isInstanced(obj: Object3D): obj is InstancedMesh {
+  return (obj as Partial<InstancedMesh>).isInstancedMesh === true;
+}
+
+/** 释放实例化网格自己的实例属性（每个克隆都有自己的 instanceMatrix）。 */
+export function disposeInstancedMeshes(root: Object3D): number {
+  let count = 0;
+  root.traverse((obj) => {
+    if (isInstanced(obj)) {
+      obj.dispose();
+      count++;
+    }
+  });
+  return count;
 }
 
 /** 释放克隆出来的骨骼（每个实例有自己的 Skeleton，骨骼贴图在这里释放）。 */
@@ -88,8 +105,10 @@ export function loadedStats(root: Object3D): LoadedStats {
     if (!isMesh(obj)) return;
     meshes++;
     const geometry = obj.geometry;
-    const count = geometry.index ? geometry.index.count : (geometry.getAttribute('position') as { count: number } | undefined)?.count ?? 0;
-    triangles += Math.floor(count / 3);
+    const count = geometry.index ? geometry.index.count : geometry.hasAttribute('position') ? geometry.getAttribute('position').count : 0;
+    // 实例化网格（例如 EXT_mesh_gpu_instancing）按实际实例数计算
+    const instances = isInstanced(obj) ? obj.count : 1;
+    triangles += Math.floor(count / 3) * instances;
     const skinned = obj as Partial<SkinnedMesh>;
     if (skinned.isSkinnedMesh === true && skinned.skeleton) {
       skinnedMeshes++;

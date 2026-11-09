@@ -19,7 +19,7 @@ import { IMPORT_LIMITS } from './limits';
 import { analyzeRootMotion, lockHorizontalMotion, type RootMotion } from './motion';
 import { applyNormalization, clampHeight, DEFAULT_NORMALIZE, type NormalizedSize, type NormalizeSettings } from './normalize';
 import type { ImportFormat } from './precheck';
-import { collectResources, disposeResources, disposeSkeletons, type LoadedStats } from './resources';
+import { collectResources, disposeInstancedMeshes, disposeResources, disposeSkeletons, type LoadedStats } from './resources';
 
 /** 文件内容的 SHA-256（十六进制）。浏览器和 Node 都有 crypto.subtle。 */
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -268,6 +268,7 @@ export class ImportedAsset {
     for (const instance of [...this.instances]) instance.dispose();
     this.disposed = true;
     this.listeners.clear();
+    disposeInstancedMeshes(this.template);
     return disposeResources(collectResources(this.template));
   }
 
@@ -319,6 +320,7 @@ export class ModelInstance {
     this.mixer.uncacheRoot(this.object);
     this.swayPivot.removeFromParent();
     disposeSkeletons(this.object);
+    disposeInstancedMeshes(this.object);
     this.registry?.release();
     this.asset.forget(this);
   }

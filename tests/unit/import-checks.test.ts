@@ -1,13 +1,13 @@
 // 导入前后的检查：外部引用、压缩扩展、各项上限、大小、损坏的文件、静态模型；超限时释放已加载的资源。
 
-import { BoxGeometry, BufferGeometry, Mesh, MeshStandardMaterial, Texture } from 'three';
+import { BoxGeometry, BufferGeometry, Material, Mesh, MeshStandardMaterial, Texture } from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { buildFixture } from '../../src/asset/fixtures';
 import { IMPORT_LIMITS } from '../../src/import/limits';
 import { OBJ_MATERIAL_NOTICE } from '../../src/import/load';
 import { checkBeforeRead, precheckGlb } from '../../src/import/precheck';
 import { disposeObject, loadedStats, postLoadCheck } from '../../src/import/resources';
-import { bigTexture, declaredTriangles, importBytes, manyBones, manyClips, text } from '../helpers/import';
+import { bigTexture, declaredTriangles, importBytes, instancedTriangles, manyBones, manyClips, text } from '../helpers/import';
 
 const MB = 1024 * 1024;
 
@@ -174,5 +174,78 @@ describe('静态模型', () => {
   it('损坏的 OBJ / STL：友好的错误', async () => {
     expect(await errorOf('bad.obj', text('this is not an obj file'))).toContain('文件损坏或格式不对');
     expect(await errorOf('bad.stl', new Uint8Array([1, 2, 3, 4, 5, 6, 7]))).toContain('文件损坏或格式不对');
+  });
+});
+
+describe('审查补充：实例化网格、非索引 PLY、校验失败时释放资源', () => {
+  it('实例化网格按实际实例数统计三角面，超限时拒绝（一个三角形实例化 3 次，上限 2）', async () => {
+    const ok = await importBytes('instanced.glb', instancedTriangles());
+    if (!ok.ok) throw new Error(ok.error);
+    expect(ok.asset.stats.triangles).toBe(3);
+    const rejected = await importBytes('instanced.glb', instancedTriangles(), { ...IMPORT_LIMITS, trianglesReject: 2 });
+    expect(rejected.ok).toBe(false);
+    if (!rejected.ok) {
+      expect(rejected.stage).toBe('postcheck');
+      expect(rejected.error).toContain('三角面太多（3）');
+    }
+  });
+
+  it('面上带 UV 的 PLY：加载器生成的是没有索引的三角网格，照常导入', async () => {
+    const ply = text(
+      'ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\n' +
+        'element face 1\nproperty list uchar int vertex_indices\nproperty list uchar float texcoord\nend_header\n' +
+        '0 0 0\n1 0 0\n0 1 0\n3 0 1 2 6 0 0 1 0 0 1\n',
+    );
+    const outcome = await importBytes('uv.ply', ply);
+    if (!outcome.ok) throw new Error(outcome.error);
+    expect(outcome.asset.stats.triangles).toBe(1);
+    let indexed = true;
+    outcome.asset.template.traverse((obj) => {
+      const mesh = obj as Partial<Mesh>;
+      if (mesh.isMesh && mesh.geometry) indexed = mesh.geometry.index !== null;
+    });
+    expect(indexed).toBe(false);
+  });
+
+  it('只有点的 PLY：拒绝，并释放已经解析出的几何', async () => {
+    const ply = text('ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nend_header\n0 0 0\n1 0 0\n0 1 0\n');
+    const geometryDispose = vi.spyOn(BufferGeometry.prototype, 'dispose');
+    try {
+      const outcome = await importBytes('points.ply', ply);
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) expect(outcome.error).toContain('PLY 里只有点，没有面');
+      expect(geometryDispose).toHaveBeenCalledTimes(1);
+    } finally {
+      geometryDispose.mockRestore();
+    }
+  });
+
+  it('OBJ 里一个网格正常、一个有 NaN：拒绝，并释放所有已经建好的几何和材质', async () => {
+    const obj = text('o good\nv 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\no bad\nv nan 0 0\nv 1 0 0\nv 0 1 0\nf 4 5 6\n');
+    const geometryDispose = vi.spyOn(BufferGeometry.prototype, 'dispose');
+    const materialDispose = vi.spyOn(Material.prototype, 'dispose');
+    try {
+      const outcome = await importBytes('mixed.obj', obj);
+      expect(outcome.ok).toBe(false);
+      if (!outcome.ok) expect(outcome.error).toContain('非法数值');
+      expect(geometryDispose).toHaveBeenCalledTimes(2);
+      // 第一个网格：OBJLoader 的材质换成默认材质时释放一次，默认材质失败后再释放一次；第二个网格的 OBJLoader 材质释放一次
+      expect(materialDispose).toHaveBeenCalledTimes(3);
+    } finally {
+      geometryDispose.mockRestore();
+      materialDispose.mockRestore();
+    }
+  });
+
+  it('STL 有 NaN 顶点：拒绝，并释放解析出的几何', async () => {
+    const stl = text('solid t\n facet normal 0 0 1\n  outer loop\n   vertex nan 0 0\n   vertex 1 0 0\n   vertex 0 1 0\n  endloop\n endfacet\nendsolid t\n');
+    const geometryDispose = vi.spyOn(BufferGeometry.prototype, 'dispose');
+    try {
+      const outcome = await importBytes('nan.stl', stl);
+      expect(outcome.ok).toBe(false);
+      expect(geometryDispose).toHaveBeenCalledTimes(1);
+    } finally {
+      geometryDispose.mockRestore();
+    }
   });
 });

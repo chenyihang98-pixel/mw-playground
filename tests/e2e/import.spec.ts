@@ -107,6 +107,33 @@ test('带骨骼的夹具经文件选择框导入，出现在预览里并且在�
   await page.screenshot({ path: testInfo.outputPath('import-preview.png') });
 });
 
+test('身高滑块可以连续按方向键、连续拖动调整（调整过程中滑块不被重建）', async ({ page }) => {
+  await open(page, '/?level=test-a');
+  await chooseFile(page, files['skinned-humanoid.glb'] ?? '');
+  await expect.poll(async () => (await read(page)).import.card?.displayHeight).toBe(1.75);
+  const slider = page.getByRole('slider', { name: '显示身高' });
+  // 连续按 5 次方向键：每次 0.01 m，焦点一直在滑块上
+  await slider.focus();
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+  await expect.poll(async () => (await read(page)).import.card?.displayHeight ?? 0).toBeCloseTo(1.8, 5);
+  await expect(slider).toBeFocused();
+  // 按住拖到最右端：拖动途中值持续变化，最后到上限 2.4 m
+  const box = await slider.boundingBox();
+  if (!box) throw new Error('滑块不可见');
+  const y = box.y + box.height / 2;
+  await page.mouse.move(box.x + box.width * 0.5, y);
+  await page.mouse.down();
+  const seen = new Set<number>();
+  for (let i = 1; i <= 10; i++) {
+    await page.mouse.move(box.x + box.width * (0.5 + i * 0.05), y);
+    seen.add((await read(page)).import.card?.displayHeight ?? 0);
+  }
+  await page.mouse.up();
+  expect(seen.size).toBeGreaterThan(5);
+  expect((await read(page)).import.card?.displayHeight ?? 0).toBeGreaterThan(2.35);
+  expect((await read(page)).import.card?.size.height ?? 0).toBeGreaterThan(2.35);
+});
+
 test('导入损坏的文件：提示错误，当前主角保持不变', async ({ page }, testInfo) => {
   await open(page, '/?level=test-a');
   await chooseFile(page, files['broken.glb'] ?? '');

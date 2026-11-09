@@ -1,8 +1,11 @@
 // 导入界面：“导入角色”按钮（文件选择框）、把文件拖进窗口、错误提示、导入卡片（预览、尺寸、片段列表、提示、
 // 旋转按钮、身高滑块、“设为主角”、“加入为新人物”）。功能能用就行，视觉留给 P6。
+//
+// 卡片里的控件（身高滑块、旋转按钮、操作按钮）只在打开卡片时建一次；设置变化时只刷新文字、提示和片段表，
+// 不重建正在操作的控件，拖动滑块或连续按方向键时不会丢失焦点。片段表重建后把焦点还给同一个控件。
 
 import './import.css';
-import { bindPoseBounds } from '../normalize';
+import { normalizedBox } from '../normalize';
 import { PURPOSE_LABELS, PURPOSES, type MotionSource, type Playback, type Purpose } from '../clipRules';
 import { DISPLAY } from '../limits';
 import { LOCK_UNSUPPORTED_MESSAGE } from '../motion';
@@ -28,6 +31,13 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: { id?: string;
   return node;
 }
 
+function button(text: string, onClick: () => void): HTMLButtonElement {
+  const b = el('button', { text });
+  b.type = 'button';
+  b.addEventListener('click', onClick);
+  return b;
+}
+
 function sourceLabel(source: MotionSource | null): string {
   if (source === null) return '无（保持当前动作）';
   switch (source.kind) {
@@ -44,9 +54,21 @@ function sourceLabel(source: MotionSource | null): string {
 
 const PLAYBACK_LABELS: Readonly<Record<Playback, string>> = { loop: '循环', once: '一次' };
 
+/** 卡片里需要随设置刷新的部分。 */
+interface CardParts {
+  readonly info: HTMLElement;
+  readonly slider: HTMLInputElement;
+  readonly heightValue: HTMLElement;
+  readonly turnText: HTMLElement;
+  readonly notices: HTMLUListElement;
+  readonly planLine: HTMLElement;
+  readonly table: HTMLTableElement;
+  readonly setPlayer: HTMLButtonElement;
+}
+
 export class ImportPanel {
   private readonly bar = el('div', { id: 'import-bar' });
-  private readonly button = el('button', { id: 'import-button', text: '导入角色' });
+  private readonly importButton = el('button', { id: 'import-button', text: '导入角色' });
   private readonly input = el('input', { id: 'import-file' });
   private readonly status = el('span', { id: 'import-status' });
   private readonly errorBox = el('div', { id: 'import-error' });
@@ -54,13 +76,13 @@ export class ImportPanel {
   private readonly card = el('section', { id: 'import-card' });
   private readonly preview = new PreviewViewport(416, 300);
   private asset: ImportedAsset | null = null;
+  private parts: CardParts | null = null;
   private unsubscribe: (() => void) | null = null;
   private busy = false;
   private error: string | null = null;
+  /** 最近一次导入（成功或失败）的提示。卡片上显示的是卡片所属资产自己的提示。 */
   private warnings: readonly string[] = [];
   private visible = true;
-  private boundsCache: { version: number; value: ImportCardSnapshot['bounds'] } | null = null;
-  private version = 0;
 
   constructor(
     root: HTMLElement,
@@ -69,16 +91,16 @@ export class ImportPanel {
     this.input.type = 'file';
     this.input.accept = '.glb,.obj,.stl,.ply';
     this.input.hidden = true;
-    this.button.type = 'button';
+    this.importButton.type = 'button';
     this.errorBox.setAttribute('role', 'alert');
     this.status.setAttribute('role', 'status');
     this.card.setAttribute('aria-label', '导入预览');
     this.card.hidden = true;
     this.dropHint.hidden = true;
-    this.bar.append(this.button, this.status, this.input);
+    this.bar.append(this.importButton, this.status, this.input);
     root.append(this.bar, this.errorBox, this.dropHint, this.card);
 
-    this.button.addEventListener('click', () => {
+    this.importButton.addEventListener('click', () => {
       this.input.value = '';
       this.input.click();
     });
@@ -112,7 +134,7 @@ export class ImportPanel {
   async importFile(file: File): Promise<void> {
     if (this.busy) return;
     this.busy = true;
-    this.button.disabled = true;
+    this.importButton.disabled = true;
     this.status.textContent = `正在导入 ${file.name}…`;
     this.setError(null);
     try {
@@ -131,7 +153,7 @@ export class ImportPanel {
       this.status.textContent = '';
     } finally {
       this.busy = false;
-      this.button.disabled = false;
+      this.importButton.disabled = false;
     }
   }
 
@@ -140,13 +162,12 @@ export class ImportPanel {
     this.asset = asset;
     const { slots } = asset.decisions();
     this.preview.show(asset, slots.idle ?? slots.walk ?? (asset.clips.length > 0 ? 0 : null));
+    this.parts = this.buildCard(asset);
     this.unsubscribe = asset.onChange(() => {
-      this.version++;
-      this.render();
+      this.refresh();
     });
-    this.version++;
     this.card.hidden = false;
-    this.render();
+    this.refresh();
   }
 
   /** 关闭卡片：释放预览实例；资产没有别的实例（没当主角）时一并释放。 */
@@ -156,6 +177,7 @@ export class ImportPanel {
     this.preview.clear();
     const asset = this.asset;
     this.asset = null;
+    this.parts = null;
     if (asset?.instanceCount === 0 && this.host.playerAsset() !== asset) asset.dispose();
     this.card.hidden = true;
     this.card.replaceChildren();
@@ -166,29 +188,16 @@ export class ImportPanel {
     return this.asset;
   }
 
-  private render(): void {
-    const asset = this.asset;
-    if (!asset) return;
-    const { clips: decisions, plan } = asset.decisions();
-    const size = this.preview.currentInstance()?.normalizedSize();
-    const isPlayer = this.host.playerAsset() === asset;
-
+  /** 卡片的固定部分：只在打开时建一次。 */
+  private buildCard(asset: ImportedAsset): CardParts {
     const header = el('div', { className: 'row' });
-    const title = el('h2', { text: asset.fileName });
-    const closeButton = el('button', { text: '关闭' });
-    closeButton.type = 'button';
-    closeButton.addEventListener('click', () => {
-      this.close();
-    });
-    header.append(title, closeButton);
-
-    const info = el('div', {
-      text:
-        `尺寸：宽 ${(size?.width ?? 0).toFixed(2)} × 高 ${(size?.height ?? 0).toFixed(2)} × 深 ${(size?.depth ?? 0).toFixed(2)} m；` +
-        `三角面 ${asset.stats.triangles.toLocaleString('en-US')}；` +
-        (asset.stats.skinnedMeshes > 0 ? `骨骼 ${String(asset.stats.bones)}；` : '无骨骼；') +
-        `片段 ${String(asset.clips.length)}；贴图 ${asset.stats.textures.map((t) => `${String(t.width)}×${String(t.height)}`).join('、') || '无'}`,
-    });
+    header.append(
+      el('h2', { text: asset.fileName }),
+      button('关闭', () => {
+        this.close();
+      }),
+    );
+    const info = el('div');
 
     const heightRow = el('div', { className: 'row' });
     const heightLabel = el('label', { text: '显示身高' });
@@ -199,43 +208,94 @@ export class ImportPanel {
     slider.step = '0.01';
     slider.value = String(asset.settings.displayHeight);
     slider.setAttribute('aria-label', '显示身高');
-    const heightValue = el('span', { text: `${asset.settings.displayHeight.toFixed(2)} m（只影响显示，玩法胶囊不变）` });
     slider.addEventListener('input', () => {
       asset.setDisplayHeight(Number(slider.value));
     });
+    const heightValue = el('span');
     heightLabel.append(slider);
     heightRow.append(heightLabel, heightValue);
 
     const turnRow = el('div', { className: 'row' });
-    const left = el('button', { text: '向左转 90°' });
-    const right = el('button', { text: '向右转 90°' });
-    left.type = 'button';
-    right.type = 'button';
-    left.addEventListener('click', () => {
-      asset.rotateQuarter(1);
-    });
-    right.addEventListener('click', () => {
-      asset.rotateQuarter(-1);
-    });
-    turnRow.append(left, right, el('span', { text: `已转 ${String(asset.settings.quarterTurns * 90)}°（默认把 +Z 当作正前方）` }));
+    const turnText = el('span');
+    turnRow.append(
+      button('向左转 90°', () => {
+        asset.rotateQuarter(1);
+      }),
+      button('向右转 90°', () => {
+        asset.rotateQuarter(-1);
+      }),
+      turnText,
+    );
 
-    const notices = [...asset.notices, ...this.warnings, ...plan.notices];
-    const noticeList = el('ul', { id: 'import-notices' });
-    for (const n of notices) noticeList.append(el('li', { text: n }));
-
-    const planLine = el('div', {
-      text: `动作：待机 ${sourceLabel(plan.idle)}；走 ${sourceLabel(plan.walk)}；跑 ${sourceLabel(plan.run)}；跳 ${sourceLabel(plan.jump)}`,
-    });
-
+    const notices = el('ul', { id: 'import-notices' });
+    const planLine = el('div');
     const table = el('table', { id: 'import-clips' });
+    const setPlayer = button('设为主角', () => {
+      const result = this.host.setPlayer(asset);
+      if (!result.ok) this.setError(result.error);
+      this.refresh();
+    });
+    const addPerson = button('加入为新人物（P4 实现）', () => undefined);
+    addPerson.disabled = true;
+    addPerson.title = '在 P4 实现';
+    const actions = el('div', { className: 'row' });
+    actions.append(setPlayer, addPerson);
+
+    this.card.replaceChildren(
+      header,
+      this.preview.canvas,
+      info,
+      heightRow,
+      turnRow,
+      el('div', { text: '提示：' }),
+      notices,
+      planLine,
+      table,
+      actions,
+    );
+    return { info, slider, heightValue, turnText, notices, planLine, table, setPlayer };
+  }
+
+  /** 设置变化后刷新卡片的可变部分；不重建身高滑块和按钮。 */
+  private refresh(): void {
+    const asset = this.asset;
+    const parts = this.parts;
+    if (!asset || !parts) return;
+    const { plan } = asset.decisions();
+    const size = this.preview.currentInstance()?.normalizedSize();
+    parts.info.textContent =
+      `尺寸：宽 ${(size?.width ?? 0).toFixed(2)} × 高 ${(size?.height ?? 0).toFixed(2)} × 深 ${(size?.depth ?? 0).toFixed(2)} m；` +
+      `三角面 ${asset.stats.triangles.toLocaleString('en-US')}；` +
+      (asset.stats.skinnedMeshes > 0 ? `骨骼 ${String(asset.stats.bones)}；` : '无骨骼；') +
+      `片段 ${String(asset.clips.length)}；贴图 ${asset.stats.textures.map((t) => `${String(t.width)}×${String(t.height)}`).join('、') || '无'}`;
+    const height = String(asset.settings.displayHeight);
+    if (parts.slider.value !== height && Number(parts.slider.value) !== asset.settings.displayHeight) parts.slider.value = height;
+    parts.heightValue.textContent = `${asset.settings.displayHeight.toFixed(2)} m（只影响显示，玩法胶囊不变）`;
+    parts.turnText.textContent = `已转 ${String(asset.settings.quarterTurns * 90)}°（默认把 +Z 当作正前方）`;
+    parts.notices.replaceChildren(...this.notices(asset).map((n) => el('li', { text: n })));
+    parts.planLine.textContent = `动作：待机 ${sourceLabel(plan.idle)}；走 ${sourceLabel(plan.walk)}；跑 ${sourceLabel(plan.run)}；跳 ${sourceLabel(plan.jump)}`;
+    parts.setPlayer.textContent = this.host.playerAsset() === asset ? '已设为主角' : '设为主角';
+    this.renderClipTable(asset, parts.table);
+  }
+
+  private notices(asset: ImportedAsset): string[] {
+    return [...asset.notices, ...asset.warnings, ...asset.decisions().plan.notices];
+  }
+
+  /** 重建片段表；之前焦点在表里的哪个控件，重建后还给同一个控件。 */
+  private renderClipTable(asset: ImportedAsset, table: HTMLTableElement): void {
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.control : undefined;
+    const { clips: decisions } = asset.decisions();
     const head = el('tr');
     for (const h of ['#', '名字', '时长', '用途', '播放', '位移', '']) head.append(el('th', { text: h }));
-    table.append(head);
-    decisions.forEach((d) => {
+    const rows: HTMLTableRowElement[] = [head];
+    for (const d of decisions) {
       const clip = asset.clips[d.index];
       const tr = el('tr');
       tr.dataset.clipIndex = String(d.index);
+
       const purposeSelect = el('select');
+      purposeSelect.dataset.control = `purpose-${String(d.index)}`;
       purposeSelect.setAttribute('aria-label', `片段 ${String(d.index)} 的用途`);
       purposeSelect.add(new Option(`自动：${PURPOSE_LABELS[d.recognized]}`, ''));
       for (const p of PURPOSES) purposeSelect.add(new Option(PURPOSE_LABELS[p], p));
@@ -243,13 +303,14 @@ export class ImportPanel {
       purposeSelect.addEventListener('change', () => {
         asset.setPurpose(d.index, purposeSelect.value === '' ? null : (purposeSelect.value as Purpose));
       });
+
       const playbackSelect = el('select');
+      playbackSelect.dataset.control = `playback-${String(d.index)}`;
       playbackSelect.setAttribute('aria-label', `片段 ${String(d.index)} 的播放方式`);
-      const autoPlayback = asset.decisions().clips[d.index];
       const autoLabel =
         d.playbackSource === 'manual'
           ? '自动'
-          : `自动：${PLAYBACK_LABELS[autoPlayback?.playback ?? 'once']}${d.playbackSource === 'inferred' ? '（推断）' : '（明确）'}`;
+          : `自动：${PLAYBACK_LABELS[d.playback]}${d.playbackSource === 'inferred' ? '（推断）' : '（明确）'}`;
       playbackSelect.add(new Option(autoLabel, ''));
       playbackSelect.add(new Option('循环', 'loop'));
       playbackSelect.add(new Option('一次', 'once'));
@@ -257,6 +318,7 @@ export class ImportPanel {
       playbackSelect.addEventListener('change', () => {
         asset.setPlayback(d.index, playbackSelect.value === '' ? null : (playbackSelect.value as Playback));
       });
+
       const motion = asset.rootMotion[d.index] ?? { kind: 'none' as const };
       const motionCell = el('td');
       if (motion.kind === 'identified') {
@@ -264,6 +326,7 @@ export class ImportPanel {
         const lockLabel = el('label', { text: '锁定水平位移' });
         const lock = el('input');
         lock.type = 'checkbox';
+        lock.dataset.control = `lock-${String(d.index)}`;
         lock.checked = asset.isMotionLocked(d.index);
         lock.setAttribute('aria-label', `锁定片段 ${String(d.index)} 的水平位移`);
         lock.addEventListener('change', () => {
@@ -277,18 +340,21 @@ export class ImportPanel {
       } else {
         motionCell.textContent = '原地';
       }
-      const playButton = el('button', { text: '▶' });
-      playButton.type = 'button';
-      playButton.setAttribute('aria-label', `预览片段 ${String(d.index)}`);
-      playButton.addEventListener('click', () => {
+
+      const playButton = button('▶', () => {
         this.preview.play(d.index);
       });
+      playButton.dataset.control = `play-${String(d.index)}`;
+      playButton.setAttribute('aria-label', `预览片段 ${String(d.index)}`);
+
       const purposeCell = el('td');
       purposeCell.append(purposeSelect);
       if (d.slot) purposeCell.append(el('span', { className: 'tag', text: `用于${PURPOSE_LABELS[d.slot]}` }));
       const playbackCell = el('td');
       playbackCell.append(playbackSelect);
       if (d.playbackSource === 'inferred') playbackCell.append(el('span', { className: 'tag warn', text: '推断' }));
+      const playCell = el('td');
+      playCell.append(playButton);
       tr.append(
         el('td', { text: String(d.index) }),
         el('td', { text: clip?.name ?? '' }),
@@ -296,46 +362,19 @@ export class ImportPanel {
         purposeCell,
         playbackCell,
         motionCell,
+        playCell,
       );
-      const playCell = el('td');
-      playCell.append(playButton);
-      tr.append(playCell);
-      table.append(tr);
+      rows.push(tr);
       if (d.notes.length > 0) {
         const noteRow = el('tr');
         const noteCell = el('td', { className: 'note', text: d.notes.join('；') });
         noteCell.colSpan = 7;
         noteRow.append(noteCell);
-        table.append(noteRow);
+        rows.push(noteRow);
       }
-    });
-
-    const actions = el('div', { className: 'row' });
-    const setPlayer = el('button', { text: isPlayer ? '已设为主角' : '设为主角' });
-    setPlayer.type = 'button';
-    setPlayer.addEventListener('click', () => {
-      const result = this.host.setPlayer(asset);
-      if (!result.ok) this.setError(result.error);
-      this.render();
-    });
-    const addPerson = el('button', { text: '加入为新人物（P4 实现）' });
-    addPerson.type = 'button';
-    addPerson.disabled = true;
-    addPerson.title = '在 P4 实现';
-    actions.append(setPlayer, addPerson);
-
-    this.card.replaceChildren(
-      header,
-      this.preview.canvas,
-      info,
-      heightRow,
-      turnRow,
-      el('div', { text: '提示：' }),
-      noticeList,
-      planLine,
-      table,
-      actions,
-    );
+    }
+    table.replaceChildren(...rows);
+    if (active) table.querySelector<HTMLElement>(`[data-control="${active}"]`)?.focus();
   }
 
   update(dt: number): void {
@@ -349,21 +388,15 @@ export class ImportPanel {
     if (!this.card.hidden) this.preview.update(dt);
   }
 
-  private normalizedBounds(): ImportCardSnapshot['bounds'] {
-    if (this.boundsCache?.version === this.version) return this.boundsCache.value;
-    const instance = this.preview.currentInstance();
-    const box = instance ? bindPoseBounds(instance.swayPivot) : null;
-    const value = box ? { min: box.min.toArray(), max: box.max.toArray() } : { min: [0, 0, 0], max: [0, 0, 0] };
-    this.boundsCache = { version: this.version, value };
-    return value;
-  }
-
   snapshot(): ImportPanelSnapshot {
     const asset = this.asset;
     let card: ImportCardSnapshot | null = null;
+    const instance = this.preview.currentInstance();
     if (asset) {
       const { clips, slots, plan } = asset.decisions();
-      const size = this.preview.currentInstance()?.normalizedSize() ?? { width: 0, height: 0, depth: 0 };
+      const size = instance?.normalizedSize() ?? { width: 0, height: 0, depth: 0 };
+      // 归一化之后的绑定姿态包围盒：模型空间的包围盒经过外层节点的变换（预览在播放动画，不用当前姿态）
+      const box = instance ? normalizedBox(asset.bounds, instance.outer) : null;
       const rows: ClipRowSnapshot[] = asset.clipViews().map((view) => {
         const motion = view.rootMotion;
         return {
@@ -400,13 +433,13 @@ export class ImportPanel {
         displayHeight: asset.settings.displayHeight,
         quarterTurns: asset.settings.quarterTurns,
         size: { width: size.width, height: size.height, depth: size.depth },
-        bounds: this.normalizedBounds(),
+        bounds: box ? { min: box.min.toArray(), max: box.max.toArray() } : { min: [0, 0, 0], max: [0, 0, 0] },
         triangles: asset.stats.triangles,
         meshes: asset.stats.meshes,
         skinned: asset.stats.skinnedMeshes > 0,
         bones: asset.stats.bones,
         textures: asset.stats.textures.map((t) => ({ width: t.width, height: t.height })),
-        notices: [...asset.notices, ...this.warnings, ...plan.notices],
+        notices: this.notices(asset),
         clips: rows,
         slots,
         plan: {

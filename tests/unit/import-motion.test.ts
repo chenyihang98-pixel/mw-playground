@@ -74,6 +74,27 @@ describe('检测', () => {
     expect(asset.rootMotion.map((m) => m.kind)).toEqual(['none', 'none', 'none']);
   });
 
+  it('CUBICSPLINE 在关键帧之间的水平运动也算：首末两帧都在原点，t = 0.5 时偏出 1 m', async () => {
+    // 关键帧 0：值 (0,0,0)，出切线 X = 4；关键帧 1：入切线 X = −4，值 (0,0,0)
+    const values = [0, 0, 0, 0, 0, 0, 4, 0, 0, -4, 0, 0, 0, 0, 0, 0, 0, 0];
+    const b = new GltfBuilder();
+    const mover = b.addNode({ name: 'Mover', mesh: triangleMesh(b) });
+    b.addScene([b.addNode({ name: 'Root', children: [mover] })]);
+    b.addAnimation({ name: 'walk', extras: { loop: true }, channels: [{ node: mover, path: 'translation', times: [0, 1], values, interpolation: 'CUBICSPLINE' }] });
+    const asset = await importGlb(b.toGlb());
+    const motion = asset.rootMotion[0];
+    expect(motion?.kind).toBe('identified');
+    if (motion?.kind !== 'identified') return;
+    expect(motion.maxHorizontal).toBeCloseTo(1, 6);
+    expect(motion.endHorizontal).toBeCloseTo(0, 9);
+    expect(motion.flagged).toBe(true);
+    expect(asset.decisions().slots.walk).toBeNull(); // 带位移的片段不作为“走”的自动建议
+    // 锁定后，区间内也不再有水平运动
+    asset.setMotionLocked(0, true);
+    expect(asset.lockedResidual(0)).toBeCloseTo(0, 9);
+    expect(asset.decisions().slots.walk).toBe(0);
+  });
+
   it('水平位移不超过阈值：能识别，但不标为带位移', async () => {
     const asset = await importGlb(movingChild({ times: [0, 1], values: [0, 0, 0, 0.1, 0.5, 0.1] }));
     const motion = asset.rootMotion[0];

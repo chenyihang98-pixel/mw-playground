@@ -7,6 +7,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import type { ImportFormat } from './precheck';
+import { disposeObject } from './resources';
 
 export const OBJ_MATERIAL_NOTICE = 'OBJ 未读取材质文件，使用默认材质';
 
@@ -57,36 +58,83 @@ export async function loadModel(format: ImportFormat, bytes: Uint8Array): Promis
     case 'obj': {
       const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
       const group = new OBJLoader().parse(text);
-      let meshes = 0;
-      group.traverse((obj) => {
-        const mesh = obj as Partial<Mesh>;
-        if (mesh.isMesh !== true || !mesh.geometry) return;
-        checkGeometry(mesh.geometry, 'OBJ');
-        // 不读 MTL：替换成默认材质（OBJLoader 自己建的材质随即释放）
-        const old = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
-        for (const m of old) m.dispose();
-        mesh.material = defaultMaterial(false);
-        meshes++;
-      });
-      if (meshes === 0) throw new ModelParseError('OBJ 里没有可显示的网格，文件可能已损坏或不是 OBJ');
-      group.name = 'obj';
-      return { scene: group, clips: [], notices: [OBJ_MATERIAL_NOTICE] };
+      // 加载器已经建好了几何和材质：校验失败时在这里释放，再把错误交给上层
+      return withCleanup(
+        () => {
+          disposeObject(group);
+        },
+        () => {
+          let meshes = 0;
+          group.traverse((obj) => {
+            const mesh = obj as Partial<Mesh>;
+            if (mesh.isMesh !== true || !mesh.geometry) return;
+            checkGeometry(mesh.geometry, 'OBJ');
+            // 不读 MTL：替换成默认材质（OBJLoader 自己建的材质随即释放）
+            const old = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : [];
+            for (const m of old) m.dispose();
+            mesh.material = defaultMaterial(false);
+            meshes++;
+          });
+          if (meshes === 0) throw new ModelParseError('OBJ 里没有可显示的网格，文件可能已损坏或不是 OBJ');
+          group.name = 'obj';
+          return { scene: group, clips: [], notices: [OBJ_MATERIAL_NOTICE] };
+        },
+      );
     }
     case 'stl': {
       const geometry = new STLLoader().parse(toArrayBuffer(bytes));
-      checkGeometry(geometry, 'STL');
-      return { scene: staticScene(geometry, 'stl', false), clips: [], notices: ['STL 使用默认材质'] };
+      return withCleanup(
+        () => {
+          geometry.dispose();
+        },
+        () => {
+          checkGeometry(geometry, 'STL');
+          return { scene: staticScene(geometry, 'stl', false), clips: [], notices: ['STL 使用默认材质'] };
+        },
+      );
     }
     case 'ply': {
+      const faces = plyFaceCount(bytes);
       const geometry = new PLYLoader().parse(toArrayBuffer(bytes));
-      checkGeometry(geometry, 'PLY');
-      if (!geometry.index) throw new ModelParseError('PLY 里只有点，没有面');
-      const vertexColors = geometry.hasAttribute('color');
-      return {
-        scene: staticScene(geometry, 'ply', vertexColors),
-        clips: [],
-        notices: [vertexColors ? 'PLY 使用顶点颜色' : 'PLY 使用默认材质'],
-      };
+      return withCleanup(
+        () => {
+          geometry.dispose();
+        },
+        () => {
+          // 有面的 PLY 也可能没有索引：面上带 UV 或颜色时 PLYLoader 会调用 toNonIndexed()。按文件头里的面数判断是不是点云。
+          if (faces === 0) throw new ModelParseError('PLY 里只有点，没有面');
+          checkGeometry(geometry, 'PLY');
+          return plyModel(geometry);
+        },
+      );
     }
   }
+}
+
+function plyModel(geometry: BufferGeometry): LoadedModel {
+  const vertexColors = geometry.hasAttribute('color');
+  return {
+    scene: staticScene(geometry, 'ply', vertexColors),
+    clips: [],
+    notices: [vertexColors ? 'PLY 使用顶点颜色' : 'PLY 使用默认材质'],
+  };
+}
+
+/** 运行 body；抛错时先调用 cleanup 释放已经建好的资源，再把错误抛给上层。 */
+function withCleanup<T>(cleanup: () => void, body: () => T): T {
+  try {
+    return body();
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
+
+/** PLY 文件头里声明的面数（文件头是 ASCII，二进制 PLY 也一样）。读不到时返回 null（交给加载器判断）。 */
+export function plyFaceCount(bytes: Uint8Array): number | null {
+  const head = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.byteLength, 64 * 1024)));
+  const end = head.indexOf('end_header');
+  if (end < 0) return null;
+  const match = /^element\s+face\s+(\d+)\s*$/m.exec(head.slice(0, end));
+  return match ? Number(match[1]) : 0;
 }

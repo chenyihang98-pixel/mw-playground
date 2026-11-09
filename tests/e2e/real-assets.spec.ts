@@ -70,7 +70,7 @@ if (!assetDir) {
         if (!card) throw new Error('没有导入卡片');
         console.log(
           `${name}：${String(card.triangles)} 三角面，${card.skinned ? `${String(card.bones)} 根骨骼` : '无骨骼'}，` +
-            `${String(card.clips.length)} 个片段，贴图 ${card.textures.map((t) => `${String(t.width)}×${String(t.height)}`).join('、') || '无'}；` +
+            `尺寸 ${card.size.width.toFixed(2)} × ${card.size.height.toFixed(2)} × ${card.size.depth.toFixed(2)} m，${String(card.clips.length)} 个片段，贴图 ${card.textures.map((t) => `${String(t.width)}×${String(t.height)}`).join('、') || '无'}；` +
             `建议：待机 ${String(card.slots.idle)}、走 ${String(card.slots.walk)}、跑 ${String(card.slots.run)}、跳 ${String(card.slots.jump)}`,
         );
         for (const c of card.clips) {
