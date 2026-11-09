@@ -46,7 +46,7 @@ export interface AssetInput {
   readonly sizeBytes: number;
   readonly scene: Object3D;
   readonly clips: readonly AnimationClip[];
-  /** 绑定姿态（computeBindPose(scene, clips)；没有蒙皮时为 null）。bounds 按它计算。 */
+  /** 绑定姿态（computeBindPose(scene)；没有蒙皮时为 null）。bounds 按它计算。 */
   readonly bindPose: BindPose | null;
   readonly bounds: Box3;
   readonly stats: LoadedStats;

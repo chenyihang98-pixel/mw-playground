@@ -67,7 +67,7 @@ export async function importModel(source: ImportSource, limits: ImportLimits = I
     for (const w of post.warnings) if (!warnings.includes(w)) warnings.push(w);
     if (!post.ok) return release(post.error);
     // 绑定姿态只算一次：包围盒、“绑定姿态”片段和实例都用同一份
-    const bindPose = computeBindPose(scene, loaded.clips);
+    const bindPose = computeBindPose(scene);
     const bounds = bindPoseBounds(scene, bindPose);
     if (!bounds) return release('文件里没有可显示的几何');
     const asset = new ImportedAsset({

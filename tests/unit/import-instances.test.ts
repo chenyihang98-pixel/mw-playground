@@ -1,6 +1,6 @@
 // 归一化、实例独立、资源释放、实例上限、动画驱动（状态切换和整体摆动）。
 
-import { AnimationClip, Box3, BufferGeometry, Material, Vector3, type Bone, type Object3D, type SkinnedMesh } from 'three';
+import { AnimationClip, Box3, BufferGeometry, Material, Matrix4, Quaternion, Vector3, type Bone, type Object3D, type SkinnedMesh } from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { GltfBuilder } from '../../src/asset/fixtures';
 import { SPEC } from '../../src/game/spec';
@@ -362,32 +362,67 @@ describe('审查补充（第 2 轮）', () => {
   });
 });
 
-describe('绑定姿态按 three 的约定（Skeleton.pose()）', () => {
-  it('根骨骼挂在有旋转和缩放的父节点下（逆绑定矩阵相对父节点）：包围盒保持父节点的朝向和缩放', async () => {
-    // 与真实资产 armored-soldier 的结构相同：根骨骼的父节点绕 Y 转 −90°、放大 1.75 倍，逆绑定矩阵为单位矩阵。
-    // 几何沿 X 长 1 m、沿 Z 厚 0.2 m、高 1 m。显示时（以及绑定姿态下）是 父节点 · 顶点：高 1.75 m，长边转到 Z 方向。
+describe('绑定姿态的参照系：glTF 的场景空间，兼容整个模型被套进带变换节点的导出', () => {
+  /**
+   * 几何沿 X 长 1 m、沿 Z 厚 0.2 m、高 1 m，蒙皮到一根骨骼 Hip。layout 决定结构：
+   * - wrapped：与真实资产 armored-soldier 相同，外层两个节点绕 Y 转 −90°、放大 1.75 倍，里面的 Armature 下同时放着 Hip 和蒙皮网格，IBM 不含外层变换；
+   * - meshAtRoot：同样的外层节点只包着 Hip，蒙皮网格在场景根上；
+   * - blender：外层节点包着 Hip 和蒙皮网格，但 IBM 含外层变换（glTF 规范的场景空间）。
+   */
+  function wrappedSkin(layout: 'wrapped' | 'meshAtRoot' | 'blender', hipRotation?: [number, number, number, number]): Uint8Array {
     const b = new GltfBuilder();
-    const bone = b.addNode({ name: 'Hip' });
+    const hip = b.addNode({ name: 'Hip', ...(hipRotation ? { rotation: hipRotation } : {}) });
     const position = b.addAccessor({ array: new Float32Array([-0.5, 0, -0.1, 0.5, 0, 0.1, 0, 1, 0]), type: 'VEC3' });
     const joints = b.addAccessor({ array: new Uint8Array(12), type: 'VEC4', minMax: false });
     const weights = b.addAccessor({ array: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]), type: 'VEC4', minMax: false });
-    const ibm = b.addAccessor({ array: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]), type: 'MAT4', minMax: false });
-    const mesh = b.addMesh('Body', [{ attributes: { POSITION: position, JOINTS_0: joints, WEIGHTS_0: weights } }]);
-    const skin = b.addSkin({ joints: [bone], inverseBindMatrices: ibm });
     const q = Math.sin(-Math.PI / 4);
-    const frame = b.addNode({ name: 'Frame', children: [bone], rotation: [0, q, 0, Math.cos(-Math.PI / 4)], scale: [1.75, 1.75, 1.75] });
-    b.addScene([frame, b.addNode({ name: 'Body', mesh, skin })]);
-    const asset = await importGlb(b.toGlb());
+    const wrapper = new Matrix4().compose(new Vector3(), new Quaternion(0, q, 0, Math.cos(-Math.PI / 4)), new Vector3(1.75, 1.75, 1.75));
+    const ibm = layout === 'blender' ? wrapper.clone().invert().toArray() : new Matrix4().toArray();
+    const ibmAccessor = b.addAccessor({ array: new Float32Array(ibm), type: 'MAT4', minMax: false });
+    const mesh = b.addMesh('Body', [{ attributes: { POSITION: position, JOINTS_0: joints, WEIGHTS_0: weights } }]);
+    const skin = b.addSkin({ joints: [hip], inverseBindMatrices: ibmAccessor });
+    const body = b.addNode({ name: 'Body', mesh, skin });
+    const armature = b.addNode({ name: 'Armature', children: layout === 'meshAtRoot' ? [hip] : [hip, body] });
+    const scaled = b.addNode({ name: 'Scaled', children: [armature], scale: [1.75, 1.75, 1.75] });
+    const turned = b.addNode({ name: 'Turned', children: [scaled], rotation: [0, q, 0, Math.cos(-Math.PI / 4)] });
+    b.addScene(layout === 'meshAtRoot' ? [turned, body] : [turned]);
+    return b.toGlb();
+  }
+
+  it('整个模型（蒙皮网格和骨架）被套进带旋转和缩放的节点、IBM 没跟着更新（armored-soldier 的结构）：按网格节点空间，保持外层的朝向和缩放', async () => {
+    const asset = await importGlb(wrappedSkin('wrapped'));
+    expect(asset.bindPose?.convention).toBe('mesh');
     const size = asset.bounds.getSize(new Vector3());
     expect(size.y).toBeCloseTo(1.75, 5);
     expect(size.x).toBeCloseTo(0.35, 5); // 0.2 × 1.75
     expect(size.z).toBeCloseTo(1.75, 5); // 1 × 1.75，转到了 Z 方向
     const instance = asset.createInstance();
     expect(instance.normalizedSize()).toMatchObject({ width: expect.closeTo(0.35, 5) as number, depth: expect.closeTo(1.75, 5) as number });
-    // 初始姿态就是绑定姿态：不摆姿态直接看实际显示，也贴地、高 1.75 m
-    const rendered = renderedBounds(instance.swayPivot);
-    if (!rendered) throw new Error('没有几何');
-    expectGrounded(rendered, 1.75);
+    // 静止姿态就是绑定姿态：不摆姿态直接看实际显示，也贴地、高 1.75 m
+    expectGrounded(renderedBounds(instance.swayPivot) ?? new Box3(), 1.75);
+  });
+
+  it('同样的外层节点，但蒙皮网格在场景根上：按 glTF 规范的场景空间（绑定姿态是原始几何）', async () => {
+    const asset = await importGlb(wrappedSkin('meshAtRoot'));
+    expect(asset.bindPose?.convention).toBe('scene');
+    const size = asset.bounds.getSize(new Vector3());
+    expect(size.x).toBeCloseTo(1, 5);
+    expect(size.y).toBeCloseTo(1, 5);
+    expect(size.z).toBeCloseTo(0.2, 5);
+  });
+
+  it('蒙皮网格和骨架都在带变换的节点下、IBM 含这个变换（glTF 规范的导出）：仍按场景空间，静止姿态和卡片一致', async () => {
+    const asset = await importGlb(wrappedSkin('blender'));
+    expect(asset.bindPose?.convention).toBe('scene');
+    const size = asset.bounds.getSize(new Vector3());
+    expect(size.x).toBeCloseTo(1, 5);
+    expect(size.z).toBeCloseTo(0.2, 5);
+    expectGrounded(renderedBounds(asset.createInstance().swayPivot) ?? new Box3(), 1.75);
+  });
+
+  it('套了外层节点，但静止姿态不正好是网格节点空间的绑定姿态：不按特殊约定，回到场景空间', async () => {
+    const asset = await importGlb(wrappedSkin('wrapped', [Math.sin(Math.PI / 12), 0, 0, Math.cos(Math.PI / 12)]));
+    expect(asset.bindPose?.convention).toBe('scene');
   });
 });
 
@@ -414,12 +449,17 @@ describe('绑定姿态的参照系和过渡（第 3 轮审查）', () => {
     expectGrounded(normalizedBox(asset.createInstance()), 1.75);
   });
 
-  it('参照系的判断：场景空间 / 骨架父节点空间 / 初始姿态不是绑定姿态时按 glTF 取场景空间', async () => {
-    const parentStyle = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1] })); // IBM 单位矩阵：K = 父节点
-    expect(parentStyle.bindPose).toMatchObject({ convention: 'parent', basis: 'rest' });
-    expect(parentStyle.bounds.max.y - parentStyle.bounds.min.y).toBeCloseTo(2, 6);
+  it('参照系的判断：网格和骨架都在 Armature 下且静止姿态正好是网格节点空间的绑定姿态时才按网格节点空间，其余按 glTF 的场景空间', async () => {
+    // IBM 单位矩阵：静止姿态的 K = Armature
+    const wrapped = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1], meshUnderArmature: true }));
+    expect(wrapped.bindPose?.convention).toBe('mesh');
+    expect(wrapped.bounds.max.y - wrapped.bounds.min.y).toBeCloseTo(2, 6);
+    // 同样的骨架，蒙皮网格在场景根上：网格节点的变换是单位矩阵，按场景空间
+    const meshAtRoot = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1] }));
+    expect(meshAtRoot.bindPose?.convention).toBe('scene');
+    expect(meshAtRoot.bounds.max.y - meshAtRoot.bounds.min.y).toBeCloseTo(1, 6);
     const neither = await importGlb(singleBoneSkin({ boneName: 'Bone', boneScale: [1, 2, 1] }));
-    expect(neither.bindPose).toMatchObject({ convention: 'scene', basis: 'rest' });
+    expect(neither.bindPose?.convention).toBe('scene');
     expect(neither.bounds.max.y - neither.bounds.min.y).toBeCloseTo(1, 6);
   });
 
@@ -449,13 +489,13 @@ describe('绑定姿态的参照系和过渡（第 3 轮审查）', () => {
   });
 });
 
-describe('绑定姿态的参照系按片段判断、轨道路径与原片段一致（第 4 轮审查）', () => {
+describe('绑定姿态与片段无关、轨道路径与原片段一致（第 4、5 轮审查）', () => {
   const still = { position: { x: 0, y: 0, z: 0 }, facing: 0, horizontalSpeed: 0, grounded: true, vy: 0 };
   const halfY = [1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
   const keepScale = { name: 'idle', path: 'scale' as const, times: [0, 1], values: [1, 1, 1, 1, 1, 1] };
   const height = (box: Box3 | null) => (box ? box.max.y - box.min.y : NaN);
 
-  it('场景空间的 IBM、普通父节点带缩放、初始姿态不是绑定姿态：按片段判断，播放 idle 的实际高度等于卡片上的 1.75 m', async () => {
+  it('场景空间的 IBM、普通父节点带缩放、初始姿态不是绑定姿态：按场景空间，播放 idle 的实际高度等于卡片上的 1.75 m', async () => {
     // Armature Y 缩放 2、骨骼初始 Y 缩放 2、IBM 的 Y 缩放 0.5；idle 让骨骼缩放保持 1。
     // 初始姿态的蒙皮矩阵正好等于 Armature（像骨架父节点空间），但 idle 显示时蒙皮矩阵是单位矩阵：绑定高度是 1 m
     const asset = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1], boneScale: [1, 2, 1], ibm: halfY, clips: [keepScale] }));
@@ -464,7 +504,7 @@ describe('绑定姿态的参照系按片段判断、轨道路径与原片段一�
     expect(model.snapshot().clipName).toBe('idle');
     expectGrounded(renderedBounds(model.instance.swayPivot) ?? new Box3(), 1.75);
     expect(model.instance.normalizedSize().height).toBeCloseTo(1.75, 6);
-    expect(asset.bindPose).toMatchObject({ convention: 'scene', basis: 'clips' });
+    expect(asset.bindPose?.convention).toBe('scene');
     expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(1, 6);
     // 绑定姿态本身也是 1.75 m（“绑定姿态”兜底和卡片一致）
     const posed = asset.createInstance();
@@ -472,25 +512,40 @@ describe('绑定姿态的参照系按片段判断、轨道路径与原片段一�
     expectGrounded(renderedBounds(posed.swayPivot) ?? new Box3(), 1.75);
   });
 
-  it('骨架父节点空间的 IBM、普通父节点带缩放、初始姿态不是绑定姿态：同样按片段判断', async () => {
-    // Armature Y 缩放 2、骨骼初始 Y 缩放 0.5、IBM 单位矩阵；idle 让骨骼缩放保持 1。
-    // 初始姿态的蒙皮矩阵正好是单位矩阵（像场景空间），但 idle 显示时蒙皮矩阵等于 Armature：绑定高度是 2 m
-    const asset = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1], boneScale: [1, 0.5, 1], clips: [keepScale] }));
-    const model = new ImportedCharacterModel(asset.createInstance());
-    model.update(still, 0.5);
-    expectGrounded(renderedBounds(model.instance.swayPivot) ?? new Box3(), 1.75);
-    expect(asset.bindPose).toMatchObject({ convention: 'parent', basis: 'clips' });
-    expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(2, 6);
-    const posed = asset.createInstance();
-    posed.poseBind();
-    expectGrounded(renderedBounds(posed.swayPivot) ?? new Box3(), 1.75);
+  it('增加普通动作不会改变对同一套 IBM 的理解（第 5 轮审查的例子）', async () => {
+    // 几何高 1 m，Armature Y 缩放 1.2，骨骼初始缩放 1，IBM 的 Y 缩放 1/1.2：静止姿态就是场景空间的绑定姿态。
+    // idle 始终保持缩放 1；jump、attack 在 0、0.5 秒保持 Y 缩放 1.2，1 秒回到 1
+    const ibm = [1, 0, 0, 0, 0, 1 / 1.2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const big = (name: string) => ({ name, path: 'scale' as const, times: [0, 0.5, 1], values: [1, 1.2, 1, 1, 1.2, 1, 1, 1, 1] });
+    for (const meshUnderArmature of [false, true]) {
+      const base = { boneName: 'Bone', armatureScale: [1, 1.2, 1] as [number, number, number], ibm, meshUnderArmature };
+      const idleOnly = await importGlb(singleBoneSkin({ ...base, clips: [keepScale] }));
+      const more = await importGlb(singleBoneSkin({ ...base, clips: [keepScale, big('jump'), big('attack')] }));
+      for (const asset of [idleOnly, more]) {
+        expect(asset.bindPose?.convention).toBe('scene');
+        expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(1, 6);
+        const model = new ImportedCharacterModel(asset.createInstance());
+        model.update(still, 0.5);
+        expect(model.snapshot().clipName).toBe('idle');
+        expectGrounded(renderedBounds(model.instance.swayPivot) ?? new Box3(), 1.75);
+      }
+      expect(more.bindClip?.tracks.map((t) => [...t.values])).toEqual(idleOnly.bindClip?.tracks.map((t) => [...t.values]));
+    }
   });
 
-  it('片段只动和蒙皮无关的属性时（这里只有 morph 权重）不作为依据，回到按初始姿态判断', async () => {
-    const blink = { name: 'blink', path: 'weights' as const, times: [0, 1], values: [0, 1] };
-    const asset = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1], morph: true, clips: [blink] }));
-    expect(asset.clips[0]?.tracks[0]?.name).toBe('Body.morphTargetInfluences');
-    expect(asset.bindPose).toMatchObject({ convention: 'parent', basis: 'rest' });
+  it('网格节点空间：整个模型在 Y 缩放 2 的 Armature 下、静止姿态正好是绑定姿态，卡片和播放 idle 都是 1.75 m，加动作也不变', async () => {
+    const shrink = { name: 'jump', path: 'scale' as const, times: [0, 0.5, 1], values: [1, 0.5, 1, 1, 0.5, 1, 1, 1, 1] };
+    for (const clips of [[keepScale], [keepScale, shrink]]) {
+      const asset = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1], meshUnderArmature: true, clips }));
+      expect(asset.bindPose?.convention).toBe('mesh');
+      expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(2, 6);
+      const model = new ImportedCharacterModel(asset.createInstance());
+      model.update(still, 0.5);
+      expectGrounded(renderedBounds(model.instance.swayPivot) ?? new Box3(), 1.75);
+      const posed = asset.createInstance();
+      posed.poseBind();
+      expectGrounded(renderedBounds(posed.swayPivot) ?? new Box3(), 1.75);
+    }
   });
 
   it('绑定姿态片段的轨道路径和 GLTFLoader 一致：有名字的骨骼用名字，无名骨骼用 UUID（实例上再换成克隆骨骼的 UUID）', async () => {

@@ -438,7 +438,7 @@ export class ImportPanel {
         meshes: asset.stats.meshes,
         skinned: asset.stats.skinnedMeshes > 0,
         bones: asset.stats.bones,
-        bindPose: asset.bindPose ? { convention: asset.bindPose.convention, basis: asset.bindPose.basis } : null,
+        bindPose: asset.bindPose ? { convention: asset.bindPose.convention } : null,
         textures: asset.stats.textures.map((t) => ({ width: t.width, height: t.height })),
         notices: this.notices(asset),
         clips: rows,

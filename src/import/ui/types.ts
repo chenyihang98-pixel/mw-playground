@@ -48,8 +48,8 @@ export interface ImportCardSnapshot {
   readonly meshes: number;
   readonly skinned: boolean;
   readonly bones: number;
-  /** 逆绑定矩阵的参照系和判断依据（见 bindPose.ts）；没有骨骼时为 null。 */
-  readonly bindPose: { readonly convention: 'scene' | 'parent'; readonly basis: 'clips' | 'rest' } | null;
+  /** 逆绑定矩阵的参照系（见 bindPose.ts：scene 是 glTF 规范的场景空间，mesh 是兼容的网格节点空间）；没有骨骼时为 null。 */
+  readonly bindPose: { readonly convention: 'scene' | 'mesh' } | null;
   /** 加载后材质里能读到尺寸的贴图。 */
   readonly textures: readonly { readonly width: number; readonly height: number }[];
   readonly notices: readonly string[];
