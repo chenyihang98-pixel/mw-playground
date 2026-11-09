@@ -3,7 +3,9 @@
 
 import { FIXTURES, isFixtureId } from '../asset/fixtures';
 import type { RenderStats, SceneApp } from '../scene/createScene';
+import type { GameAppSnapshot } from '../game/appTypes';
 import type { FixturePreview, PreviewState } from './fixturePreview';
+import type { MwGameTestHooks } from './gameTestHooks';
 
 export interface FixtureInfo {
   readonly id: string;
@@ -18,6 +20,8 @@ export interface MwTestState {
 }
 
 export interface MwTestHooks {
+  /** 夹具预览页（?view=fixtures）的钩子；游戏页的钩子见 gameTestHooks.ts。 */
+  readonly kind: 'fixtures';
   readonly version: 1;
   /** 观察：当前状态的快照（纯数据）。 */
   getState(): MwTestState;
@@ -29,7 +33,7 @@ export interface MwTestHooks {
 
 declare global {
   interface Window {
-    __MW_TEST__?: MwTestHooks;
+    __MW_TEST__?: MwTestHooks | MwGameTestHooks<GameAppSnapshot>;
   }
 }
 
@@ -40,6 +44,7 @@ export function installTestHooks(app: SceneApp, preview: FixturePreview, mode: s
     preview: preview.state(),
   });
   const hooks: MwTestHooks = Object.freeze({
+    kind: 'fixtures' as const,
     version: 1 as const,
     getState,
     listFixtures: () => FIXTURES.map((f) => ({ id: f.id, title: f.title, previewable: f.previewable })),

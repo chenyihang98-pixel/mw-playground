@@ -31,7 +31,12 @@ export interface SceneApp {
   stats(): RenderStats;
 }
 
-export function createScene(canvas: HTMLCanvasElement): SceneApp {
+export interface SceneOptions {
+  /** 是否加 40×40 的默认地面和网格。游戏按关卡尺寸自己建地面，传 false。默认 true。 */
+  readonly ground?: boolean;
+}
+
+export function createScene(canvas: HTMLCanvasElement, options: SceneOptions = {}): SceneApp {
   const renderer = new WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
@@ -47,13 +52,15 @@ export function createScene(canvas: HTMLCanvasElement): SceneApp {
   sun.position.set(3, 6, 4);
   scene.add(sun);
 
-  const ground = new Mesh(new PlaneGeometry(40, 40), new MeshStandardMaterial({ color: 0x8fae7a, roughness: 1 }));
-  ground.name = 'Ground';
-  ground.rotation.x = -Math.PI / 2;
-  scene.add(ground);
-  const grid = new GridHelper(40, 40, 0x557744, 0x6d8f5c);
-  grid.position.y = 0.002;
-  scene.add(grid);
+  if (options.ground ?? true) {
+    const ground = new Mesh(new PlaneGeometry(40, 40), new MeshStandardMaterial({ color: 0x8fae7a, roughness: 1 }));
+    ground.name = 'Ground';
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
+    const grid = new GridHelper(40, 40, 0x557744, 0x6d8f5c);
+    grid.position.y = 0.002;
+    scene.add(grid);
+  }
 
   const resize = () => {
     const width = Math.max(1, canvas.clientWidth);

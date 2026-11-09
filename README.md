@@ -2,7 +2,7 @@
 
 本机运行的浏览器 3D 小游戏：导入“模匠”导出的角色文件，替换主角，或加入为同伴、守卫。
 
-当前进度：P1（工程骨架）。有一个能渲染的空场景、开发用的夹具预览、GLB 结构检查工具和锁文件摘要工具，还没有玩法。各任务的进度见 [docs/status.md](docs/status.md)，项目约定见 [docs/conventions.md](docs/conventions.md)（后续任务开始前都要先读）。
+当前进度：P2（基础玩法）。在限时内收集宝石、避开巡逻的守卫；另有 GLB 结构检查工具和锁文件摘要工具。各任务的进度见 [docs/status.md](docs/status.md)，项目约定见 [docs/conventions.md](docs/conventions.md)（后续任务开始前都要先读）。
 
 ## 环境要求
 
@@ -10,6 +10,34 @@
 - npm 11（随 Node 24 安装）
 - git（`lock-summary` 和单元测试会用到）
 - 端到端测试需要 Playwright 的 Chromium（见下面的安装步骤）
+
+## 操作说明
+
+打开页面后点“开始”。在限时内收集够目标数的宝石就胜利；时间用完就失败。巡逻的守卫碰到你会扣时间（屏幕边缘闪红、时间变红），之后有一小段冷却，冷却期间再碰到不扣。
+
+| 操作 | 按键 |
+|---|---|
+| 移动（按相机方向） | W / A / S / D |
+| 跑 | 按住 Shift |
+| 跳 | 空格 |
+| 转视角 | 移动鼠标（点“开始”后锁定指针；游玩中锁定丢了，点一下画面重新锁定）；指针锁定用不了时，按住左键拖动；方向键 ← → ↑ ↓ 也能转 |
+| 暂停 / 继续 | Esc 或 P；也可以点暂停面板上的“继续” |
+| 重开 | 结算面板上的“重开”（恢复关卡初始状态） |
+
+- 高台比最大跳跃高度高，只能沿坡道走上去；从高台边缘走出去会掉下来。
+- 指针锁定时，浏览器会用 Esc 先退出锁定，游戏把这当作暂停；再按 Esc 或 P 继续。暂停时计时和模拟都停止，并释放指针锁定。
+- 玩法参数（速度、跳跃、高台高度、坡度、守卫扣时和冷却、收集半径等）集中在 `src/game/spec.ts`，取值见 [docs/status.md](docs/status.md) 的 P2 一节。
+
+### 开发用的网址参数（只在开发和测试模式下有效）
+
+| 参数 | 作用 |
+|---|---|
+| `?level=meadow` | 手工固定地图（默认） |
+| `?level=test-a` | 测试小关 A：出生点正前方 4 m 有一个宝石，没有守卫 |
+| `?level=test-b` | 测试小关 B：守卫的巡逻路线来回经过出生点，宝石在远处 |
+| `?view=fixtures` | P1 的夹具预览（代码生成的 GLB 夹具，用 GLTFLoader 加载、AnimationMixer 播放） |
+
+测试钩子 `window.__MW_TEST__` 也只在这两种模式下存在：游戏页只能读状态（`getState`、`listLevels`），选关卡靠上面的网址参数；夹具预览页只能读状态和选夹具。
 
 ## 安装
 
@@ -24,8 +52,8 @@ npx playwright install chromium
 
 | 命令 | 作用 |
 |---|---|
-| `npm run dev` | 启动 Vite 开发服务器（http://127.0.0.1:5173）。开发模式下页面左上角有夹具预览面板。 |
-| `npm run build` | 生产构建，输出到 `dist/`。生产构建不包含夹具预览和测试钩子。 |
+| `npm run dev` | 启动 Vite 开发服务器（http://127.0.0.1:5173），打开就是游戏。开发模式下可以用 `?level=<id>` 选关卡、用 `?view=fixtures` 打开夹具预览（见“开发用的网址参数”）。 |
+| `npm run build` | 生产构建，输出到 `dist/`。生产构建只有固定地图，不包含夹具预览、选关卡参数和测试钩子。 |
 | `npm run preview` | 预览生产构建（http://127.0.0.1:4173）。 |
 | `npm run typecheck` | TypeScript 严格模式类型检查（`tsconfig.app.json` 管页面代码，`tsconfig.node.json` 管脚本、测试和配置）。 |
 | `npm run lint` | ESLint（typescript-eslint 的 strict + stylistic 类型检查规则）。 |

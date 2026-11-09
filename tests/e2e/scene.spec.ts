@@ -1,12 +1,12 @@
 // 端到端（Chromium）：页面无控制台错误、场景已渲染、夹具预览在播放片段。
-// 测试钩子只用来观察状态和选择夹具。
+// 测试钩子只用来观察状态和选择夹具。P2 起首页是游戏，夹具预览在开发 / 测试模式的 /?view=fixtures。
 
 import { expect, test, type Page } from '@playwright/test';
-import type { MwTestState } from '../../src/dev/testHooks';
+import type { MwTestHooks, MwTestState } from '../../src/dev/testHooks';
 
 function getState(page: Page): Promise<MwTestState> {
   return page.evaluate(() => {
-    const hooks = window.__MW_TEST__;
+    const hooks = (window.__MW_TEST__ as MwTestHooks | undefined);
     if (!hooks) throw new Error('测试钩子不存在');
     return hooks.getState();
   });
@@ -14,7 +14,7 @@ function getState(page: Page): Promise<MwTestState> {
 
 async function waitForPreview(page: Page, fixtureId: string) {
   await page.waitForFunction((id) => {
-    const state = window.__MW_TEST__?.getState();
+    const state = (window.__MW_TEST__ as MwTestHooks | undefined)?.getState();
     return state?.preview.status === 'ready' && state.preview.fixtureId === id;
   }, fixtureId);
 }
@@ -30,7 +30,7 @@ test.describe('场景与夹具预览', () => {
     page.on('pageerror', (error) => {
       consoleErrors.push(`pageerror: ${error.message}`);
     });
-    await page.goto('/');
+    await page.goto('/?view=fixtures');
     await waitForPreview(page, 'skinned-humanoid');
   });
 
@@ -80,23 +80,23 @@ test.describe('场景与夹具预览', () => {
   });
 
   test('通过测试钩子选择夹具：root-motion 和 extras-number', async ({ page }) => {
-    const fixtures = await page.evaluate(() => window.__MW_TEST__?.listFixtures() ?? []);
+    const fixtures = await page.evaluate(() => (window.__MW_TEST__ as MwTestHooks | undefined)?.listFixtures() ?? []);
     expect(fixtures.filter((f) => f.previewable).map((f) => f.id)).toContain('root-motion');
 
-    const rootMotion = await page.evaluate(() => window.__MW_TEST__?.selectFixture('root-motion'));
+    const rootMotion = await page.evaluate(() => (window.__MW_TEST__ as MwTestHooks | undefined)?.selectFixture('root-motion'));
     expect(rootMotion?.preview.fixtureId).toBe('root-motion');
     expect(rootMotion?.preview.clips.map((c) => c.name)).toEqual(['walk_forward']);
     await expect.poll(async () => (await getState(page)).preview.mixerTime).toBeGreaterThan((rootMotion?.preview.mixerTime ?? 0) + 0.1);
 
     // extras 不是对象：GLTFLoader 只打 warning（不是 error），加载后 userData 里没有 loop
-    const extrasNumber = await page.evaluate(() => window.__MW_TEST__?.selectFixture('extras-number'));
+    const extrasNumber = await page.evaluate(() => (window.__MW_TEST__ as MwTestHooks | undefined)?.selectFixture('extras-number'));
     expect(extrasNumber?.preview.clips).toEqual([{ name: 'jump', duration: 1, hasLoop: false, loop: undefined }]);
   });
 
   test('不能预览的夹具被拒绝', async ({ page }) => {
     const message = await page.evaluate(async () => {
       try {
-        await window.__MW_TEST__?.selectFixture('draco-required');
+        await (window.__MW_TEST__ as MwTestHooks | undefined)?.selectFixture('draco-required');
         return 'no error';
       } catch (error) {
         return error instanceof Error ? error.message : String(error);

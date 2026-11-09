@@ -57,4 +57,42 @@ export default defineConfig(
       ],
     },
   },
+  {
+    // 玩法规格、关卡布局和模拟是纯模块：不依赖 three、DOM、网络，也不读墙钟、不用随机数，
+    // 这样同样的输入总是得到同样的结果，单元测试可以直接驱动。
+    files: ['src/game/spec.ts', 'src/game/level/**/*.ts', 'src/game/sim/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['three', 'three/*', 'node:*', '**/render/**', '**/ui/**', '**/input/**', '**/dev/**'],
+              message: '玩法规格、关卡和模拟是纯模块：不依赖 three、DOM 或渲染 / 界面 / 输入代码。',
+            },
+          ],
+        },
+      ],
+      'no-restricted-globals': [
+        'error',
+        'window',
+        'document',
+        'navigator',
+        'performance',
+        'Date',
+        'requestAnimationFrame',
+        'setTimeout',
+        'setInterval',
+        'fetch',
+        'localStorage',
+        'process',
+      ],
+      'no-restricted-properties': [
+        'error',
+        { object: 'Math', property: 'random', message: '模拟必须是确定的：不要用 Math.random。' },
+        { object: 'Date', property: 'now', message: '模拟不读墙钟。' },
+        { object: 'performance', property: 'now', message: '模拟不读墙钟。' },
+      ],
+    },
+  },
 );
