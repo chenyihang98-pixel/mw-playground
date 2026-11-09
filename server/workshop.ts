@@ -55,6 +55,9 @@ interface Session {
 /** 同时保留的预览会话最多几个（更早的作废）。 */
 const MAX_SESSIONS = 16;
 
+/** 检查模型能不能用的超时（OpenAI 兼容接口在之前调用失败过时会多发一个最小的对话请求）。 */
+const AVAILABILITY_TIMEOUT_MS = 5000;
+
 /**
  * 一次生成的进度（统计用），记在图的状态之外：图的状态只在节点正常返回后才提交，
  * 超时、取消或出错时正在进行的那次调用不会进状态，但要算进统计。
@@ -118,7 +121,7 @@ export class Workshop {
   }
 
   async health(): Promise<HealthResponse> {
-    const availability = await this.deps.provider.availability(AbortSignal.timeout(3000));
+    const availability = await this.deps.provider.availability(AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS));
     return {
       ok: true,
       serviceId: this.serviceId,
@@ -150,7 +153,7 @@ export class Workshop {
       controller.abort(new CallTimeout('整个生成请求', config.limits.requestTimeoutMs));
     }, config.limits.requestTimeoutMs);
     try {
-      const availability = await provider.availability(AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]));
+      const availability = await provider.availability(AbortSignal.any([controller.signal, AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS)]));
       // 先看这次请求是不是已经被取消或超时：检查被中止时提供方也会报“不可用”，那不是模型的问题
       if (controller.signal.aborted) return await this.finishFailure(request, EMPTY_STATE, controller.signal.reason, controller.signal.reason, this.now() - start);
       if (!availability.available) {

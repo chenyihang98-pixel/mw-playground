@@ -253,7 +253,7 @@ describe('OpenAI 兼容接口（可选）', () => {
     expect(await down.availability(AbortSignal.timeout(2000))).toEqual({ available: false, reason: '连不上 OpenAI 兼容接口' });
   });
 
-  it('接口不支持列出模型（404）时，按最近一次调用的结果：调用鉴权失败后报不可用，调用成功后恢复', async () => {
+  it('对话请求被拒或找不到模型之后：健康检查用一个最小的对话请求再确认，仍然失败就报不可用，成功后恢复', async () => {
     let chatStatus = 401;
     const fake = await fakeServer((req, res) => {
       if (req.path.endsWith('/models')) {
@@ -270,15 +270,95 @@ describe('OpenAI 兼容接口（可选）', () => {
     });
     const provider = new OpenAiCompatibleProvider({ baseUrl: `${fake.url}/v1`, model: 'test-model', apiKey: FAKE_KEY });
     const check = () => provider.availability(AbortSignal.timeout(2000));
+    const chats = () => fake.requests.filter((r) => r.path.endsWith('/chat/completions')).length;
+    // 平时的健康检查不调用模型
     expect((await check()).available).toBe(true);
+    expect(chats()).toBe(0);
     await expect(provider.chat(messages, [], AbortSignal.timeout(2000))).rejects.toBeDefined();
-    expect(await check()).toEqual({ available: false, reason: 'OpenAI 兼容接口拒绝了密钥（HTTP 401）' });
+    expect(await check()).toEqual({ available: false, reason: 'OpenAI 兼容接口拒绝了对话请求（HTTP 401）' });
+    // 探测用的是最小的对话请求
+    const probe = fake.requests.filter((r) => r.path.endsWith('/chat/completions')).at(-1);
+    expect(probe?.body).toMatchObject({ model: 'test-model', max_tokens: 1 });
     chatStatus = 404;
-    await expect(provider.chat(messages, [], AbortSignal.timeout(2000))).rejects.toBeDefined();
     expect((await check()).reason).toContain('找不到模型 test-model');
+    // 接口恢复：不用先成功调用一次，健康检查自己的探测就能恢复
     chatStatus = 200;
-    await provider.chat(messages, [], AbortSignal.timeout(2000));
     expect(await check()).toEqual({ available: true, reason: null });
+    const before = chats();
+    expect(await check()).toEqual({ available: true, reason: null });
+    expect(chats()).toBe(before);
+  });
+
+  /** 一个 OpenAI 兼容接口的假服务：列出模型、对话（理解请求回一句话，写说明书回一份合法的说明书）。 */
+  async function openAiService(options: { models: () => number; chat: (req: Captured, res: ServerResponse) => boolean }) {
+    const brief = randomBrief('openai-recovery');
+    return fakeServer((req, res) => {
+      if (req.path.endsWith('/models')) {
+        const status = options.models();
+        res.writeHead(status, { 'content-type': 'application/json' });
+        res.end(status === 200 ? JSON.stringify({ object: 'list', data: [{ id: 'test-model' }] }) : '{}');
+        return;
+      }
+      if (!options.chat(req, res)) return;
+      if (req.body?.response_format) openAiCompletion(res, { content: JSON.stringify(brief) });
+      else openAiCompletion(res, { content: '雨夜的中地图。' });
+    });
+  }
+
+  function openAiWorkshop(url: string) {
+    const cfg = config({ MW_LLM_PROVIDER: 'openai', MW_OPENAI_BASE_URL: `${url}/v1`, MW_OPENAI_MODEL: 'test-model', MW_OPENAI_API_KEY: FAKE_KEY });
+    const stats = new MemoryStats();
+    const workshop = new Workshop({ config: cfg, provider: createProvider(cfg), stats, log: createLogger(new Redactor([FAKE_KEY]), () => undefined), newSeed: () => 'recovery-seed' });
+    return { workshop, stats };
+  }
+
+  it('经 Workshop：能列出模型、但对话被拒（403）——生成回退后健康检查报不可用；接口恢复后健康检查和生成都恢复', async () => {
+    let chatStatus = 403;
+    const fake = await openAiService({
+      models: () => 200,
+      chat: (_req, res) => {
+        if (chatStatus === 200) return true;
+        res.writeHead(chatStatus, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'model access denied' } }));
+        return false;
+      },
+    });
+    const { workshop, stats } = openAiWorkshop(fake.url);
+    expect((await workshop.health()).available).toBe(true);
+    const first = await workshop.generate({ generationId: 'access-0001', text: '雨夜', roster: [] });
+    expect(first).toMatchObject({ status: 'fallback', fallback: { outcome: 'error', reason: '理解请求：模型服务返回错误（HTTP 403）' } });
+    // 能列出模型不代表能调用：健康检查报不可用并说明原因，界面据此提供“随机一关”
+    expect(await workshop.health()).toMatchObject({ available: false, reason: 'OpenAI 兼容接口拒绝了对话请求（HTTP 403）' });
+    await expect(workshop.generate({ generationId: 'access-0002', text: '雨夜', roster: [] })).rejects.toMatchObject({ code: 'unavailable' });
+    // 接口恢复
+    chatStatus = 200;
+    expect(await workshop.health()).toMatchObject({ available: true, reason: null });
+    const again = await workshop.generate({ generationId: 'access-0003', text: '雨夜', roster: [] });
+    expect(again.status).toBe('preview');
+    expect(stats.records.map((r) => r.outcome)).toEqual(['error', 'model-first']);
+  });
+
+  it('经 Workshop：不支持列出模型（404）的接口发生一次瞬时网络故障后，健康检查和再次生成都能恢复', async () => {
+    let failNext = true;
+    const fake = await openAiService({
+      models: () => 404,
+      chat: (_req, res) => {
+        if (!failNext) return true;
+        failNext = false;
+        // 瞬时的网络故障：直接断开连接
+        res.socket?.destroy();
+        return false;
+      },
+    });
+    const { workshop, stats } = openAiWorkshop(fake.url);
+    const first = await workshop.generate({ generationId: 'blip-0001', text: '雨夜', roster: [] });
+    expect(first).toMatchObject({ status: 'fallback', fallback: { outcome: 'error', reason: '理解请求：连不上模型服务' } });
+    // 服务已经恢复：GET /models 收到了 HTTP 响应（404），说明又连得上了
+    expect(await workshop.health()).toMatchObject({ available: true, reason: null });
+    const second = await workshop.generate({ generationId: 'blip-0002', text: '雨夜', roster: [] });
+    expect(second.status).toBe('preview');
+    expect(fake.requests.filter((r) => r.path.endsWith('/chat/completions')).length).toBeGreaterThanOrEqual(3);
+    expect(stats.records.map((r) => r.outcome)).toEqual(['error', 'model-first']);
   });
 
   it('密钥不出现在日志、错误信息、响应和统计里（假服务在错误里原样回显密钥）', async () => {

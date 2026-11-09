@@ -214,7 +214,9 @@ OpenAI 兼容接口（可选）：
 - 只用 Chat Completions（`POST {MW_OPENAI_BASE_URL}/chat/completions`）；
 - 用到的能力：普通对话、工具调用（function calling），以及结构化输出（`response_format` 的 `json_schema`）；
 - 不用流式和 Responses API；
-- 健康检查用 `GET {MW_OPENAI_BASE_URL}/models`（带密钥），确认连得上、密钥被接受、列表里有这个模型；接口不支持列出模型（404）时，按最近一次调用的结果；
+- 健康检查用 `GET {MW_OPENAI_BASE_URL}/models`（带密钥），确认连得上、密钥被接受、列表里有这个模型（接口不支持列出模型时跳过最后一项）。
+  - 之前的对话请求连不上时，只要这一步收到了 HTTP 响应就算恢复。
+  - 之前的对话请求被拒或找不到模型时，健康检查会再发一个最小的对话请求（1 个 token）确认：仍然失败就报不可用并说明原因，成功就恢复。平时的健康检查不调用模型；
 - **未验证**：只用测试里的假服务验证过适配逻辑；
 - 本机模型失败时不会自动切换到外部接口。
 

@@ -6,7 +6,7 @@
 // 本机失败时不会自动切换到外部接口：提供方只由配置决定。
 
 import type { BaseMessage } from '@langchain/core/messages';
-import { AIMessage } from '@langchain/core/messages';
+import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import { ChatOllama } from '@langchain/ollama';
 import { ChatOpenAICompletions } from '@langchain/openai';
@@ -113,14 +113,18 @@ export class OllamaProvider implements LlmProvider {
  * - 结构化输出：response_format = { type: "json_schema", json_schema: { name, schema, strict: false } }。
  * 不用流式、不用 Responses API、不用其他内置工具。
  *
- * 健康检查：配置齐全之后，再用 GET {baseUrl}/models（带密钥）确认连得上、密钥被接受、列表里有这个模型。
- * 接口不支持列出模型（404）时，按最近一次调用的结果：连不上、鉴权失败或模型不存在时报不可用，调用成功后恢复。
+ * 健康检查：配置齐全之后，再用 GET {baseUrl}/models（带密钥）确认连得上、密钥被接受、列表里有这个模型
+ * （接口不支持列出模型、返回 404 时跳过最后一项）。另外记着最近一次对话调用失败的原因，按类别处理，保证能恢复：
+ * - 连不上：只要 GET /models 收到了 HTTP 响应，说明又连得上了，清掉；
+ * - 密钥被拒（401/403）或找不到模型（404）：能列出模型不代表能调用模型，所以再发一个最小的对话请求
+ *   （1 个 token）探一下：成功就清掉、报可用；仍然失败就报不可用并说明原因。
+ * 这个探测只在之前的对话调用失败过时才发，平时的健康检查不调用模型。
  */
 export class OpenAiCompatibleProvider implements LlmProvider {
   readonly name = 'openai' as const;
   readonly model: string | null;
-  /** 最近一次调用失败的原因（连不上、鉴权失败、没有这个模型）；调用成功后清掉。 */
-  private lastFailure: string | null = null;
+  /** 最近一次对话调用失败的类别和原因（连不上、密钥被拒、找不到模型）；调用成功后清掉。 */
+  private lastFailure: { readonly kind: 'network' | 'access'; readonly reason: string } | null = null;
 
   constructor(
     private readonly config: WorkshopConfig['openai'],
@@ -152,9 +156,9 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     } catch (error) {
       const info = describeCallError(error);
       const status = info.kind === 'http' ? /HTTP (\d{3})/.exec(info.message)?.[1] : undefined;
-      if (info.kind === 'network') this.lastFailure = '连不上 OpenAI 兼容接口';
-      else if (status === '401' || status === '403') this.lastFailure = `OpenAI 兼容接口拒绝了密钥（HTTP ${status}）`;
-      else if (status === '404') this.lastFailure = `OpenAI 兼容接口找不到模型 ${this.model ?? ''} 或对话接口（HTTP 404）`;
+      if (info.kind === 'network') this.lastFailure = { kind: 'network', reason: '连不上 OpenAI 兼容接口' };
+      else if (status === '401' || status === '403') this.lastFailure = { kind: 'access', reason: `OpenAI 兼容接口拒绝了对话请求（HTTP ${status}）` };
+      else if (status === '404') this.lastFailure = { kind: 'access', reason: `OpenAI 兼容接口找不到模型 ${this.model ?? ''} 或对话接口（HTTP 404）` };
       throw error;
     }
   }
@@ -194,14 +198,22 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       return { available: false, reason: '连不上 OpenAI 兼容接口' };
     }
     if (res.status === 401 || res.status === 403) return { available: false, reason: `OpenAI 兼容接口拒绝了密钥（HTTP ${String(res.status)}）` };
-    if (res.status === 404) {
-      // 不支持列出模型：按最近一次调用的结果
-      return this.lastFailure ? { available: false, reason: this.lastFailure } : { available: true, reason: null };
+    if (!res.ok && res.status !== 404) return { available: false, reason: `OpenAI 兼容接口返回错误（HTTP ${String(res.status)}）` };
+    if (res.ok) {
+      const body = (await res.json().catch(() => null)) as { data?: unknown } | null;
+      const ids = Array.isArray(body?.data) ? body.data.map((m: unknown) => (typeof m === 'object' && m !== null ? (m as { id?: unknown }).id : null)).filter((id): id is string => typeof id === 'string') : null;
+      if (ids && !ids.includes(model)) return { available: false, reason: `OpenAI 兼容接口里没有模型 ${model}` };
     }
-    if (!res.ok) return { available: false, reason: `OpenAI 兼容接口返回错误（HTTP ${String(res.status)}）` };
-    const body = (await res.json().catch(() => null)) as { data?: unknown } | null;
-    const ids = Array.isArray(body?.data) ? body.data.map((m: unknown) => (typeof m === 'object' && m !== null ? (m as { id?: unknown }).id : null)).filter((id): id is string => typeof id === 'string') : null;
-    if (ids && !ids.includes(model)) return { available: false, reason: `OpenAI 兼容接口里没有模型 ${model}` };
+    // 收到了 HTTP 响应：网络是通的，之前“连不上”的记录作废
+    if (this.lastFailure?.kind === 'network') this.lastFailure = null;
+    // 之前对话请求被拒或找不到模型：能列出模型不代表能调用，发一个最小的对话请求再确认
+    if (this.lastFailure?.kind === 'access') {
+      try {
+        await this.remember(this.create(signal, { temperature: 0, maxTokens: 1 }).invoke([new HumanMessage('ping')], { signal }));
+      } catch {
+        return { available: false, reason: this.lastFailure.reason };
+      }
+    }
     return { available: true, reason: null };
   }
 }
