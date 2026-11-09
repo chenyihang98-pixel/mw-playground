@@ -4,13 +4,14 @@
 // - 预览：来源、修复次数、程序调整的原因和主要变化、开场白和台词；确认、改一句话重来、放弃；
 // - 最终失败时已经加载了内置的回退关卡：说明来源、原因和与请求的主要差别；
 // - 服务不可用（没启动、提供方是 off、模型连不上）：说明原因，并提供“随机一关”作为替代；游戏的其他部分照常。
+// 状态和异步结果的处理在 WorkshopController（src/workshop/controller.ts，不碰 DOM，有单元测试），这里只负责显示。
 
 import './workshopPanel.css';
 import type { LevelPackage } from '../levels/package';
 import { FALLBACK_LEVEL_ID } from '../level/generatedLevels';
-import { WorkshopClient, type HealthResult } from '../../workshop/client';
-import { packageOfWire } from '../../workshop/level';
-import { OUTCOME_LABELS, type Fallback, type PersonRole, type Preview, type RosterPersonSnapshot } from '../../workshop/protocol';
+import { WorkshopClient } from '../../workshop/client';
+import { WorkshopController, type WorkshopView } from '../../workshop/controller';
+import { OUTCOME_LABELS, type Fallback, type PersonRole, type RosterPersonSnapshot } from '../../workshop/protocol';
 import { button, el, notice, tag } from '../../ui/dom';
 import { icon } from '../../ui/icons';
 import { drawLevelMap, visualLabel } from './levelInfo';
@@ -19,7 +20,7 @@ import type { WorkshopSnapshot } from '../appTypes';
 export interface WorkshopPanelHost {
   /** 名册里可以出场的人物（已恢复好的）。 */
   people(): readonly { readonly id: string; readonly name: string }[];
-  /** 确认后：保存（P5 的保存模块）并加载这一关。返回保存后的关卡包。 */
+  /** 确认后：保存（P5 的保存模块）并加载这一关。 */
   applyLevel(pkg: LevelPackage): void;
   /** 最终失败：加载内置的回退关卡，返回它。 */
   applyFallback(): LevelPackage;
@@ -28,25 +29,6 @@ export interface WorkshopPanelHost {
 }
 
 type RoleChoice = 'both' | PersonRole;
-
-type View =
-  | { readonly kind: 'idle' }
-  | { readonly kind: 'running'; readonly generationId: string | null; readonly startedAt: number }
-  | {
-      readonly kind: 'preview';
-      readonly generationId: string;
-      readonly version: number;
-      readonly serviceId: string;
-      readonly preview: Preview;
-      readonly pkg: LevelPackage;
-      readonly confirming: boolean;
-      /** 确认没成功时的说明（预览还在，可以再试）。 */
-      readonly error: string | null;
-    }
-  | { readonly kind: 'fallback'; readonly generationId: string; readonly fallback: Fallback; readonly title: string }
-  | { readonly kind: 'cancelled' }
-  | { readonly kind: 'saved'; readonly generationId: string; readonly title: string }
-  | { readonly kind: 'message'; readonly level: 'error' | 'warning' | 'info'; readonly text: string };
 
 const ROLE_CHOICES: readonly [RoleChoice, string][] = [
   ['both', '同伴或守卫'],
@@ -64,21 +46,28 @@ export class WorkshopPanel {
   private readonly people = el('div', { className: 'ws-people' });
   private readonly generateButton: HTMLButtonElement;
   private readonly result = el('div', { className: 'ws-result' });
-  private readonly client: WorkshopClient;
-  private health: HealthResult | null = null;
-  private view: View = { kind: 'idle' };
+  private readonly controller: WorkshopController;
   private readonly choices = new Map<string, { checked: boolean; roles: RoleChoice }>();
-  /** 已经写进“已保存”的生成标识（按生成标识只写一次）。 */
-  private readonly saved = new Set<string>();
-  private saves = 0;
   private ticker: ReturnType<typeof setInterval> | null = null;
   private peopleKey = '';
+  private lastKind: WorkshopView['kind'] = 'idle';
 
   constructor(
     private readonly host: WorkshopPanelHost,
-    client?: WorkshopClient,
+    client: WorkshopClient = new WorkshopClient(),
   ) {
-    this.client = client ?? new WorkshopClient();
+    this.controller = new WorkshopController(
+      client,
+      {
+        applyLevel: (pkg) => {
+          host.applyLevel(pkg);
+        },
+        applyFallback: () => host.applyFallback().title,
+      },
+      () => {
+        this.changed();
+      },
+    );
     this.input.rows = 3;
     this.input.placeholder = '例如：下雨的夜晚，中等大小的地图，宝石都藏在高台上，两个守卫来回巡逻。';
     this.input.setAttribute('aria-label', '一句话描述想玩的关卡');
@@ -86,7 +75,7 @@ export class WorkshopPanel {
       this.renderCounter();
     });
     this.generateButton = button('生成关卡', () => {
-      void this.generate();
+      void this.controller.generate(this.input.value, this.snapshotRoster());
     }, { icon: 'star', variant: 'primary', className: 'ws-generate' });
     const textLabel = el('label', { className: 'ws-label', text: '用一句话描述想玩的关卡' });
     const textRow = el('div', { className: 'ws-text-row' });
@@ -99,25 +88,12 @@ export class WorkshopPanel {
   /** 选关界面打开时：查一次服务状态，刷新人物列表。 */
   refresh(): void {
     this.renderPeople();
-    if (this.view.kind !== 'running') void this.checkHealth();
-  }
-
-  private async checkHealth(): Promise<void> {
-    this.health = null;
-    this.render();
-    this.health = await this.client.health();
-    this.render();
+    if (this.controller.view.kind !== 'running') void this.controller.checkHealth();
   }
 
   private get maxChars(): number {
-    return this.health?.kind === 'ok' ? this.health.health.maxRequestChars : 200;
-  }
-
-  private get usable(): { ok: true } | { ok: false; reason: string } {
-    if (!this.health) return { ok: false, reason: '正在检查工坊服务…' };
-    if (this.health.kind === 'unreachable') return { ok: false, reason: this.health.reason };
-    if (!this.health.health.available) return { ok: false, reason: this.health.health.reason ?? '模型不可用' };
-    return { ok: true };
+    const health = this.controller.health;
+    return health?.kind === 'ok' ? health.health.maxRequestChars : 200;
   }
 
   private snapshotRoster(): RosterPersonSnapshot[] {
@@ -131,95 +107,9 @@ export class WorkshopPanel {
     return out;
   }
 
-  private async generate(): Promise<void> {
-    const text = this.input.value.trim();
-    if (text === '' || this.view.kind === 'running' || !this.usable.ok) return;
-    if (this.view.kind === 'preview') void this.client.discard(this.view.generationId);
-    this.setView({ kind: 'running', generationId: null, startedAt: Date.now() });
-    const result = await this.client.generate(text, this.snapshotRoster(), (generationId) => {
-      if (this.view.kind === 'running') this.setView({ ...this.view, generationId });
-    });
-    switch (result.kind) {
-      case 'stale':
-        // 取消过或者已经开始了新的生成：丢弃这个迟到的响应
-        return;
-      case 'busy':
-        this.setView({ kind: 'message', level: 'warning', text: `工坊正忙：${result.message}。请稍后再试。` });
-        return;
-      case 'unavailable':
-        this.setView({ kind: 'message', level: 'warning', text: result.reason });
-        void this.checkHealth();
-        return;
-      case 'failed':
-        this.setView({ kind: 'message', level: 'error', text: result.message });
-        return;
-      case 'response':
-        break;
-    }
-    const response = result.response;
-    if (response.status === 'cancelled') {
-      this.setView({ kind: 'cancelled' });
-      return;
-    }
-    if (response.status === 'fallback') {
-      const pkg = this.host.applyFallback();
-      this.setView({ kind: 'fallback', generationId: response.generationId, fallback: response.fallback, title: pkg.title });
-      return;
-    }
-    const wire = packageOfWire(response.preview.level);
-    if (!wire.ok) {
-      this.setView({ kind: 'message', level: 'error', text: wire.error });
-      return;
-    }
-    this.setView({ kind: 'preview', generationId: response.generationId, version: response.version, serviceId: response.serviceId, preview: response.preview, pkg: wire.pkg, confirming: false, error: null });
-  }
-
-  private cancel(): void {
-    if (this.view.kind !== 'running') return;
-    this.client.cancel();
-    this.setView({ kind: 'cancelled' });
-  }
-
-  private async confirm(): Promise<void> {
-    const view = this.view;
-    if (view.kind !== 'preview') return;
-    this.setView({ ...view, confirming: true, error: null });
-    const result = await this.client.confirm(view.generationId, view.version, view.serviceId);
-    if (result.kind === 'expired') {
-      this.setView({ kind: 'message', level: 'warning', text: result.message });
-      return;
-    }
-    if (result.kind === 'failed') {
-      this.setView({ ...view, confirming: false, error: `没有确认成功：${result.message}` });
-      return;
-    }
-    const wire = packageOfWire(result.response.level);
-    if (!wire.ok || wire.pkg.layoutHash !== view.pkg.layoutHash) {
-      this.setView({ kind: 'message', level: 'error', text: wire.ok ? '定稿和预览不一致' : wire.error });
-      return;
-    }
-    // 按生成标识只写入一次
-    if (!this.saved.has(view.generationId)) {
-      this.saved.add(view.generationId);
-      this.saves++;
-      this.host.applyLevel(wire.pkg);
-    }
-    this.setView({ kind: 'saved', generationId: view.generationId, title: wire.pkg.title });
-  }
-
-  private discard(retry: boolean): void {
-    const view = this.view;
-    if (view.kind !== 'preview') return;
-    void this.client.discard(view.generationId);
-    this.setView({ kind: 'idle' });
-    if (retry) {
-      this.input.focus();
-      this.input.select();
-    }
-  }
-
-  private setView(view: View): void {
-    this.view = view;
+  /** 控制器的状态变了：重画，生成中每秒刷新一次已用的时间。 */
+  private changed(): void {
+    const view = this.controller.view;
     if (view.kind === 'running' && this.ticker === null) {
       this.ticker = setInterval(() => {
         this.renderResult();
@@ -231,14 +121,15 @@ export class WorkshopPanel {
     }
     this.render();
     // 预览、回退和提示出现在右栏下方：滚到能看见的位置
-    if (view.kind === 'preview' || view.kind === 'fallback' || view.kind === 'message') this.result.scrollIntoView({ block: 'nearest' });
+    if (view.kind !== this.lastKind && (view.kind === 'preview' || view.kind === 'fallback' || view.kind === 'message')) this.result.scrollIntoView({ block: 'nearest' });
+    this.lastKind = view.kind;
   }
 
   private renderCounter(): void {
     const length = this.input.value.trim().length;
     this.counter.textContent = `${String(length)} / ${String(this.maxChars)}`;
     this.counter.classList.toggle('is-over', length > this.maxChars);
-    this.generateButton.disabled = length === 0 || length > this.maxChars || this.view.kind === 'running' || !this.usable.ok;
+    this.generateButton.disabled = length === 0 || length > this.maxChars || this.controller.locked || !this.controller.usable.ok;
   }
 
   private renderPeople(): void {
@@ -282,7 +173,7 @@ export class WorkshopPanel {
 
   private render(): void {
     // 状态标签：提供方和模型名（不含密钥）
-    const health = this.health;
+    const health = this.controller.health;
     if (!health) this.status.replaceChildren(tag('正在检查工坊服务…', 'default', 'refresh'));
     else if (health.kind === 'unreachable') this.status.replaceChildren(tag('工坊服务不可用', 'orange', 'alert'));
     else {
@@ -292,8 +183,8 @@ export class WorkshopPanel {
         tag(`${h.provider}${h.model ? ` · ${h.model}` : ''}`, 'default', 'layers'),
       );
     }
-    const usable = this.usable;
-    const showUnavailable = health !== null && !usable.ok && this.view.kind !== 'running';
+    const usable = this.controller.usable;
+    const showUnavailable = health !== null && !usable.ok && this.controller.view.kind !== 'running';
     this.unavailable.hidden = !showUnavailable;
     if (showUnavailable) {
       const list = el('ul', { className: 'mw-notices' });
@@ -306,7 +197,7 @@ export class WorkshopPanel {
       );
     }
     this.form.hidden = showUnavailable;
-    const running = this.view.kind === 'running';
+    const running = this.controller.view.kind === 'running';
     this.input.disabled = running;
     this.input.maxLength = this.maxChars;
     for (const control of this.people.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input, select')) {
@@ -318,7 +209,7 @@ export class WorkshopPanel {
   }
 
   private renderResult(): void {
-    const view = this.view;
+    const view = this.controller.view;
     const parts: HTMLElement[] = [];
     switch (view.kind) {
       case 'idle':
@@ -332,7 +223,7 @@ export class WorkshopPanel {
         parts.push(
           box,
           button('停止生成', () => {
-            this.cancel();
+            this.controller.cancel();
           }, { icon: 'close' }),
         );
         break;
@@ -382,7 +273,7 @@ export class WorkshopPanel {
     return box;
   }
 
-  private previewParts(view: Extract<View, { kind: 'preview' }>): HTMLElement[] {
+  private previewParts(view: Extract<WorkshopView, { kind: 'preview' }>): HTMLElement[] {
     const { preview, pkg } = view;
     const brief = pkg.brief;
     const head = el('div', { className: 'ws-preview-head' });
@@ -438,17 +329,20 @@ export class WorkshopPanel {
     const checked = el('p', { className: 'random-checked' });
     checked.append(icon('check', 'mw-icon'), document.createTextNode('空间与规则检查通过，难度为估计。'));
     const actions = el('div', { className: 'random-actions' });
-    const confirm = button('确认', () => {
-      void this.confirm();
+    const confirm = button(view.confirming ? '正在确认…' : '确认', () => {
+      void this.controller.confirm();
     }, { icon: 'check', variant: 'primary', label: '确认工坊关卡' });
     confirm.disabled = view.confirming;
     actions.append(
       confirm,
       button('改一句话重来', () => {
-        this.discard(true);
+        if (this.controller.discard()) {
+          this.input.focus();
+          this.input.select();
+        }
       }, { icon: 'edit' }),
       button('放弃', () => {
-        this.discard(false);
+        this.controller.discard();
       }, { icon: 'close', variant: 'ghost', label: '放弃工坊关卡' }),
     );
     parts.push(checked, actions);
@@ -456,8 +350,8 @@ export class WorkshopPanel {
   }
 
   snapshot(): WorkshopSnapshot {
-    const health = this.health;
-    const view = this.view;
+    const health = this.controller.health;
+    const view = this.controller.view;
     return {
       health: !health
         ? { kind: 'checking', provider: null, model: null, available: false, reason: null }
@@ -471,7 +365,7 @@ export class WorkshopPanel {
       repairs: view.kind === 'preview' ? view.preview.repairs : null,
       fallbackId: view.kind === 'fallback' ? FALLBACK_LEVEL_ID : null,
       message: view.kind === 'message' ? view.text : null,
-      saves: this.saves,
+      saves: this.controller.saves,
     };
   }
 }

@@ -16,6 +16,7 @@ import { WorkshopError } from '../../server/errors';
 import { FakeProvider, type FakeScript } from '../../server/fakeProvider';
 import { createLogger } from '../../server/log';
 import { Redactor } from '../../server/errors';
+import type { LlmProvider } from '../../server/providers';
 import { MemoryStats, summarize } from '../../server/stats';
 import { Workshop } from '../../server/workshop';
 
@@ -292,3 +293,81 @@ describe('预览会话', () => {
     expect(randomBrief('x').schemaVersion).toBe(1);
   });
 });
+
+describe('第 1 轮审查：异常路径也只记一条、记全', () => {
+  /** 生成前检查模型可用时一直等到被中止（被中止时像 Ollama 那样报“不可用”）；其余和假模型一样。 */
+  function slowAvailability(): LlmProvider {
+    const fake = new FakeProvider({});
+    return {
+      name: fake.name,
+      model: fake.model,
+      chat: (m, t, s) => fake.chat(m, t, s),
+      structured: (m, schema, s) => fake.structured(m, schema, s),
+      availability: (signal) =>
+        new Promise((resolve) => {
+          signal.addEventListener('abort', () => {
+            resolve({ available: false, reason: '连不上 Ollama' });
+          });
+        }),
+    };
+  }
+
+  function slowHarness(env: Record<string, string> = {}) {
+    const provider = slowAvailability();
+    const stats = new MemoryStats();
+    const workshop = new Workshop({ config: config(env), provider, stats, log: createLogger(new Redactor([]), () => undefined) });
+    return { provider, stats, workshop };
+  }
+
+  it('生成前检查模型可用时被取消：记为取消（不是“不可用”），不回退', async () => {
+    const h = slowHarness();
+    const req = request();
+    const pending = h.workshop.generate(req);
+    await new Promise((r) => setTimeout(r, 30));
+    h.workshop.cancel(req.generationId);
+    const res = await pending;
+    expect(res.status).toBe('cancelled');
+    expect(h.stats.records.map((r) => [r.outcome, r.briefAttempts, r.modelCalls])).toEqual([['cancelled', 0, 0]]);
+  });
+
+  it('生成前检查模型可用时整个请求超时：服务错误并回退（不是“不可用”）', async () => {
+    const h = slowHarness({ MW_WORKSHOP_REQUEST_TIMEOUT_MS: '300' });
+    const res = await h.workshop.generate(request());
+    if (res.status !== 'fallback') throw new Error(`应该回退：${JSON.stringify(res)}`);
+    expect(res.fallback).toMatchObject({ outcome: 'error', reason: '整个生成请求超时（0 秒）' });
+    expect(res.fallback.differences[0]).toContain('不是按你的描述做的');
+    expect(h.stats.records.map((r) => r.outcome)).toEqual(['error']);
+  });
+
+  it('刚受理就取消（还没有检查点）：响应是取消，统计也记一次取消', async () => {
+    const h = harness({});
+    const req = request();
+    const pending = h.workshop.generate(req);
+    h.workshop.cancel(req.generationId);
+    expect((await pending).status).toBe('cancelled');
+    expect(h.stats.records.map((r) => [r.outcome, r.briefAttempts, r.repairs])).toEqual([['cancelled', 0, 0]]);
+    expect(h.logs.some((l) => l.includes('统计没有写进去'))).toBe(false);
+  });
+
+  it('修复时超时：已经开始的那次尝试和它的耗时都算进统计', async () => {
+    const h = harness({ briefs: [{ kind: 'raw', text: '{oops' }, { kind: 'hang' }] }, { config: config({ MW_WORKSHOP_CALL_TIMEOUT_MS: '300' }) });
+    const res = await h.workshop.generate(request());
+    if (res.status !== 'fallback') throw new Error('应该回退');
+    expect(res.fallback.outcome).toBe('error');
+    expect(h.provider.calls.structured).toBe(2);
+    const record = h.stats.records[0];
+    expect(record).toMatchObject({ outcome: 'error', briefAttempts: 2, repairs: 1, modelCalls: 3 });
+    expect(record?.timingsMs.brief).toBeGreaterThanOrEqual(250);
+    expect(record?.timingsMs.understand).toBeGreaterThanOrEqual(0);
+    expect(record?.timingsMs.validate).toBeGreaterThanOrEqual(0);
+  });
+
+  it('理解请求超时：这一步的耗时也算进统计', async () => {
+    const h = harness({ understand: [{ kind: 'hang' }] }, { config: config({ MW_WORKSHOP_CALL_TIMEOUT_MS: '300' }) });
+    const res = await h.workshop.generate(request());
+    expect(res.status).toBe('fallback');
+    expect(h.stats.records[0]).toMatchObject({ outcome: 'error', briefAttempts: 0, modelCalls: 1 });
+    expect(h.stats.records[0]?.timingsMs.understand).toBeGreaterThanOrEqual(250);
+  });
+});
+

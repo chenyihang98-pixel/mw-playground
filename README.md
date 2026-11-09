@@ -169,7 +169,9 @@ MW_ASSET_DIR=<项目外放真实资产的目录> npm run e2e -- tests/e2e/real-a
   - 来源（模型生成）、提供方和模型名；
   - 是一次通过、修复了几次，还是程序调整过（调整的原因和主要变化）；
   - 开场白和台词。
-- 预览之后可以“确认”“改一句话重来”或“放弃”。确认后关卡写进“已保存的关卡”（来源：模型生成）并加载；连续点确认只保存一次。
+- 预览之后可以“确认”“改一句话重来”或“放弃”。
+  - 确认后关卡写进“已保存的关卡”（来源：模型生成）并加载；连续点确认只保存一次。
+  - 确认还没完成时也可以放弃或重来：之后迟到的确认结果被丢弃，这一关不会保存。
 - 模型写说明书最多 3 次（首次 1 次 + 修复 2 次）：
   - 说明书错误：把具体原因交回模型；
   - 放不下或太远：先走 P5 的有限次尝试和一次程序调整，还不行再把原因交回模型；
@@ -198,7 +200,7 @@ MW_ASSET_DIR=<项目外放真实资产的目录> npm run e2e -- tests/e2e/real-a
 | `MW_OLLAMA_MODEL` | `qwen3.5:9b-q4_K_M` | Ollama 的模型名（服务不会自动拉取模型） |
 | `MW_OLLAMA_NUM_CTX` | `8192` | 上下文长度（随请求传，不改 Ollama 的配置） |
 | `MW_OPENAI_BASE_URL`、`MW_OPENAI_MODEL`、`MW_OPENAI_API_KEY` | 无 | OpenAI 兼容接口（可选，见下） |
-| `MW_WORKSHOP_PORT` | `8790` | 服务的端口（Vite 的代理也读它） |
+| `MW_WORKSHOP_PORT` | `8790` | 服务的端口。Vite 的代理用同样的规则读它：环境变量优先，其次 `.env` |
 | `MW_WORKSHOP_MAX_REQUEST_CHARS` | `200` | 一句话最多几个字 |
 | `MW_WORKSHOP_MAX_BODY_BYTES` | `32768` | 请求体上限 |
 | `MW_WORKSHOP_CALL_TIMEOUT_MS` | `60000` | 单次模型调用的超时 |
@@ -212,6 +214,7 @@ OpenAI 兼容接口（可选）：
 - 只用 Chat Completions（`POST {MW_OPENAI_BASE_URL}/chat/completions`）；
 - 用到的能力：普通对话、工具调用（function calling），以及结构化输出（`response_format` 的 `json_schema`）；
 - 不用流式和 Responses API；
+- 健康检查用 `GET {MW_OPENAI_BASE_URL}/models`（带密钥），确认连得上、密钥被接受、列表里有这个模型；接口不支持列出模型（404）时，按最近一次调用的结果；
 - **未验证**：只用测试里的假服务验证过适配逻辑；
 - 本机模型失败时不会自动切换到外部接口。
 

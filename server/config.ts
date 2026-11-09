@@ -3,11 +3,11 @@
 
 import { z } from 'zod';
 import { PROVIDER_NAMES, type ProviderName } from '../src/workshop/protocol';
+import { DEFAULT_PORT } from './port';
 
 /** 只监听这个地址（不能配置）。 */
 export const HOST = '127.0.0.1';
-/** 默认端口。 */
-export const DEFAULT_PORT = 8790;
+export { DEFAULT_PORT };
 
 export interface WorkshopConfig {
   readonly port: number;

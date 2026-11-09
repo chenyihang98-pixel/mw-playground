@@ -25,7 +25,7 @@ import {
 } from '../src/workshop/protocol';
 import type { WorkshopConfig } from './config';
 import { CallTimeout, CancelledByUser, WorkshopError } from './errors';
-import { MAX_BRIEF_ATTEMPTS, ModelCallError, buildWorkshopGraph, historyLine, type GraphDeps, type WorkshopGraph, type WorkshopStateType } from './graph';
+import { MAX_BRIEF_ATTEMPTS, ModelCallError, buildWorkshopGraph, historyLine, type AttemptLog, type GraphDeps, type WorkshopGraph, type WorkshopStateType } from './graph';
 import type { Logger } from './log';
 import type { LlmProvider } from './providers';
 import { rosterEntries } from './roster';
@@ -55,6 +55,21 @@ interface Session {
 /** 同时保留的预览会话最多几个（更早的作废）。 */
 const MAX_SESSIONS = 16;
 
+/**
+ * 一次生成的进度（统计用），记在图的状态之外：图的状态只在节点正常返回后才提交，
+ * 超时、取消或出错时正在进行的那次调用不会进状态，但要算进统计。
+ */
+interface Progress {
+  briefAttempts: number;
+  modelCalls: number;
+  readonly timings: Record<string, number>;
+}
+
+type StateView = Readonly<Pick<WorkshopStateType, 'attempt' | 'lastValidBrief' | 'terminal'>> & { readonly history: readonly AttemptLog[] };
+
+/** 还没有建立检查点（例如刚受理就被取消）时用的状态。 */
+const EMPTY_STATE: StateView = { attempt: 0, history: [], lastValidBrief: null, terminal: null };
+
 export class Workshop {
   readonly serviceId: string;
   private readonly checkpointer = new MemorySaver();
@@ -65,7 +80,7 @@ export class Workshop {
   private readonly sessions = new Map<string, Session>();
   /** 已经用过的生成标识（每个请求只处理、只统计一次）。 */
   private readonly seen = new Set<string>();
-  private readonly calls = new Map<string, number>();
+  private readonly progress = new Map<string, Progress>();
   private version = 0;
 
   constructor(private readonly deps: WorkshopDeps) {
@@ -78,7 +93,16 @@ export class Workshop {
         callTimeoutMs: deps.config.limits.callTimeoutMs,
         now: this.now,
         onModelCall: (id) => {
-          this.calls.set(id, (this.calls.get(id) ?? 0) + 1);
+          const p = this.progress.get(id);
+          if (p) p.modelCalls++;
+        },
+        onBriefAttempt: (id) => {
+          const p = this.progress.get(id);
+          if (p) p.briefAttempts++;
+        },
+        onStage: (id, stage, ms) => {
+          const p = this.progress.get(id);
+          if (p) p.timings[stage] = (p.timings[stage] ?? 0) + ms;
         },
         onDefect: (id, problems) => {
           deps.log.error('程序缺陷：检查器拒绝了生成器做出的布局', { generationId: id, problems });
@@ -119,6 +143,7 @@ export class Workshop {
     this.running = { id: request.generationId, controller };
     this.seen.add(request.generationId);
     const id = request.generationId;
+    this.progress.set(id, { briefAttempts: 0, modelCalls: 0, timings: {} });
     const start = this.now();
     const thread = { configurable: { thread_id: id } };
     const timer = setTimeout(() => {
@@ -126,6 +151,8 @@ export class Workshop {
     }, config.limits.requestTimeoutMs);
     try {
       const availability = await provider.availability(AbortSignal.any([controller.signal, AbortSignal.timeout(3000)]));
+      // 先看这次请求是不是已经被取消或超时：检查被中止时提供方也会报“不可用”，那不是模型的问题
+      if (controller.signal.aborted) return await this.finishFailure(request, EMPTY_STATE, controller.signal.reason, controller.signal.reason, this.now() - start);
       if (!availability.available) {
         // 模型不可用不算一个生成请求（不统计）：浏览器按原因提示，并提供“随机一关”
         this.seen.delete(id);
@@ -141,16 +168,14 @@ export class Workshop {
       } catch (error) {
         failure = error;
       }
-      const snapshot = await this.graph.getState(thread);
-      const state = snapshot.values as WorkshopStateType;
+      const { state, interrupts } = await this.readState(thread);
       const total = this.now() - start;
       if (failure !== null) return await this.finishFailure(request, state, failure, controller.signal.reason, total);
-      const interrupts = snapshot.tasks.flatMap((t) => t.interrupts);
       const preview = interrupts[0]?.value as Preview | undefined;
       if (preview) {
         const version = ++this.version;
         this.remember({ id, version, preview, finalized: null });
-        await this.record(request, state, preview.outcome, null, total);
+        await this.record(request, preview.outcome, null, total);
         log.info('出预览', { generationId: id, outcome: preview.outcome, repairs: preview.repairs });
         return { ok: true, status: 'preview', generationId: id, version, serviceId: this.serviceId, preview };
       }
@@ -160,16 +185,35 @@ export class Workshop {
     } finally {
       clearTimeout(timer);
       this.running = null;
-      this.calls.delete(id);
+      this.progress.delete(id);
     }
   }
 
-  private async finishFailure(request: GenerateRequest, state: WorkshopStateType, error: unknown, signalReason: unknown, total: number): Promise<GenerateResponse> {
+  /** 读这次生成的状态。还没有检查点（刚受理就被取消、出错）时用空的状态。 */
+  private async readState(thread: { configurable: { thread_id: string } }): Promise<{ state: StateView; interrupts: { value?: unknown }[] }> {
+    try {
+      const snapshot = await this.graph.getState(thread);
+      const values = snapshot.values as Partial<WorkshopStateType>;
+      return {
+        state: {
+          attempt: values.attempt ?? 0,
+          history: values.history ?? [],
+          lastValidBrief: values.lastValidBrief ?? null,
+          terminal: values.terminal ?? null,
+        },
+        interrupts: snapshot.tasks.flatMap((t) => t.interrupts),
+      };
+    } catch {
+      return { state: EMPTY_STATE, interrupts: [] };
+    }
+  }
+
+  private async finishFailure(request: GenerateRequest, state: StateView, error: unknown, signalReason: unknown, total: number): Promise<GenerateResponse> {
     const id = request.generationId;
     await this.dropThread(id);
     if (signalReason instanceof CancelledByUser || (error instanceof ModelCallError && error.info.kind === 'cancelled')) {
       // 取消不算失败，也不回退
-      await this.record(request, state, 'cancelled', '用户取消', total);
+      await this.record(request, 'cancelled', '用户取消', total);
       this.deps.log.info('已取消', { generationId: id });
       return { ok: true, status: 'cancelled', generationId: id, serviceId: this.serviceId };
     }
@@ -182,7 +226,7 @@ export class Workshop {
   }
 
   /** 回退到内置关卡（P5 的第 1 关），说明来源、原因和与请求的主要差别。 */
-  private async fallback(request: GenerateRequest, state: WorkshopStateType, outcome: 'fallback' | 'error', reason: string, total: number): Promise<GenerateResponse> {
+  private async fallback(request: GenerateRequest, state: StateView, outcome: 'fallback' | 'error', reason: string, total: number): Promise<GenerateResponse> {
     const pkg = fallbackPackage();
     if (!pkg.brief) throw new Error('回退关卡没有说明书');
     const fallback: Fallback = {
@@ -194,13 +238,14 @@ export class Workshop {
       provider: this.deps.provider.name,
       model: this.deps.provider.model,
     };
-    await this.record(request, state, outcome, reason, total);
+    await this.record(request, outcome, reason, total);
     return { ok: true, status: 'fallback', generationId: request.generationId, serviceId: this.serviceId, fallback };
   }
 
-  /** 每个请求只记一条。 */
-  private async record(request: GenerateRequest, state: WorkshopStateType, outcome: Outcome, reason: string | null, total: number): Promise<void> {
-    const attempts = Math.min(state.attempt, MAX_BRIEF_ATTEMPTS);
+  /** 每个请求只记一条。写说明书的次数、模型调用次数和各阶段耗时都按实际开始的算（含超时、取消、出错的那一次）。 */
+  private async record(request: GenerateRequest, outcome: Outcome, reason: string | null, total: number): Promise<void> {
+    const progress = this.progress.get(request.generationId) ?? { briefAttempts: 0, modelCalls: 0, timings: {} };
+    const attempts = Math.min(progress.briefAttempts, MAX_BRIEF_ATTEMPTS);
     try {
       await this.deps.stats.record({
         id: request.generationId,
@@ -211,8 +256,8 @@ export class Workshop {
         model: this.deps.provider.model,
         repairs: Math.max(0, attempts - 1),
         briefAttempts: attempts,
-        modelCalls: this.calls.get(request.generationId) ?? 0,
-        timingsMs: { ...roundTimings(state.timings), total: Math.round(total) },
+        modelCalls: progress.modelCalls,
+        timingsMs: { ...roundTimings(progress.timings), total: Math.round(total) },
         textChars: request.text.length,
         rosterSize: request.roster.length,
       });

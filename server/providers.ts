@@ -12,6 +12,7 @@ import { ChatOllama } from '@langchain/ollama';
 import { ChatOpenAICompletions } from '@langchain/openai';
 import type { ProviderName } from '../src/workshop/protocol';
 import { modelNameOf, type WorkshopConfig } from './config';
+import { describeCallError } from './errors';
 
 export interface Availability {
   readonly available: boolean;
@@ -110,11 +111,16 @@ export class OllamaProvider implements LlmProvider {
  * OpenAI 兼容接口（可选）。只用 Chat Completions（POST {baseUrl}/chat/completions），用到的能力：
  * - 普通对话和工具调用（tools / tool_calls，function calling）；
  * - 结构化输出：response_format = { type: "json_schema", json_schema: { name, schema, strict: false } }。
- * 不用流式、不用 Responses API、不用其他内置工具。健康检查不联网：配置齐全就算可用。
+ * 不用流式、不用 Responses API、不用其他内置工具。
+ *
+ * 健康检查：配置齐全之后，再用 GET {baseUrl}/models（带密钥）确认连得上、密钥被接受、列表里有这个模型。
+ * 接口不支持列出模型（404）时，按最近一次调用的结果：连不上、鉴权失败或模型不存在时报不可用，调用成功后恢复。
  */
 export class OpenAiCompatibleProvider implements LlmProvider {
   readonly name = 'openai' as const;
   readonly model: string | null;
+  /** 最近一次调用失败的原因（连不上、鉴权失败、没有这个模型）；调用成功后清掉。 */
+  private lastFailure: string | null = null;
 
   constructor(
     private readonly config: WorkshopConfig['openai'],
@@ -137,29 +143,66 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     });
   }
 
-  async chat(messages: readonly BaseMessage[], tools: readonly StructuredToolInterface[], signal: AbortSignal): Promise<AIMessage> {
-    const model = this.create(signal, SAMPLING.understand);
-    const runnable = tools.length > 0 ? model.bindTools([...tools]) : model;
-    const reply = await runnable.invoke([...messages], { signal });
-    return new AIMessage({ content: reply.content, tool_calls: reply.tool_calls ?? [] });
+  /** 记下调用的结果：连不上、鉴权失败、没有这个模型时记为失败原因；成功时清掉。取消和超时不算。 */
+  private async remember<T>(work: Promise<T>): Promise<T> {
+    try {
+      const value = await work;
+      this.lastFailure = null;
+      return value;
+    } catch (error) {
+      const info = describeCallError(error);
+      const status = info.kind === 'http' ? /HTTP (\d{3})/.exec(info.message)?.[1] : undefined;
+      if (info.kind === 'network') this.lastFailure = '连不上 OpenAI 兼容接口';
+      else if (status === '401' || status === '403') this.lastFailure = `OpenAI 兼容接口拒绝了密钥（HTTP ${status}）`;
+      else if (status === '404') this.lastFailure = `OpenAI 兼容接口找不到模型 ${this.model ?? ''} 或对话接口（HTTP 404）`;
+      throw error;
+    }
   }
 
-  async structured(messages: readonly BaseMessage[], schema: Record<string, unknown>, signal: AbortSignal): Promise<string> {
-    const model = this.create(signal, SAMPLING.brief);
-    const reply = await model.invoke([...messages], {
-      signal,
-      response_format: { type: 'json_schema', json_schema: { name: 'level_brief', schema, strict: false } },
-    });
-    return textOf(reply);
+  chat(messages: readonly BaseMessage[], tools: readonly StructuredToolInterface[], signal: AbortSignal): Promise<AIMessage> {
+    return this.remember(
+      (async () => {
+        const model = this.create(signal, SAMPLING.understand);
+        const runnable = tools.length > 0 ? model.bindTools([...tools]) : model;
+        const reply = await runnable.invoke([...messages], { signal });
+        return new AIMessage({ content: reply.content, tool_calls: reply.tool_calls ?? [] });
+      })(),
+    );
   }
 
-  availability(): Promise<Availability> {
-    const missing = [
-      this.config.baseUrl ? null : 'MW_OPENAI_BASE_URL',
-      this.config.model ? null : 'MW_OPENAI_MODEL',
-      this.config.apiKey ? null : 'MW_OPENAI_API_KEY',
-    ].filter((m): m is string => m !== null);
-    return Promise.resolve(missing.length > 0 ? { available: false, reason: `OpenAI 兼容接口的配置不全：缺少 ${missing.join('、')}` } : { available: true, reason: null });
+  structured(messages: readonly BaseMessage[], schema: Record<string, unknown>, signal: AbortSignal): Promise<string> {
+    return this.remember(
+      (async () => {
+        const model = this.create(signal, SAMPLING.brief);
+        const reply = await model.invoke([...messages], {
+          signal,
+          response_format: { type: 'json_schema', json_schema: { name: 'level_brief', schema, strict: false } },
+        });
+        return textOf(reply);
+      })(),
+    );
+  }
+
+  async availability(signal: AbortSignal): Promise<Availability> {
+    const { baseUrl, model, apiKey } = this.config;
+    const missing = [baseUrl ? null : 'MW_OPENAI_BASE_URL', model ? null : 'MW_OPENAI_MODEL', apiKey ? null : 'MW_OPENAI_API_KEY'].filter((m): m is string => m !== null);
+    if (missing.length > 0 || !baseUrl || !model || !apiKey) return { available: false, reason: `OpenAI 兼容接口的配置不全：缺少 ${missing.join('、')}` };
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${baseUrl}/models`, { headers: { authorization: `Bearer ${apiKey}` }, signal });
+    } catch {
+      return { available: false, reason: '连不上 OpenAI 兼容接口' };
+    }
+    if (res.status === 401 || res.status === 403) return { available: false, reason: `OpenAI 兼容接口拒绝了密钥（HTTP ${String(res.status)}）` };
+    if (res.status === 404) {
+      // 不支持列出模型：按最近一次调用的结果
+      return this.lastFailure ? { available: false, reason: this.lastFailure } : { available: true, reason: null };
+    }
+    if (!res.ok) return { available: false, reason: `OpenAI 兼容接口返回错误（HTTP ${String(res.status)}）` };
+    const body = (await res.json().catch(() => null)) as { data?: unknown } | null;
+    const ids = Array.isArray(body?.data) ? body.data.map((m: unknown) => (typeof m === 'object' && m !== null ? (m as { id?: unknown }).id : null)).filter((id): id is string => typeof id === 'string') : null;
+    if (ids && !ids.includes(model)) return { available: false, reason: `OpenAI 兼容接口里没有模型 ${model}` };
+    return { available: true, reason: null };
   }
 }
 

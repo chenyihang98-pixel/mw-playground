@@ -1,8 +1,10 @@
 import { defineConfig } from 'vite';
+import { resolveWorkshopPort } from './server/port';
 
-// 关卡工坊的本机服务（P8）：开发时由 Vite 把 /api 代理过去。端口和 server/config.ts 的默认值（8790）一致，
-// 可以用 MW_WORKSHOP_PORT 改。只起 Vite、没有起服务时，工坊按“服务不可用”显示，游戏照常。
-const workshopPort = Number(process.env.MW_WORKSHOP_PORT ?? '8790');
+// 关卡工坊的本机服务（P8）：开发时由 Vite 把 /api 代理过去。端口和服务用同一个规则取（server/port.ts）：
+// 环境变量 MW_WORKSHOP_PORT 优先，其次项目根目录 .env 里的 MW_WORKSHOP_PORT，都没有时是 8790。
+// 只起 Vite、没有起服务时，工坊按“服务不可用”显示，游戏照常。
+const workshopPort = resolveWorkshopPort();
 
 export default defineConfig({
   server: {

@@ -66,12 +66,6 @@ export class ModelCallError extends Error {
   }
 }
 
-const sumTimings = (a: Record<string, number>, b: Record<string, number>): Record<string, number> => {
-  const out = { ...a };
-  for (const [k, v] of Object.entries(b)) out[k] = (out[k] ?? 0) + v;
-  return out;
-};
-
 export const WorkshopState = Annotation.Root({
   text: Annotation<string>(),
   roster: Annotation<RosterEntry[]>(),
@@ -95,11 +89,12 @@ export const WorkshopState = Annotation.Root({
   terminal: Annotation<Terminal | null>({ reducer: (_a, b) => b, default: () => null }),
   decision: Annotation<Decision | null>({ reducer: (_a, b) => b, default: () => null }),
   final: Annotation<WireLevel | null>({ reducer: (_a, b) => b, default: () => null }),
-  /** 各阶段耗时（毫秒，累加）。 */
-  timings: Annotation<Record<string, number>>({ reducer: sumTimings, default: () => ({}) }),
 });
 
 export type WorkshopStateType = typeof WorkshopState.State;
+
+/** 统计里的阶段。 */
+export type Stage = 'understand' | 'brief' | 'validate' | 'produce';
 
 export interface GraphDeps {
   readonly provider: LlmProvider;
@@ -108,6 +103,13 @@ export interface GraphDeps {
   readonly now: () => number;
   /** 每次调用模型前通知（统计用）。 */
   readonly onModelCall?: (threadId: string) => void;
+  /**
+   * 开始写一次说明书时通知（统计用）。在调用模型之前通知：这次调用超时、被取消或出错时也算一次已经开始的尝试。
+   * （图的状态只在节点正常返回后才提交，所以统计不依赖状态里的 attempt。）
+   */
+  readonly onBriefAttempt?: (threadId: string) => void;
+  /** 一个阶段花了多少时间（统计用，出错、超时时也会通知）。 */
+  readonly onStage?: (threadId: string, stage: Stage, ms: number) => void;
   /** 程序缺陷等需要记下来的错误。 */
   readonly onDefect?: (threadId: string, problems: readonly string[]) => void;
   /** P5 的流水线（测试可以替换，用来模拟程序缺陷）。 */
@@ -164,30 +166,41 @@ function threadOf(config: LangGraphRunnableConfig): string {
   return typeof id === 'string' ? id : '';
 }
 
-/** 带超时调用一次模型：超时或取消时中止这次调用（fetch 绑定的 signal 一起中止）。 */
-async function callModel<T>(deps: GraphDeps, config: LangGraphRunnableConfig, step: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
-  const parent = config.signal;
-  parent?.throwIfAborted();
-  const timeout = new AbortController();
-  const timer = setTimeout(() => {
-    timeout.abort(new CallTimeout(`${step}（单次模型调用）`, deps.callTimeoutMs));
-  }, deps.callTimeoutMs);
-  const signal = parent ? AbortSignal.any([parent, timeout.signal]) : timeout.signal;
-  deps.onModelCall?.(threadOf(config));
+/** 量一个阶段的耗时：不管成功、出错还是超时都通知。 */
+async function timed<T>(deps: GraphDeps, config: LangGraphRunnableConfig, stage: Stage, work: () => T | Promise<T>): Promise<T> {
+  const start = deps.now();
   try {
-    return await work(signal);
-  } catch (error) {
-    throw new ModelCallError(describeCallError(error, signal.reason), step);
+    return await work();
   } finally {
-    clearTimeout(timer);
+    deps.onStage?.(threadOf(config), stage, deps.now() - start);
   }
+}
+
+/** 带超时调用一次模型：超时或取消时中止这次调用（fetch 绑定的 signal 一起中止）。 */
+async function callModel<T>(deps: GraphDeps, config: LangGraphRunnableConfig, stage: Stage, step: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  return timed(deps, config, stage, async () => {
+    const parent = config.signal;
+    parent?.throwIfAborted();
+    const timeout = new AbortController();
+    const timer = setTimeout(() => {
+      timeout.abort(new CallTimeout(`${step}（单次模型调用）`, deps.callTimeoutMs));
+    }, deps.callTimeoutMs);
+    const signal = parent ? AbortSignal.any([parent, timeout.signal]) : timeout.signal;
+    deps.onModelCall?.(threadOf(config));
+    try {
+      return await work(signal);
+    } catch (error) {
+      throw new ModelCallError(describeCallError(error, signal.reason), step);
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 }
 
 export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpointSaver) {
   const schema = briefJsonSchema();
 
   const understand = async (state: WorkshopStateType, config: LangGraphRunnableConfig) => {
-    const start = deps.now();
     const roster = state.roster;
     // 工具只读这次请求带来的名册快照
     const lookupRoster = tool(() => describeRoster(roster), {
@@ -196,7 +209,7 @@ export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpoint
       schema: z.object({ query: z.string().optional().describe('想找的人物（可以不填）') }),
     });
     const messages: BaseMessage[] = [new SystemMessage(understandSystemPrompt()), new HumanMessage(`玩家的一句话：${state.text}`)];
-    let reply = await callModel(deps, config, '理解请求', (signal) => deps.provider.chat(messages, [lookupRoster], signal));
+    let reply = await callModel(deps, config, 'understand', '理解请求', (signal) => deps.provider.chat(messages, [lookupRoster], signal));
     for (let round = 0; round < MAX_TOOL_ROUNDS && (reply.tool_calls?.length ?? 0) > 0; round++) {
       const calls = reply.tool_calls ?? [];
       messages.push(reply);
@@ -205,14 +218,13 @@ export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpoint
         const content = call.name === 'lookup_roster' ? describeRoster(roster) : `没有工具 ${call.name}，只能用 lookup_roster`;
         messages.push(new ToolMessage({ content, tool_call_id: call.id ?? `call-${String(i)}` }));
       });
-      reply = await callModel(deps, config, '理解请求', (signal) => deps.provider.chat(messages, [lookupRoster], signal));
+      reply = await callModel(deps, config, 'understand', '理解请求', (signal) => deps.provider.chat(messages, [lookupRoster], signal));
     }
     const understanding = textOf(reply).trim().slice(0, 800);
-    return { understanding, timings: { understand: deps.now() - start } };
+    return { understanding };
   };
 
   const writeBrief = async (state: WorkshopStateType, config: LangGraphRunnableConfig) => {
-    const start = deps.now();
     const attempt = state.attempt + 1;
     const messages = [
       new SystemMessage(briefSystemPrompt()),
@@ -220,13 +232,16 @@ export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpoint
         briefUserPrompt({ text: state.text, understanding: state.understanding, roster: state.roster, previous: state.raw, problems: state.problems }),
       ),
     ];
-    const raw = await callModel(deps, config, `写说明书（第 ${String(attempt)} 次）`, (signal) => deps.provider.structured(messages, schema, signal));
-    return { attempt, raw, timings: { brief: deps.now() - start } };
+    // 先记下“开始了一次尝试”：这次调用超时或被取消时，统计里也算上
+    deps.onBriefAttempt?.(threadOf(config));
+    const raw = await callModel(deps, config, 'brief', `写说明书（第 ${String(attempt)} 次）`, (signal) => deps.provider.structured(messages, schema, signal));
+    return { attempt, raw };
   };
 
-  const validate = (state: WorkshopStateType) => {
-    const start = deps.now();
-    const done = (update: Partial<WorkshopStateType>) => ({ ...update, timings: { validate: deps.now() - start } });
+  const validate = (state: WorkshopStateType, config: LangGraphRunnableConfig) => timed(deps, config, 'validate', () => validateBrief(state));
+
+  const validateBrief = (state: WorkshopStateType): Partial<WorkshopStateType> => {
+    const done = (update: Partial<WorkshopStateType>) => update;
     let json: unknown;
     try {
       json = JSON.parse(state.raw ?? '');
@@ -243,13 +258,13 @@ export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpoint
     return done({ brief: parsed.brief, lastValidBrief: parsed.brief, failure: null });
   };
 
-  const produce = (state: WorkshopStateType, config: LangGraphRunnableConfig) => {
-    const start = deps.now();
+  const produce = (state: WorkshopStateType, config: LangGraphRunnableConfig) => timed(deps, config, 'produce', () => produceFrom(state, config));
+
+  const produceFrom = (state: WorkshopStateType, config: LangGraphRunnableConfig): Partial<WorkshopStateType> => {
     const brief = state.brief;
     if (!brief) throw new Error('没有说明书');
     // 每次（模型写的）说明书用由根种子派生的种子：同一次生成里确定，确认时不重新抽
     const result = (deps.produce ?? produceLevel)(brief, deriveSeed(state.seed, `brief-${String(state.attempt)}`), { rosterIds: new Set(state.roster.map((p) => p.id)) });
-    const timings = { produce: deps.now() - start };
     if (result.ok) {
       const pkg = packageOfProduced(result.level);
       const adjustment = result.level.adjustment;
@@ -258,21 +273,20 @@ export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpoint
         adjustment: adjustment ? { change: adjustment.change, message: adjustment.message } : null,
         differences: adjustment ? briefDifferences(adjustment.from, adjustment.to) : [],
         failure: null,
-        timings,
       };
     }
     switch (result.kind) {
       case 'brief':
-        return { failure: { category: 'brief' as const, problems: result.problems.map((p) => aliasText(`${p.path}：${p.message}`, state.roster)) }, timings };
+        return { failure: { category: 'brief' as const, problems: result.problems.map((p) => aliasText(`${p.path}：${p.message}`, state.roster)) } };
       case 'cannot-fit':
       case 'too-far': {
         const tried = result.adjustment ? `（程序已经试过 ${String(result.attempts)} 次布局，并调整过一次：${result.adjustment.change}）` : `（程序已经试过 ${String(result.attempts)} 次布局）`;
-        return { failure: { category: result.kind, problems: [`${result.message}${tried}`] }, timings };
+        return { failure: { category: result.kind, problems: [`${result.message}${tried}`] } };
       }
       case 'rejected': {
         const problems = result.problems.map((p) => p.message);
         deps.onDefect?.(threadOf(config), problems);
-        return { failure: { category: 'rejected' as const, problems }, timings };
+        return { failure: { category: 'rejected' as const, problems } };
       }
     }
   };

@@ -228,12 +228,67 @@ describe('OpenAI 兼容接口（可选）', () => {
 
   it('配置不全时不可用，并说明缺了哪个变量（不回显任何值）', async () => {
     const provider = new OpenAiCompatibleProvider({ baseUrl: 'http://127.0.0.1:9/v1', model: null, apiKey: FAKE_KEY });
-    const availability = await provider.availability();
+    const availability = await provider.availability(AbortSignal.timeout(2000));
     expect(availability).toEqual({ available: false, reason: 'OpenAI 兼容接口的配置不全：缺少 MW_OPENAI_MODEL' });
+  });
+
+  it('健康检查：GET {baseUrl}/models 确认连得上、密钥被接受、有这个模型；不可用时说明原因（不含密钥）', async () => {
+    let models: { status: number; body: unknown } = { status: 200, body: { object: 'list', data: [{ id: 'test-model', object: 'model' }] } };
+    const fake = await fakeServer((_req, res) => {
+      res.writeHead(models.status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(models.body));
+    });
+    const provider = new OpenAiCompatibleProvider({ baseUrl: `${fake.url}/v1`, model: 'test-model', apiKey: FAKE_KEY });
+    const check = () => provider.availability(AbortSignal.timeout(2000));
+    expect(await check()).toEqual({ available: true, reason: null });
+    expect(fake.requests[0]).toMatchObject({ method: 'GET', path: '/v1/models' });
+    expect(fake.requests[0]?.headers.authorization).toBe(`Bearer ${FAKE_KEY}`);
+    models = { status: 200, body: { object: 'list', data: [{ id: 'other-model' }] } };
+    expect(await check()).toEqual({ available: false, reason: 'OpenAI 兼容接口里没有模型 test-model' });
+    models = { status: 401, body: { error: { message: `bad key ${FAKE_KEY}` } } };
+    expect(await check()).toEqual({ available: false, reason: 'OpenAI 兼容接口拒绝了密钥（HTTP 401）' });
+    models = { status: 502, body: {} };
+    expect(await check()).toEqual({ available: false, reason: 'OpenAI 兼容接口返回错误（HTTP 502）' });
+    const down = new OpenAiCompatibleProvider({ baseUrl: 'http://127.0.0.1:9/v1', model: 'test-model', apiKey: FAKE_KEY });
+    expect(await down.availability(AbortSignal.timeout(2000))).toEqual({ available: false, reason: '连不上 OpenAI 兼容接口' });
+  });
+
+  it('接口不支持列出模型（404）时，按最近一次调用的结果：调用鉴权失败后报不可用，调用成功后恢复', async () => {
+    let chatStatus = 401;
+    const fake = await fakeServer((req, res) => {
+      if (req.path.endsWith('/models')) {
+        res.writeHead(404, { 'content-type': 'application/json' });
+        res.end('{}');
+        return;
+      }
+      if (chatStatus !== 200) {
+        res.writeHead(chatStatus, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'nope' } }));
+        return;
+      }
+      openAiCompletion(res, { content: '好的' });
+    });
+    const provider = new OpenAiCompatibleProvider({ baseUrl: `${fake.url}/v1`, model: 'test-model', apiKey: FAKE_KEY });
+    const check = () => provider.availability(AbortSignal.timeout(2000));
+    expect((await check()).available).toBe(true);
+    await expect(provider.chat(messages, [], AbortSignal.timeout(2000))).rejects.toBeDefined();
+    expect(await check()).toEqual({ available: false, reason: 'OpenAI 兼容接口拒绝了密钥（HTTP 401）' });
+    chatStatus = 404;
+    await expect(provider.chat(messages, [], AbortSignal.timeout(2000))).rejects.toBeDefined();
+    expect((await check()).reason).toContain('找不到模型 test-model');
+    chatStatus = 200;
+    await provider.chat(messages, [], AbortSignal.timeout(2000));
+    expect(await check()).toEqual({ available: true, reason: null });
   });
 
   it('密钥不出现在日志、错误信息、响应和统计里（假服务在错误里原样回显密钥）', async () => {
     const fake = await fakeServer((req, res) => {
+      // 列出模型时接受密钥；对话时拒绝，并在错误里原样回显密钥
+      if (req.path.endsWith('/models')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ object: 'list', data: [{ id: 'test-model' }] }));
+        return;
+      }
       res.writeHead(401, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { message: `Incorrect API key provided: ${String(req.headers.authorization)}`, type: 'invalid_request_error', code: 'invalid_api_key' } }));
     });
@@ -251,7 +306,12 @@ describe('OpenAI 兼容接口（可选）', () => {
       await fetch(`${base}/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ generationId: 'key-test-0001', text: '雨夜', roster: [] }) })
     ).text();
     // 请求确实带着密钥发给了接口
-    expect(fake.requests[0]?.headers.authorization).toBe(`Bearer ${FAKE_KEY}`);
+    expect(fake.requests.find((r) => r.path.endsWith('/chat/completions'))?.headers.authorization).toBe(`Bearer ${FAKE_KEY}`);
+    // 调用鉴权失败后，健康检查（列出模型仍然成功）照常；生成的回退说明了原因
+    const unhealthy = await (
+      await fetch(`${base}/generate`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ generationId: 'key-test-0002', text: '雪夜', roster: [] }) })
+    ).text();
+    expect(unhealthy).not.toContain(FAKE_KEY);
     expect(JSON.parse(generate)).toMatchObject({ status: 'fallback', fallback: { outcome: 'error', reason: '理解请求：模型服务返回错误（HTTP 401）' } });
     expect(JSON.parse(health)).toMatchObject({ provider: 'openai', model: 'test-model', available: true });
     for (const text of [health, generate, ...logs, ...stats.records.map((r) => JSON.stringify(r))]) expect(text).not.toContain(FAKE_KEY);
