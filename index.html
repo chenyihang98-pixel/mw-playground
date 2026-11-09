@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:," />
+    <title>mw-playground</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #1d232b;
+        font-family: system-ui, sans-serif;
+      }
+      #scene {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+      }
+      #dev-panel {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        background: rgba(20, 24, 30, 0.82);
+        color: #e8edf2;
+        font-size: 12px;
+        line-height: 1.6;
+        max-width: 360px;
+      }
+      #dev-panel select {
+        max-width: 240px;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

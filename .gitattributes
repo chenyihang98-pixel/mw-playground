@@ -1,0 +1,25 @@
+# 所有文本文件在仓库和工作区都用 LF
+* text=auto eol=lf
+
+# 锁文件不在 diff 里展开（审查材料只显示“有变化”）；内容用 npm run lock-summary 查看
+package-lock.json -diff
+
+# 二进制资产
+*.glb binary
+*.bin binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ktx2 binary
+*.basis binary
+*.hdr binary
+*.exr binary
+*.fbx binary
+*.blend binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
