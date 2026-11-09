@@ -89,6 +89,15 @@ export async function importModel(source: ImportSource, limits: ImportLimits = I
   }
 }
 
+/** 从保存下来的文件内容（Blob）生成导入源：名册恢复时用，和导入新文件走同一条流程。 */
+export function blobSource(name: string, blob: Blob): ImportSource {
+  return {
+    name,
+    size: blob.size,
+    read: async () => new Uint8Array(await blob.arrayBuffer()),
+  };
+}
+
 /** 从浏览器的 File 生成导入源（大小检查在读取之前完成）。 */
 export function fileSource(file: File): ImportSource {
   return {

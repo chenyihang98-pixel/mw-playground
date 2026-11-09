@@ -11,6 +11,7 @@ import {
   advance,
   createInitialState,
   restartGame,
+  setCompanions,
   setPaused,
   snapshotGame,
   startGame,
@@ -19,9 +20,14 @@ import {
 } from './sim';
 import { Hud } from './ui/hud';
 import type { SceneApp } from '../scene/createScene';
-import { ImportedCharacterModel } from '../import/animator';
-import { InstanceLimitError, InstanceRegistry, type ImportedAsset } from '../import/asset';
-import { ImportPanel } from '../import/ui/importPanel';
+import { InstanceRegistry, type ImportedAsset } from '../import/asset';
+import { ImportPanel, type HostResult } from '../import/ui/importPanel';
+import { assignCast } from '../roster/cast';
+import { isPlayerRole } from '../roster/config';
+import { CastDirector } from '../roster/director';
+import { IndexedDbRosterStore } from '../roster/idbStore';
+import { Roster } from '../roster/roster';
+import { RosterPanel } from '../roster/ui/rosterPanel';
 
 export type { GameAppSnapshot } from './appTypes';
 
@@ -95,34 +101,70 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
 
   hud.showOverlay(overlayFor(state.phase), state);
 
-  // ---------- 导入角色（P3）----------
+  // ---------- 导入角色（P3）和名册（P4）----------
   const registry = new InstanceRegistry();
-  let playerAsset: ImportedAsset | null = null;
-  let playerModel: ImportedCharacterModel | null = null;
+  const roster = new Roster(new IndexedDbRosterStore());
+  const director = new CastDirector(
+    { player, guards: levelView.guards, guardIds: state.guards.map((g) => g.id), parent: scene.scene },
+    registry,
+  );
+
   const importPanel = new ImportPanel(uiRoot, {
     isPlaying: () => state.phase === 'playing',
-    playerAsset: () => playerAsset,
-    setPlayer: (asset) => {
-      if (asset === playerAsset) return { ok: true };
-      let model: ImportedCharacterModel;
-      try {
-        model = new ImportedCharacterModel(asset.createInstance(registry));
-      } catch (error) {
-        if (error instanceof InstanceLimitError) return { ok: false, error: error.message };
-        throw error;
+    addPerson: (asset, file): HostResult => {
+      if (!roster.has(asset.id) && !file) return { ok: false, error: '缺少原文件，请重新导入这个文件' };
+      const result = roster.add(asset, file ?? new Blob());
+      return result.ok ? { ok: true, message: `已加入名册：${asset.fileName}（分工：不出场）` } : { ok: false, error: result.error };
+    },
+    setPlayer: (asset, file): HostResult => {
+      // 还不在名册里就先加入，再设为主角；同一个文件已在名册里时直接用名册里的那一项
+      if (!roster.has(asset.id)) {
+        if (!file) return { ok: false, error: '缺少原文件，请重新导入这个文件' };
+        const added = roster.add(asset, file);
+        if (!added.ok) return { ok: false, error: added.error };
       }
-      // 换模型只换模型槽里的内容；物理胶囊和玩法规格不变。只存在内存里，刷新后恢复默认主角。
-      const previous = playerAsset;
-      player.setModel(model);
-      playerAsset = asset;
-      playerModel = model;
-      if (previous?.instanceCount === 0 && importPanel.currentAsset() !== previous) previous.dispose();
-      return { ok: true };
+      const result = roster.setRole(asset.id, 'player');
+      if (!result.ok) return result;
+      return { ok: true, message: `已设为主角：${roster.nameOf(asset.id)}` };
+    },
+    retains: (asset: ImportedAsset) => roster.owns(asset),
+    inRoster: (asset: ImportedAsset) => roster.has(asset.id),
+    isPlayer: (asset: ImportedAsset) => {
+      const role = roster.roleOf(asset.id);
+      return role !== null && isPlayerRole(role);
     },
   });
 
+  const rosterPanel = new RosterPanel(uiRoot, roster, {
+    isPlaying: () => state.phase === 'playing',
+    openCard: (key) => {
+      const asset = roster.assetOf(key);
+      if (asset) importPanel.openAsset(asset);
+    },
+    remove: (key) => {
+      // 卡片上正打开着这个人物时先关掉卡片（名册负责释放资产）
+      const asset = roster.assetOf(key);
+      if (asset && importPanel.currentAsset() === asset) importPanel.close();
+      void roster.remove(key);
+    },
+    castNotices: () => director.notices,
+  });
+
+  /** 名册变了：重新分配出场的人物，换模型，同步模拟里的同伴。 */
+  const recast = () => {
+    const cast = assignCast(roster.members(), state.guards.length, registry.max);
+    const companions = director.apply(cast, (id) => roster.assetOf(id));
+    setState(setCompanions(state, companions));
+    rosterPanel.refresh();
+    importPanel.refreshCard();
+  };
+  roster.onChange(recast);
+  // 页面加载时恢复名册：每个人物的原文件重新走一遍导入流程
+  void roster.restore();
+
   scene.onFrame((delta) => {
     importPanel.update(delta);
+    rosterPanel.update();
     // 暂停时连装饰性的动画（宝石旋转、待机呼吸）也停下
     if (state.phase !== 'paused') renderTime += delta;
     if (state.phase === 'playing') {
@@ -144,6 +186,7 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
       renderTime,
     );
     levelView.update(state, state.phase === 'paused' ? 0 : delta, renderTime);
+    director.updateCompanions(state.companions, state.phase === 'playing', state.phase === 'paused' ? 0 : delta, renderTime);
     cameraRig.update(p.position, delta);
     hud.update(state);
   });
@@ -155,13 +198,10 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
       overlay: hud.currentOverlay(),
       render: scene.stats(),
       import: importPanel.snapshot(),
-      player: {
-        model: playerModel ? 'imported' : 'default',
-        assetId: playerAsset?.id ?? null,
-        fileName: playerAsset?.fileName ?? null,
-        animator: playerModel?.snapshot() ?? null,
-      },
+      player: director.playerSnapshot(),
       instances: registry.count,
+      roster: roster.snapshot(),
+      cast: director.snapshot(),
     }),
   };
 }

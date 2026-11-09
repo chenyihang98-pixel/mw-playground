@@ -142,6 +142,11 @@ export class LevelView {
     this.update(state, 0, 0);
   }
 
+  /** 关卡里按顺序排列的守卫的视图（P4：名册里的守卫人物替换它们模型槽里的模型）。 */
+  get guards(): readonly CharacterView[] {
+    return this.guardViews;
+  }
+
   private solidMesh(solid: Solid): Mesh {
     const r = solid.rect;
     if (solid.kind === 'ramp' && solid.rise !== undefined) {

@@ -58,6 +58,8 @@ export interface ImportCardSnapshot {
   readonly plan: { readonly idle: string; readonly walk: string; readonly run: string; readonly jump: string | null; readonly sway: boolean };
   readonly preview: { readonly clipIndex: number | null; readonly playing: boolean; readonly mixerTime: number };
   readonly isPlayer: boolean;
+  /** 同一个文件（SHA-256）已在名册里（P4）。 */
+  readonly inRoster: boolean;
 }
 
 export interface ImportPanelSnapshot {
@@ -70,6 +72,8 @@ export interface ImportPanelSnapshot {
 
 export interface PlayerModelSnapshot {
   readonly model: 'default' | 'imported';
+  /** 名册里的人物（P4）；默认小人为 null。 */
+  readonly personId: string | null;
   readonly assetId: string | null;
   readonly fileName: string | null;
   readonly animator: AnimatorSnapshot | null;

@@ -1,0 +1,108 @@
+#roster-panel {
+  position: fixed;
+  left: 12px;
+  bottom: 12px;
+  width: 400px;
+  max-height: 46vh;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(22, 27, 34, 0.94);
+  color: #e8edf2;
+  font-family: system-ui, sans-serif;
+  font-size: 12px;
+  z-index: 24;
+}
+
+#roster-panel[hidden] {
+  display: none;
+}
+
+#roster-panel h2 {
+  margin: 0;
+  font-size: 14px;
+  flex: 1;
+}
+
+#roster-panel .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#roster-panel button {
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: #3f7fd9;
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#roster-panel button:disabled {
+  background: #5a6370;
+  cursor: not-allowed;
+}
+
+#roster-panel button.danger {
+  background: #c0392b;
+}
+
+#roster-panel button[hidden] {
+  display: none;
+}
+
+#roster-storage {
+  margin-top: 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(160, 40, 30, 0.9);
+}
+
+#roster-storage:empty {
+  display: none;
+}
+
+#roster-notices {
+  margin: 6px 0;
+  padding-left: 18px;
+  color: #ffd98a;
+}
+
+#roster-notices:empty {
+  display: none;
+}
+
+#roster-panel .empty {
+  margin: 6px 0;
+  color: #a9b4c0;
+}
+
+#roster-panel .empty[hidden] {
+  display: none;
+}
+
+#roster-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+#roster-table td {
+  padding: 3px 2px;
+  border-bottom: 1px solid #333c48;
+  vertical-align: middle;
+}
+
+#roster-table input[type='text'] {
+  width: 110px;
+  font-size: 12px;
+}
+
+#roster-table tr.failed td.status {
+  color: #ff8a80;
+}
+
+#roster-table tr.highlight {
+  outline: 2px solid #ffd34d;
+}

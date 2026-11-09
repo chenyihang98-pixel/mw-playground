@@ -1,5 +1,7 @@
 // 导入界面：“导入角色”按钮（文件选择框）、把文件拖进窗口、错误提示、导入卡片（预览、尺寸、片段列表、提示、
 // 旋转按钮、身高滑块、“设为主角”、“加入为新人物”）。功能能用就行，视觉留给 P6。
+// P4 起：“加入为新人物”把资产加入名册；“设为主角”在还不在名册里时先加入再设为主角。名册里的人物也能在这里打开、修改设置
+// （设置一变名册就保存）。名册里的资产由名册释放，卡片关闭时不释放。
 //
 // 卡片里的控件（身高滑块、旋转按钮、操作按钮）只在打开卡片时建一次；设置变化时只刷新文字、提示和片段表，
 // 不重建正在操作的控件，拖动滑块或连续按方向键时不会丢失焦点。片段表重建后把焦点还给同一个控件。
@@ -14,13 +16,21 @@ import type { ImportedAsset } from '../asset';
 import { PreviewViewport } from './preview';
 import type { ClipRowSnapshot, ImportCardSnapshot, ImportPanelSnapshot } from './types';
 
+export type HostResult = { readonly ok: true; readonly message: string } | { readonly ok: false; readonly error: string };
+
 export interface ImportPanelHost {
   /** 游戏正在进行（指针锁定、计时中）：这时隐藏导入界面。 */
   isPlaying(): boolean;
-  /** 把资产设为当前关卡的主角。 */
-  setPlayer(asset: ImportedAsset): { ok: true } | { ok: false; error: string };
-  /** 当前主角用的资产（默认主角时为 null）。 */
-  playerAsset(): ImportedAsset | null;
+  /** 加入名册（file 是原文件；从名册打开的卡片为 null）。 */
+  addPerson(asset: ImportedAsset, file: Blob | null): HostResult;
+  /** 设为主角：还不在名册里就先加入，再设为主角。 */
+  setPlayer(asset: ImportedAsset, file: Blob | null): HostResult;
+  /** 这个资产由名册负责释放（卡片关闭时不释放）。 */
+  retains(asset: ImportedAsset): boolean;
+  /** 同一个文件（SHA-256）已在名册里。 */
+  inRoster(asset: ImportedAsset): boolean;
+  /** 同一个文件（SHA-256）是当前的主角。 */
+  isPlayer(asset: ImportedAsset): boolean;
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: { id?: string; className?: string; text?: string } = {}): HTMLElementTagNameMap[K] {
@@ -64,6 +74,7 @@ interface CardParts {
   readonly planLine: HTMLElement;
   readonly table: HTMLTableElement;
   readonly setPlayer: HTMLButtonElement;
+  readonly addPerson: HTMLButtonElement;
 }
 
 export class ImportPanel {
@@ -76,6 +87,8 @@ export class ImportPanel {
   private readonly card = el('section', { id: 'import-card' });
   private readonly preview = new PreviewViewport(416, 300);
   private asset: ImportedAsset | null = null;
+  /** 卡片上资产的原文件（导入时的 File）；从名册打开的卡片为 null。 */
+  private file: Blob | null = null;
   private parts: CardParts | null = null;
   private unsubscribe: (() => void) | null = null;
   private busy = false;
@@ -146,7 +159,7 @@ export class ImportPanel {
         this.status.textContent = '';
         return;
       }
-      this.open(outcome.asset);
+      this.open(outcome.asset, file);
       this.status.textContent = `已导入 ${file.name}`;
     } catch (error) {
       this.setError(`文件损坏或格式不对，无法解析：${error instanceof Error ? error.message : String(error)}`);
@@ -157,9 +170,17 @@ export class ImportPanel {
     }
   }
 
-  private open(asset: ImportedAsset): void {
+  /** 打开名册里的人物，修改设置。 */
+  openAsset(asset: ImportedAsset): void {
+    if (this.asset === asset) return;
+    this.open(asset, null);
+    this.status.textContent = `正在修改 ${asset.fileName} 的设置（自动保存到名册）`;
+  }
+
+  private open(asset: ImportedAsset, file: Blob | null): void {
     this.close();
     this.asset = asset;
+    this.file = file;
     const { slots } = asset.decisions();
     this.preview.show(asset, slots.idle ?? slots.walk ?? (asset.clips.length > 0 ? 0 : null));
     this.parts = this.buildCard(asset);
@@ -170,15 +191,16 @@ export class ImportPanel {
     this.refresh();
   }
 
-  /** 关闭卡片：释放预览实例；资产没有别的实例（没当主角）时一并释放。 */
+  /** 关闭卡片：释放预览实例；资产不在名册里（名册不负责释放）时一并释放。 */
   close(): void {
     this.unsubscribe?.();
     this.unsubscribe = null;
     this.preview.clear();
     const asset = this.asset;
     this.asset = null;
+    this.file = null;
     this.parts = null;
-    if (asset?.instanceCount === 0 && this.host.playerAsset() !== asset) asset.dispose();
+    if (asset && !this.host.retains(asset) && asset.instanceCount === 0) asset.dispose();
     this.card.hidden = true;
     this.card.replaceChildren();
   }
@@ -230,14 +252,16 @@ export class ImportPanel {
     const notices = el('ul', { id: 'import-notices' });
     const planLine = el('div');
     const table = el('table', { id: 'import-clips' });
-    const setPlayer = button('设为主角', () => {
-      const result = this.host.setPlayer(asset);
-      if (!result.ok) this.setError(result.error);
+    const report = (result: HostResult) => {
+      this.status.textContent = result.ok ? result.message : result.error;
       this.refresh();
+    };
+    const setPlayer = button('设为主角', () => {
+      report(this.host.setPlayer(asset, this.file));
     });
-    const addPerson = button('加入为新人物（P4 实现）', () => undefined);
-    addPerson.disabled = true;
-    addPerson.title = '在 P4 实现';
+    const addPerson = button('加入为新人物', () => {
+      report(this.host.addPerson(asset, this.file));
+    });
     const actions = el('div', { className: 'row' });
     actions.append(setPlayer, addPerson);
 
@@ -253,7 +277,7 @@ export class ImportPanel {
       table,
       actions,
     );
-    return { info, slider, heightValue, turnText, notices, planLine, table, setPlayer };
+    return { info, slider, heightValue, turnText, notices, planLine, table, setPlayer, addPerson };
   }
 
   /** 设置变化后刷新卡片的可变部分；不重建身高滑块和按钮。 */
@@ -274,7 +298,8 @@ export class ImportPanel {
     parts.turnText.textContent = `已转 ${String(asset.settings.quarterTurns * 90)}°（默认把 +Z 当作正前方）`;
     parts.notices.replaceChildren(...this.notices(asset).map((n) => el('li', { text: n })));
     parts.planLine.textContent = `动作：待机 ${sourceLabel(plan.idle)}；走 ${sourceLabel(plan.walk)}；跑 ${sourceLabel(plan.run)}；跳 ${sourceLabel(plan.jump)}`;
-    parts.setPlayer.textContent = this.host.playerAsset() === asset ? '已设为主角' : '设为主角';
+    parts.setPlayer.textContent = this.host.isPlayer(asset) ? '已设为主角' : '设为主角';
+    parts.addPerson.textContent = this.host.inRoster(asset) ? '已在名册里' : '加入为新人物';
     this.renderClipTable(asset, parts.table);
   }
 
@@ -377,6 +402,11 @@ export class ImportPanel {
     if (active) table.querySelector<HTMLElement>(`[data-control="${active}"]`)?.focus();
   }
 
+  /** 名册变化后刷新卡片上的按钮文字。 */
+  refreshCard(): void {
+    this.refresh();
+  }
+
   update(dt: number): void {
     const playing = this.host.isPlaying();
     if (playing === this.visible) {
@@ -451,7 +481,8 @@ export class ImportPanel {
           sway: plan.sway,
         },
         preview: this.preview.snapshot(),
-        isPlayer: this.host.playerAsset() === asset,
+        isPlayer: this.host.isPlayer(asset),
+        inRoster: this.host.inRoster(asset),
       };
     }
     return { busy: this.busy, error: this.error, warnings: this.warnings, card };

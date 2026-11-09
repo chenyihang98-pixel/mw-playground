@@ -160,7 +160,13 @@ export class ImportedAsset {
   }
 
   rotateQuarter(direction: 1 | -1): void {
-    this.normalize = { ...this.normalize, quarterTurns: (((this.normalize.quarterTurns + direction) % 4) + 4) % 4 };
+    this.setQuarterTurns(this.normalize.quarterTurns + direction);
+  }
+
+  /** 直接设置转了几个 90°（名册恢复设置时用）；取 0–3。 */
+  setQuarterTurns(turns: number): void {
+    const quarterTurns = Number.isFinite(turns) ? (((Math.round(turns) % 4) + 4) % 4) : 0;
+    this.normalize = { ...this.normalize, quarterTurns };
     this.changed();
   }
 

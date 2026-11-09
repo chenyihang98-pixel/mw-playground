@@ -103,7 +103,7 @@ test('带骨骼的夹具经文件选择框导入，出现在预览里并且在�
   await expect.poll(async () => (await read(page)).import.card?.quarterTurns).toBe(3);
   const turned = await read(page);
   expect(turned.import.card?.bounds.min[1]).toBeCloseTo(0, 5);
-  await expect(page.getByRole('button', { name: '加入为新人物（P4 实现）' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '加入为新人物' })).toBeEnabled();
   expect(turned.player.model).toBe('default');
   await page.screenshot({ path: testInfo.outputPath('import-preview.png') });
 });

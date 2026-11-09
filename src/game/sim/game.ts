@@ -3,6 +3,7 @@
 
 import type { LevelLayout } from '../level/schema';
 import { SPEC } from '../spec';
+import { regroupCompanions, spawnCompanions, stepCompanions, type CompanionState } from './companions';
 import { capsulesTouch, spawnGuards, stepGuards, type GuardState } from './guards';
 import { spawnPlayer, stepPlayer, type InputFrame, type PlayerState } from './player';
 import { buildWorld, type Vec3, type World } from './world';
@@ -33,6 +34,8 @@ export interface GameState {
   readonly timeLeft: number;
   readonly player: PlayerState;
   readonly guards: readonly GuardState[];
+  /** 同伴（P4）：跟随主角，只和地图碰撞，不影响胜负。 */
+  readonly companions: readonly CompanionState[];
   /** 已收集的收集点 id（按收集顺序）。 */
   readonly collected: readonly string[];
   /** 守卫扣时后的剩余冷却（秒）；为 0 时再接触才会扣时。 */
@@ -44,9 +47,10 @@ export interface GameState {
 const COOLDOWN_EPSILON = 1e-9;
 const TIME_EPSILON = 1e-9;
 
-/** 关卡的初始状态（phase = ready，等玩家点“开始”）。 */
-export function createInitialState(level: LevelLayout): GameState {
+/** 关卡的初始状态（phase = ready，等玩家点“开始”）。companionIds 是同伴的标识（按顺序），同伴出现在主角身后附近。 */
+export function createInitialState(level: LevelLayout, companionIds: readonly string[] = []): GameState {
   const world = buildWorld(level);
+  const player = spawnPlayer(world, level.spawn.x, level.spawn.z, level.spawn.yaw);
   return {
     level,
     world,
@@ -54,8 +58,9 @@ export function createInitialState(level: LevelLayout): GameState {
     simTime: 0,
     steps: 0,
     timeLeft: level.timeLimit,
-    player: spawnPlayer(world, level.spawn.x, level.spawn.z, level.spawn.yaw),
+    player,
     guards: spawnGuards(world),
+    companions: spawnCompanions(world, player, companionIds),
     collected: [],
     hitCooldown: 0,
     hits: [],
@@ -77,9 +82,21 @@ export function togglePause(state: GameState): GameState {
   return setPaused(state, state.phase === 'playing');
 }
 
-/** 重开：恢复关卡的初始状态。 */
+/** 重开：恢复关卡的初始状态（同伴保持同一组，回到初始位置）。 */
 export function restartGame(state: GameState): GameState {
-  return createInitialState(state.level);
+  return createInitialState(state.level, state.companions.map((c) => c.id));
+}
+
+/**
+ * 换一组同伴（名册里的分工变了）：已有的保留当前状态，新加入的出现在主角附近，不在 ids 里的移除。
+ * 还没开始时，所有同伴都回到开局的位置。
+ */
+export function setCompanions(state: GameState, ids: readonly string[]): GameState {
+  const same = ids.length === state.companions.length && ids.every((id, i) => state.companions[i]?.id === id);
+  if (same) return state;
+  const companions =
+    state.phase === 'ready' ? spawnCompanions(state.world, state.player, ids) : regroupCompanions(state.world, state.player, state.companions, ids);
+  return { ...state, companions };
 }
 
 /** 收集点中心到玩家胶囊轴线（脚底以上 r 到 h − r 的竖直线段）的距离。 */
@@ -103,6 +120,8 @@ export function stepGame(state: GameState, input: InputFrame, dt: number = SPEC.
   const collected = newlyCollected.length > 0 ? [...state.collected, ...newlyCollected] : state.collected;
 
   const guards = stepGuards(state.world, state.guards, dt);
+  // 同伴只读主角的位置；收集和扣时下面只看主角，同伴不参与
+  const companions = stepCompanions(state.world, state.companions, player, dt);
   let timeLeft = state.timeLeft - dt;
   let hitCooldown = state.hitCooldown - dt;
   if (hitCooldown <= COOLDOWN_EPSILON) hitCooldown = 0;
@@ -136,6 +155,7 @@ export function stepGame(state: GameState, input: InputFrame, dt: number = SPEC.
     timeLeft,
     player,
     guards,
+    companions,
     collected,
     hitCooldown,
     hits,

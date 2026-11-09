@@ -146,5 +146,76 @@ if (!assetDir) {
         expect(consoleErrors).toEqual([]);
       });
     }
+
+    // 名册（P4）：soldier 加入名册并设为主角，xingxuan 设为守卫，刷新页面后两者都恢复
+    const SOLDIER = 'mw-character-g-armored-soldier.glb';
+    const XINGXUAN = 'mw-static-xingxuan.glb';
+    if (files.includes(SOLDIER) && files.includes(XINGXUAN)) {
+      test('真实资产：名册（soldier 设为主角，xingxuan 设为守卫，刷新后恢复）', async ({ page }, testInfo) => {
+        const consoleErrors: string[] = [];
+        page.on('console', (message) => {
+          if (message.type() === 'error') consoleErrors.push(message.text());
+        });
+        page.on('pageerror', (error) => consoleErrors.push(`pageerror: ${error.message}`));
+        const ready = async () => {
+          await page.waitForFunction(() => (window.__MW_TEST__ as Hooks | undefined)?.kind === 'game');
+          await expect.poll(async () => (await read(page)).roster.restoring, { timeout: 60_000 }).toBe(false);
+        };
+        const choose = async (name: string) => {
+          const chooser = page.waitForEvent('filechooser');
+          await page.getByRole('button', { name: '导入角色' }).click();
+          await (await chooser).setFiles(join(assetDir, name));
+          await expect.poll(async () => (await read(page)).import.busy, { timeout: 60_000 }).toBe(false);
+          expect((await read(page)).import.error).toBeNull();
+        };
+
+        // 测试小关 B 有一个守卫
+        await page.goto('/?level=test-b');
+        await ready();
+        await choose(SOLDIER);
+        await page.getByRole('button', { name: '设为主角' }).click();
+        await expect.poll(async () => (await read(page)).player.model).toBe('imported');
+        await choose(XINGXUAN);
+        // xingxuan 面向 +X：转 90° 让它面朝 +Z，再加入名册、设为守卫
+        await page.getByRole('button', { name: '向右转 90°' }).click();
+        await expect.poll(async () => (await read(page)).import.card?.quarterTurns).toBe(3);
+        await page.getByRole('button', { name: '加入为新人物' }).click();
+        await page.getByRole('combobox', { name: `${XINGXUAN} 的分工` }).selectOption('guard');
+        await expect.poll(async () => (await read(page)).roster.saving, { timeout: 30_000 }).toBe(false);
+        const before = (await read(page)).roster.entries;
+        expect(before.map((e) => [e.fileName, e.role, e.quarterTurns])).toEqual([
+          [SOLDIER, 'player', 0],
+          [XINGXUAN, 'guard', 3],
+        ]);
+
+        await page.reload();
+        await ready();
+        const after = await read(page);
+        expect(after.roster.entries.map((e) => [e.fileName, e.role, e.status, e.quarterTurns])).toEqual([
+          [SOLDIER, 'player', 'ready', 0],
+          [XINGXUAN, 'guard', 'ready', 3],
+        ]);
+        after.roster.entries.forEach((entry, i) => {
+          const was = before[i];
+          expect(entry.size?.width).toBeCloseTo(was?.size?.width ?? NaN, 6);
+          expect(entry.size?.height).toBeCloseTo(was?.size?.height ?? NaN, 6);
+          expect(entry.size?.depth).toBeCloseTo(was?.size?.depth ?? NaN, 6);
+          expect(entry.slots).toEqual(was?.slots);
+          console.log(
+            `名册恢复 ${String(entry.fileName)}：分工 ${String(entry.roleLabel)}，转 ${String((entry.quarterTurns ?? 0) * 90)}°，` +
+              `尺寸 ${(entry.size?.width ?? 0).toFixed(2)} × ${(entry.size?.height ?? 0).toFixed(2)} × ${(entry.size?.depth ?? 0).toFixed(2)} m`,
+          );
+        });
+        const soldierKey = after.roster.entries[0]?.key ?? '';
+        const xingxuanKey = after.roster.entries[1]?.key ?? '';
+        expect(after.player).toMatchObject({ model: 'imported', personId: soldierKey });
+        // 关卡里的守卫换成了 xingxuan；守卫的数量不变
+        expect(after.cast.guards).toEqual([{ guardId: 'guard-b', personId: xingxuanKey, model: 'imported' }]);
+        expect(after.game.guards).toHaveLength(1);
+        expect(after.instances).toBe(2);
+        await page.screenshot({ path: testInfo.outputPath('real-roster-restored.png') });
+        expect(consoleErrors).toEqual([]);
+      });
+    }
   });
 }

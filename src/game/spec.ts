@@ -66,6 +66,31 @@ const collect = {
   hoverHeight: 0.9,
 } as const;
 
+const companion = {
+  /** 跟随的目标点在主角身后的距离（米）。 */
+  followDistance: 1.8,
+  /** 有多个同伴时，各自的目标点左右错开的间距（米）。 */
+  lateralSpacing: 1.1,
+  /** 离目标点不超过这个距离就停下（米）。 */
+  arriveRadius: 0.3,
+  /** 停下之后，离目标点超过这个距离才重新起步（米），避免在目标点附近来回抖动。 */
+  resumeRadius: 0.8,
+  /** 离目标点超过这个距离时用跑步速度，否则用走路速度（米）。 */
+  runDistance: 4,
+  /** 被卡住的判定：离主角超过这个距离（米）…… */
+  stuckDistance: 8,
+  /** ……并且持续这么久（秒），就传送到主角附近。 */
+  stuckSeconds: 3,
+  /** 找不到可以传送的位置时，隔多久再试一次（秒）。 */
+  retrySeconds: 0.5,
+  /** 开局和传送时找位置：在主角周围按这个间距一圈一圈往外找（米），最多 placeRings 圈。 */
+  placeSpacing: 1.8,
+  /** 找位置时最多找几圈。 */
+  placeRings: 3,
+  /** 每一圈取几个方向（从主角身后开始，左右交替）。 */
+  placeDirections: 16,
+} as const;
+
 const sim = {
   /** 模拟的固定步长（秒）。 */
   fixedStep: 1 / 60,
@@ -80,7 +105,7 @@ function deepFreeze<T extends object>(value: T): T {
   return Object.freeze(value);
 }
 
-export const SPEC = deepFreeze({ capsule, move, jump, terrain, guard, collect, sim });
+export const SPEC = deepFreeze({ capsule, move, jump, terrain, guard, collect, companion, sim });
 
 /** 规格的结构（数值放宽成 number，便于构造变体做校验测试）。 */
 type Widen<T> = { readonly [K in keyof T]: T[K] extends number ? number : Widen<T[K]> };
@@ -103,5 +128,11 @@ export function specProblems(spec: GameplaySpec = SPEC): string[] {
   if (spec.terrain.rampMaxGradient * spec.capsule.radius >= spec.move.stepHeight) {
     problems.push('最大坡度下胶囊半径范围内的升高不小于迈步高度：沿坡道走会被挡住');
   }
+  const c = spec.companion;
+  if (c.resumeRadius <= c.arriveRadius) problems.push('同伴重新起步的距离必须大于停下的距离');
+  if (c.placeSpacing * c.placeRings >= c.stuckDistance) {
+    problems.push('同伴找位置的最大范围不小于“被卡住”的距离：传送后可能马上又被判为卡住');
+  }
+  if (c.followDistance + c.lateralSpacing >= c.stuckDistance) problems.push('同伴的跟随位置离主角太远，会被判为卡住');
   return problems;
 }

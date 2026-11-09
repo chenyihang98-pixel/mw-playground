@@ -25,6 +25,19 @@ export interface GameSnapshot {
     readonly running: boolean;
   };
   readonly guards: readonly { readonly id: string; readonly x: number; readonly y: number; readonly z: number }[];
+  /** 同伴（P4）。id 是名册里人物的 id。 */
+  readonly companions: readonly {
+    readonly id: string;
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly facing: number;
+    readonly horizontalSpeed: number;
+    readonly grounded: boolean;
+    readonly following: boolean;
+    readonly farTime: number;
+    readonly teleports: number;
+  }[];
   readonly hitCooldown: number;
   readonly hits: readonly HitRecord[];
   readonly result: GameState['result'];
@@ -55,6 +68,18 @@ export function snapshotGame(state: GameState): GameSnapshot {
       running: p.running,
     },
     guards: state.guards.map((g) => ({ id: g.id, x: g.position.x, y: g.position.y, z: g.position.z })),
+    companions: state.companions.map((c) => ({
+      id: c.id,
+      x: c.body.position.x,
+      y: c.body.position.y,
+      z: c.body.position.z,
+      facing: c.body.facing,
+      horizontalSpeed: c.body.horizontalSpeed,
+      grounded: c.body.grounded,
+      following: c.following,
+      farTime: c.farTime,
+      teleports: c.teleports,
+    })),
     hitCooldown: state.hitCooldown,
     hits: state.hits.map((h) => ({ ...h })),
     result: state.result ? { ...state.result } : null,
