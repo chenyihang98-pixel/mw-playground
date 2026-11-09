@@ -1,13 +1,12 @@
 // 归一化、实例独立、资源释放、实例上限、动画驱动（状态切换和整体摆动）。
 
-import { Box3, BufferGeometry, Material, Vector3, type Bone, type Object3D, type SkinnedMesh } from 'three';
+import { AnimationClip, Box3, BufferGeometry, Material, Vector3, type Bone, type Object3D, type SkinnedMesh } from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { GltfBuilder } from '../../src/asset/fixtures';
 import { SPEC } from '../../src/game/spec';
 import { ImportedCharacterModel } from '../../src/import/animator';
 import { InstanceLimitError, InstanceRegistry, type ModelInstance } from '../../src/import/asset';
-import { computeBindPose } from '../../src/import/bindPose';
-import { poseBindPose, renderedBounds } from '../../src/import/normalize';
+import { renderedBounds } from '../../src/import/normalize';
 import { importFixture, importGlb, instancedTriangles, morphedTriangle, singleBoneSkin, skinnedWithMeshTransform } from '../helpers/import';
 
 /**
@@ -15,7 +14,7 @@ import { importFixture, importGlb, instancedTriangles, morphedTriangle, singleBo
  * 再用 three 自己的 getVertexPosition（morph + 当前骨骼的蒙皮）逐个顶点计算。与归一化用的公式无关，用来独立核对。
  */
 function normalizedBox(instance: ModelInstance): Box3 {
-  poseBindPose(instance.object);
+  instance.poseBind();
   const box = renderedBounds(instance.swayPivot);
   if (!box) throw new Error('没有几何');
   return box;
@@ -405,7 +404,7 @@ describe('绑定姿态的参照系和过渡（第 3 轮审查）', () => {
       clips: [{ name: 'idle', path: 'scale', times: [0, 1], values: [1, 1, 1, 1, 1, 1] }],
     });
     const asset = await importGlb(bytes);
-    expect(computeBindPose(asset.template)?.convention).toBe('scene');
+    expect(asset.bindPose?.convention).toBe('scene');
     expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(1, 6);
     const rest = renderedBounds(asset.template);
     expect((rest?.max.y ?? 0) - (rest?.min.y ?? 0)).toBeCloseTo(1, 6); // 加载后实际高 1 m
@@ -417,10 +416,10 @@ describe('绑定姿态的参照系和过渡（第 3 轮审查）', () => {
 
   it('参照系的判断：场景空间 / 骨架父节点空间 / 初始姿态不是绑定姿态时按 glTF 取场景空间', async () => {
     const parentStyle = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1] })); // IBM 单位矩阵：K = 父节点
-    expect(computeBindPose(parentStyle.template)?.convention).toBe('parent');
+    expect(parentStyle.bindPose).toMatchObject({ convention: 'parent', basis: 'rest' });
     expect(parentStyle.bounds.max.y - parentStyle.bounds.min.y).toBeCloseTo(2, 6);
     const neither = await importGlb(singleBoneSkin({ boneName: 'Bone', boneScale: [1, 2, 1] }));
-    expect(computeBindPose(neither.template)?.convention).toBe('scene');
+    expect(neither.bindPose).toMatchObject({ convention: 'scene', basis: 'rest' });
     expect(neither.bounds.max.y - neither.bounds.min.y).toBeCloseTo(1, 6);
   });
 
@@ -447,5 +446,85 @@ describe('绑定姿态的参照系和过渡（第 3 轮审查）', () => {
     for (let i = 0; i < 6; i++) model.update(still, 0.05);
     expect(angle()).toBeLessThan(1e-3);
     expect(model.snapshot().source).toBe('bindPose');
+  });
+});
+
+describe('绑定姿态的参照系按片段判断、轨道路径与原片段一致（第 4 轮审查）', () => {
+  const still = { position: { x: 0, y: 0, z: 0 }, facing: 0, horizontalSpeed: 0, grounded: true, vy: 0 };
+  const halfY = [1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  const keepScale = { name: 'idle', path: 'scale' as const, times: [0, 1], values: [1, 1, 1, 1, 1, 1] };
+  const height = (box: Box3 | null) => (box ? box.max.y - box.min.y : NaN);
+
+  it('场景空间的 IBM、普通父节点带缩放、初始姿态不是绑定姿态：按片段判断，播放 idle 的实际高度等于卡片上的 1.75 m', async () => {
+    // Armature Y 缩放 2、骨骼初始 Y 缩放 2、IBM 的 Y 缩放 0.5；idle 让骨骼缩放保持 1。
+    // 初始姿态的蒙皮矩阵正好等于 Armature（像骨架父节点空间），但 idle 显示时蒙皮矩阵是单位矩阵：绑定高度是 1 m
+    const asset = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1], boneScale: [1, 2, 1], ibm: halfY, clips: [keepScale] }));
+    const model = new ImportedCharacterModel(asset.createInstance());
+    model.update(still, 0.5);
+    expect(model.snapshot().clipName).toBe('idle');
+    expectGrounded(renderedBounds(model.instance.swayPivot) ?? new Box3(), 1.75);
+    expect(model.instance.normalizedSize().height).toBeCloseTo(1.75, 6);
+    expect(asset.bindPose).toMatchObject({ convention: 'scene', basis: 'clips' });
+    expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(1, 6);
+    // 绑定姿态本身也是 1.75 m（“绑定姿态”兜底和卡片一致）
+    const posed = asset.createInstance();
+    posed.poseBind();
+    expectGrounded(renderedBounds(posed.swayPivot) ?? new Box3(), 1.75);
+  });
+
+  it('骨架父节点空间的 IBM、普通父节点带缩放、初始姿态不是绑定姿态：同样按片段判断', async () => {
+    // Armature Y 缩放 2、骨骼初始 Y 缩放 0.5、IBM 单位矩阵；idle 让骨骼缩放保持 1。
+    // 初始姿态的蒙皮矩阵正好是单位矩阵（像场景空间），但 idle 显示时蒙皮矩阵等于 Armature：绑定高度是 2 m
+    const asset = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1], boneScale: [1, 0.5, 1], clips: [keepScale] }));
+    const model = new ImportedCharacterModel(asset.createInstance());
+    model.update(still, 0.5);
+    expectGrounded(renderedBounds(model.instance.swayPivot) ?? new Box3(), 1.75);
+    expect(asset.bindPose).toMatchObject({ convention: 'parent', basis: 'clips' });
+    expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(2, 6);
+    const posed = asset.createInstance();
+    posed.poseBind();
+    expectGrounded(renderedBounds(posed.swayPivot) ?? new Box3(), 1.75);
+  });
+
+  it('片段只动和蒙皮无关的属性时（这里只有 morph 权重）不作为依据，回到按初始姿态判断', async () => {
+    const blink = { name: 'blink', path: 'weights' as const, times: [0, 1], values: [0, 1] };
+    const asset = await importGlb(singleBoneSkin({ boneName: 'Bone', armatureScale: [1, 2, 1], morph: true, clips: [blink] }));
+    expect(asset.clips[0]?.tracks[0]?.name).toBe('Body.morphTargetInfluences');
+    expect(asset.bindPose).toMatchObject({ convention: 'parent', basis: 'rest' });
+  });
+
+  it('绑定姿态片段的轨道路径和 GLTFLoader 一致：有名字的骨骼用名字，无名骨骼用 UUID（实例上再换成克隆骨骼的 UUID）', async () => {
+    const named = await importGlb(singleBoneSkin({ boneName: 'Bone' }));
+    expect(named.bindClip?.tracks.map((t) => t.name)).toEqual(['Bone.position', 'Bone.quaternion', 'Bone.scale']);
+    const instance = named.createInstance();
+    expect(instance.clipFor(named.bindClip ?? new AnimationClip())).toBe(named.bindClip); // 不需要副本
+    const unnamed = await importGlb(singleBoneSkin({}));
+    const templateBone = bonesOf(unnamed.template)[0];
+    expect(unnamed.bindClip?.tracks.map((t) => t.name)).toEqual(['position', 'quaternion', 'scale'].map((p) => `${templateBone?.uuid ?? ''}.${p}`));
+    const other = unnamed.createInstance();
+    const cloneBone = bonesOf(other.object)[0];
+    expect(other.clipFor(unnamed.bindClip ?? new AnimationClip()).tracks.map((t) => t.name)).toEqual(
+      ['position', 'quaternion', 'scale'].map((p) => `${cloneBone?.uuid ?? ''}.${p}`),
+    );
+    expect(unnamed.bindClip?.tracks[0]?.name.startsWith(templateBone?.uuid ?? '-')).toBe(true); // 原片段不变
+  });
+
+  it('从绑定姿态淡入 jump：两者共用同一组属性混合，前 0.25 秒保持 1.75 m，不会回到初始姿态的 3.5 m', async () => {
+    // 骨骼初始 Y 缩放 2、IBM 单位矩阵（绑定姿态缩放 1）；只有 jump：缩放前 0.25 秒保持 1，随后增至 1.2
+    const jump = { name: 'jump', path: 'scale' as const, times: [0, 0.25, 0.5], values: [1, 1, 1, 1, 1, 1, 1, 1.2, 1], loop: false };
+    const asset = await importGlb(singleBoneSkin({ boneName: 'Bone', boneScale: [1, 2, 1], clips: [jump] }));
+    expect(asset.decisions().plan.idle).toEqual({ kind: 'bindPose' });
+    const model = new ImportedCharacterModel(asset.createInstance());
+    model.update(still, 0.1);
+    expect(height(renderedBounds(model.instance.swayPivot))).toBeCloseTo(1.75, 6);
+    const seen: number[] = [];
+    for (let i = 0; i < 9; i++) {
+      model.update({ ...still, grounded: false, vy: 1 }, 0.025); // 空中 0.225 秒，包括 0.2 秒的淡入淡出
+      seen.push(height(renderedBounds(model.instance.swayPivot)));
+    }
+    expect(model.snapshot().clipName).toBe('jump');
+    for (const h of seen) expect(h).toBeCloseTo(1.75, 6);
+    for (let i = 0; i < 12; i++) model.update({ ...still, grounded: false, vy: 1 }, 0.025); // 到 0.5 秒：缩放 1.2
+    expect(height(renderedBounds(model.instance.swayPivot))).toBeCloseTo(2.1, 5);
   });
 });

@@ -2,6 +2,7 @@
 // 任何一步失败都返回友好的错误；已经加载的几何、材质、贴图在失败时释放。
 
 import { ImportedAsset, sha256Hex } from './asset';
+import { computeBindPose } from './bindPose';
 import { IMPORT_LIMITS, type ImportLimits } from './limits';
 import { loadModel, type LoadedModel } from './load';
 import { bindPoseBounds } from './normalize';
@@ -65,7 +66,9 @@ export async function importModel(source: ImportSource, limits: ImportLimits = I
     const post = postLoadCheck(stats, limits);
     for (const w of post.warnings) if (!warnings.includes(w)) warnings.push(w);
     if (!post.ok) return release(post.error);
-    const bounds = bindPoseBounds(scene);
+    // 绑定姿态只算一次：包围盒、“绑定姿态”片段和实例都用同一份
+    const bindPose = computeBindPose(scene, loaded.clips);
+    const bounds = bindPoseBounds(scene, bindPose);
     if (!bounds) return release('文件里没有可显示的几何');
     const asset = new ImportedAsset({
       id: await sha256Hex(bytes),
@@ -74,6 +77,7 @@ export async function importModel(source: ImportSource, limits: ImportLimits = I
       sizeBytes: source.size,
       scene,
       clips: loaded.clips,
+      bindPose,
       bounds,
       stats,
       notices: loaded.notices,

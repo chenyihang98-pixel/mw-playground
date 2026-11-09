@@ -80,6 +80,7 @@ test('带骨骼的夹具经文件选择框导入，出现在预览里并且在�
   expect(first.import.error).toBeNull();
   expect(card.skinned).toBe(true);
   expect(card.bones).toBe(5);
+  expect(card.bindPose).toEqual({ convention: 'scene', basis: 'clips' });
   expect(card.clips.map((c) => [c.index, c.name, c.purpose, c.playback, c.playbackSource])).toEqual([
     [0, 'idle', 'idle', 'loop', 'explicit'],
     [1, 'walk', 'walk', 'loop', 'explicit'],

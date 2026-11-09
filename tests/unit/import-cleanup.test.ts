@@ -11,9 +11,9 @@ vi.mock('../../src/import/normalize', async (importOriginal) => {
   const original = await importOriginal<typeof import('../../src/import/normalize')>();
   return {
     ...original,
-    bindPoseBounds: (root: Parameters<typeof original.bindPoseBounds>[0]) => {
+    bindPoseBounds: (...args: Parameters<typeof original.bindPoseBounds>) => {
       if (failBounds.on) throw new Error('模拟的意外异常');
-      return original.bindPoseBounds(root);
+      return original.bindPoseBounds(...args);
     },
   };
 });

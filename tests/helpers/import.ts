@@ -109,7 +109,8 @@ export function singleBoneSkin(options: {
   armatureScale?: [number, number, number];
   /** 自定义逆绑定矩阵（列主序 16 个数），默认单位矩阵。 */
   ibm?: number[];
-  clips?: { name: string; path: 'rotation' | 'scale'; times: number[]; values: number[]; loop?: boolean }[];
+  /** 片段：rotation / scale 作用在骨骼上，weights 作用在网格节点上（需要 morph）。 */
+  clips?: { name: string; path: 'rotation' | 'scale' | 'weights'; times: number[]; values: number[]; loop?: boolean }[];
 }): Uint8Array {
   const b = new GltfBuilder();
   const bone = b.addNode({ ...(options.boneName === undefined ? {} : { name: options.boneName }), ...(options.boneScale ? { scale: options.boneScale } : {}) });
@@ -122,9 +123,11 @@ export function singleBoneSkin(options: {
   const mesh = b.addMesh('Skinned', [{ attributes: { POSITION: position, JOINTS_0: joints, WEIGHTS_0: weights } }]);
   const skin = b.addSkin({ joints: [bone], inverseBindMatrices: ibm });
   const top = options.armatureScale ? b.addNode({ name: 'Armature', children: [bone], scale: options.armatureScale }) : bone;
-  b.addScene([top, b.addNode({ name: 'Body', mesh, skin })]);
+  const body = b.addNode({ name: 'Body', mesh, skin });
+  b.addScene([top, body]);
   for (const clip of options.clips ?? []) {
-    b.addAnimation({ name: clip.name, extras: { loop: clip.loop ?? true }, channels: [{ node: bone, path: clip.path, times: clip.times, values: clip.values }] });
+    const node = clip.path === 'weights' ? body : bone;
+    b.addAnimation({ name: clip.name, extras: { loop: clip.loop ?? true }, channels: [{ node, path: clip.path, times: clip.times, values: clip.values }] });
   }
   const json = b.json();
   if (morph !== null) addMorphTarget(json, morph);

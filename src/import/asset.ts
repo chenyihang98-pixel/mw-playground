@@ -16,7 +16,7 @@ import {
   type Slots,
 } from './clipRules';
 import { IMPORT_LIMITS } from './limits';
-import { bindPoseClip, computeBindPose, parallelTraverse } from './bindPose';
+import { applyBindPose, bindPoseClip, parallelTraverse, type BindPose } from './bindPose';
 import { analyzeRootMotion, lockHorizontalMotion, type RootMotion } from './motion';
 import { applyNormalization, clampHeight, DEFAULT_NORMALIZE, type NormalizedSize, type NormalizeSettings } from './normalize';
 import type { ImportFormat } from './precheck';
@@ -46,6 +46,8 @@ export interface AssetInput {
   readonly sizeBytes: number;
   readonly scene: Object3D;
   readonly clips: readonly AnimationClip[];
+  /** 绑定姿态（computeBindPose(scene, clips)；没有蒙皮时为 null）。bounds 按它计算。 */
+  readonly bindPose: BindPose | null;
   readonly bounds: Box3;
   readonly stats: LoadedStats;
   readonly notices: readonly string[];
@@ -100,7 +102,9 @@ export class ImportedAsset {
   readonly notices: readonly string[];
   readonly warnings: readonly string[];
   readonly rootMotion: readonly RootMotion[];
-  /** 绑定姿态的片段（带骨骼的模型才有）：“绑定姿态”兜底用它淡入淡出。轨道按模板骨骼的 UUID 指定目标。 */
+  /** 绑定姿态（带骨骼的模型才有）：包围盒按它计算。 */
+  readonly bindPose: BindPose | null;
+  /** 绑定姿态的片段（带骨骼的模型才有）：“绑定姿态”兜底用它淡入淡出。轨道路径和文件里的片段一致。 */
   readonly bindClip: AnimationClip | null;
   private readonly loops: readonly ReturnType<typeof classifyLoop>[];
 
@@ -128,8 +132,8 @@ export class ImportedAsset {
     this.warnings = input.warnings;
     this.loops = input.clips.map((clip) => classifyLoop(clip.userData));
     this.rootMotion = input.clips.map((clip) => analyzeRootMotion(clip, this.template));
-    const bindPose = computeBindPose(this.template);
-    this.bindClip = bindPose ? bindPoseClip(bindPose) : null;
+    this.bindPose = input.bindPose;
+    this.bindClip = input.bindPose ? bindPoseClip(input.bindPose) : null;
   }
 
   /** 设置变化时通知（实例重新归一化、动画重新选择片段）。 */
@@ -320,6 +324,19 @@ export class ModelInstance {
 
   normalizedSize(): NormalizedSize {
     return this.size;
+  }
+
+  /** 把这个实例的骨骼直接摆成资产的绑定姿态（不经过 mixer；用在测试和工具里，游戏里用绑定姿态片段淡入淡出）。 */
+  poseBind(): void {
+    const pose = this.asset.bindPose;
+    if (!pose) return;
+    const byUuid = new Map<string, Object3D>();
+    this.object.traverse((obj) => byUuid.set(obj.uuid, obj));
+    applyBindPose(pose, (uuid) => {
+      const mapped = this.uuidMap.get(uuid);
+      return mapped === undefined ? undefined : byUuid.get(mapped);
+    });
+    this.object.updateMatrixWorld(true);
   }
 
   /**

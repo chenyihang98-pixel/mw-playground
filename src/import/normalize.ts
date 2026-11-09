@@ -3,11 +3,11 @@
 // - 最低点贴地，水平方向居中到胶囊中心（外层节点原点）。
 // - 默认把 +Z 当作正前方；可以每次转 90°。
 // - 包围盒按加载后的场景计算，计入已经生效的 morph 权重；带骨骼的模型按绑定姿态算（由逆绑定矩阵决定，
-//   见 bindPose.ts；不是文件里骨骼的初始姿态）；实例化网格把每个 instanceMatrix 都算进去。
+//   参照系按文件里的片段判断，见 bindPose.ts；不是文件里骨骼的初始姿态）；实例化网格把每个 instanceMatrix 都算进去。
 
 import { Box3, Matrix4, Mesh, Vector3, type InstancedMesh, type Object3D, type SkinnedMesh } from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
-import { applyBindPose, computeBindPose, parallelTraverse } from './bindPose';
+import { applyBindPose, parallelTraverse, type BindPose } from './bindPose';
 import { DISPLAY } from './limits';
 
 export interface NormalizeSettings {
@@ -87,26 +87,12 @@ export function renderedBounds(root: Object3D): Box3 | null {
 }
 
 /**
- * 把 root 下所有蒙皮的骨骼摆成绑定姿态（按 bindPose 模块的规则：先判断 IBM 的参照系，再补偿普通父节点的变换）。
- * 只改骨骼的本地变换，不改其他节点。用在测试和工具里；游戏里的“绑定姿态”通过绑定姿态片段淡入淡出。
- */
-export function poseBindPose(root: Object3D): void {
-  const pose = computeBindPose(root);
-  if (!pose) return;
-  const byUuid = new Map<string, Object3D>();
-  root.traverse((obj) => byUuid.set(obj.uuid, obj));
-  applyBindPose(pose, (uuid) => byUuid.get(uuid));
-  root.updateMatrixWorld(true);
-}
-
-/**
  * 绑定姿态下、模型空间（root 的本地空间）里的包围盒。
- * 带骨骼的模型：在临时克隆上摆成绑定姿态（由逆绑定矩阵决定，见 bindPose.ts），再按 three 实际的显示
- * （morph + 蒙皮，含 bindMatrix / bindMatrixInverse 语义）逐个顶点计算；挂在骨骼上的普通网格也跟着骨骼走。原模型不动。
- * 不带骨骼的模型直接按当前（加载后的）场景计算，计入 morph 权重和实例化网格的每个实例。
+ * 带骨骼的模型：在临时克隆上摆成绑定姿态（pose 由 computeBindPose 按逆绑定矩阵和片段算出，见 bindPose.ts），
+ * 再按 three 实际的显示（morph + 蒙皮，含 bindMatrix / bindMatrixInverse 语义）逐个顶点计算；挂在骨骼上的普通网格也跟着骨骼走。原模型不动。
+ * 不带骨骼的模型（pose 为 null）直接按当前（加载后的）场景计算，计入 morph 权重和实例化网格的每个实例。
  */
-export function bindPoseBounds(root: Object3D): Box3 | null {
-  const pose = computeBindPose(root);
+export function bindPoseBounds(root: Object3D, pose: BindPose | null): Box3 | null {
   if (!pose) return renderedBounds(root);
   const temporary = cloneSkinned(root);
   const cloneOf = new Map<string, Object3D>();
