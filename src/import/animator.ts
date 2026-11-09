@@ -8,7 +8,6 @@ import { gaitOf } from '../game/render/pose';
 import type { ModelInstance } from './asset';
 import type { AnimationPlan, MotionSource } from './clipRules';
 import { CLIP_RULES } from './limits';
-import { poseBindPose } from './normalize';
 
 export type MotionState = 'idle' | 'walk' | 'run' | 'jump' | 'land';
 
@@ -75,7 +74,21 @@ export class ImportedCharacterModel implements CharacterModel {
     if (this.current?.id === id) return;
     const previous = this.current;
     let action: AnimationAction | null = null;
-    if (source.kind === 'clip' || source.kind === 'firstFrame') {
+    if (source.kind === 'bindPose') {
+      // 绑定姿态也是一个片段（每根骨骼保持绑定姿态的值），和其他动作一样淡入淡出；没有骨骼的模型没有这个片段，只淡出旧动作
+      const bindClip = this.instance.asset.bindClip;
+      if (bindClip) {
+        action = this.instance.mixer.clipAction(this.instance.clipFor(bindClip));
+        action.reset();
+        action.enabled = true;
+        action.setLoop(LoopRepeat, Infinity);
+        action.paused = false;
+        action.setEffectiveTimeScale(1);
+        action.setEffectiveWeight(1);
+        if (fade > 0 && previous?.action && previous.action !== action) action.fadeIn(fade);
+        action.play();
+      }
+    } else if (source.kind === 'clip' || source.kind === 'firstFrame') {
       const gameClip = this.instance.asset.gameClip(source.index);
       const clip = gameClip ? this.instance.clipFor(gameClip) : null;
       if (clip) {
@@ -101,11 +114,7 @@ export class ImportedCharacterModel implements CharacterModel {
         action.play();
       }
     }
-    if (source.kind === 'bindPose') {
-      // 绑定姿态：立即停掉所有动作（mixer 把骨骼还原成文件里的初始值），再按逆绑定矩阵摆成绑定姿态
-      this.instance.mixer.stopAllAction();
-      poseBindPose(this.instance.object);
-    } else if (previous?.action && previous.action !== action) {
+    if (previous?.action && previous.action !== action) {
       if (fade > 0) previous.action.fadeOut(fade);
       else previous.action.stop();
     }

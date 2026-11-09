@@ -2,11 +2,12 @@
 // - 显示身高（默认 1.75 m，1.2–2.4 m 可调），只影响显示；玩法胶囊不变。
 // - 最低点贴地，水平方向居中到胶囊中心（外层节点原点）。
 // - 默认把 +Z 当作正前方；可以每次转 90°。
-// - 包围盒按加载后的场景计算，计入已经生效的 morph 权重；带骨骼的模型按绑定姿态算（用 three 的 Skeleton.pose()
-//   由逆绑定矩阵恢复，不是文件里骨骼的初始姿态）；实例化网格把每个 instanceMatrix 都算进去。
+// - 包围盒按加载后的场景计算，计入已经生效的 morph 权重；带骨骼的模型按绑定姿态算（由逆绑定矩阵决定，
+//   见 bindPose.ts；不是文件里骨骼的初始姿态）；实例化网格把每个 instanceMatrix 都算进去。
 
-import { Box3, Matrix4, Mesh, Vector3, type InstancedMesh, type Object3D, type Skeleton, type SkinnedMesh } from 'three';
+import { Box3, Matrix4, Mesh, Vector3, type InstancedMesh, type Object3D, type SkinnedMesh } from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
+import { applyBindPose, computeBindPose, parallelTraverse } from './bindPose';
 import { DISPLAY } from './limits';
 
 export interface NormalizeSettings {
@@ -85,39 +86,39 @@ export function renderedBounds(root: Object3D): Box3 | null {
   });
 }
 
-function skeletonsIn(root: Object3D): Set<Skeleton> {
-  const skeletons = new Set<Skeleton>();
-  root.traverse((obj) => {
-    const mesh = obj as Partial<SkinnedMesh>;
-    if (mesh.isSkinnedMesh === true && mesh.skeleton) skeletons.add(mesh.skeleton);
-  });
-  return skeletons;
-}
-
 /**
- * 把 root 下所有蒙皮的骨骼摆成绑定姿态。用 three 自己的约定（Skeleton.pose()）：
- * 由逆绑定矩阵恢复骨骼的绑定变换，根骨骼相对它的父节点。只改骨骼的本地变换，不改其他节点。
+ * 把 root 下所有蒙皮的骨骼摆成绑定姿态（按 bindPose 模块的规则：先判断 IBM 的参照系，再补偿普通父节点的变换）。
+ * 只改骨骼的本地变换，不改其他节点。用在测试和工具里；游戏里的“绑定姿态”通过绑定姿态片段淡入淡出。
  */
 export function poseBindPose(root: Object3D): void {
-  root.updateMatrixWorld(true);
-  for (const skeleton of skeletonsIn(root)) skeleton.pose();
+  const pose = computeBindPose(root);
+  if (!pose) return;
+  const byUuid = new Map<string, Object3D>();
+  root.traverse((obj) => byUuid.set(obj.uuid, obj));
+  applyBindPose(pose, (uuid) => byUuid.get(uuid));
   root.updateMatrixWorld(true);
 }
 
 /**
  * 绑定姿态下、模型空间（root 的本地空间）里的包围盒。
- * 带骨骼的模型：在临时克隆上用 Skeleton.pose() 恢复绑定姿态（由逆绑定矩阵决定，不是文件里骨骼的初始姿态），
- * 再按 three 实际的显示（morph + 蒙皮，含 bindMatrix / bindMatrixInverse 语义）逐个顶点计算；原模型的节点和动画不动。
+ * 带骨骼的模型：在临时克隆上摆成绑定姿态（由逆绑定矩阵决定，见 bindPose.ts），再按 three 实际的显示
+ * （morph + 蒙皮，含 bindMatrix / bindMatrixInverse 语义）逐个顶点计算；挂在骨骼上的普通网格也跟着骨骼走。原模型不动。
  * 不带骨骼的模型直接按当前（加载后的）场景计算，计入 morph 权重和实例化网格的每个实例。
  */
 export function bindPoseBounds(root: Object3D): Box3 | null {
-  if (skeletonsIn(root).size === 0) return renderedBounds(root);
+  const pose = computeBindPose(root);
+  if (!pose) return renderedBounds(root);
   const temporary = cloneSkinned(root);
+  const cloneOf = new Map<string, Object3D>();
+  parallelTraverse(root, temporary, (source, cloned) => cloneOf.set(source.uuid, cloned));
   try {
-    poseBindPose(temporary);
+    applyBindPose(pose, (uuid) => cloneOf.get(uuid));
     return renderedBounds(temporary);
   } finally {
-    for (const skeleton of skeletonsIn(temporary)) skeleton.dispose();
+    temporary.traverse((obj) => {
+      const mesh = obj as Partial<SkinnedMesh>;
+      if (mesh.isSkinnedMesh === true && mesh.skeleton) mesh.skeleton.dispose();
+    });
   }
 }
 

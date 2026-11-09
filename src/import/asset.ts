@@ -16,6 +16,7 @@ import {
   type Slots,
 } from './clipRules';
 import { IMPORT_LIMITS } from './limits';
+import { bindPoseClip, computeBindPose, parallelTraverse } from './bindPose';
 import { analyzeRootMotion, lockHorizontalMotion, type RootMotion } from './motion';
 import { applyNormalization, clampHeight, DEFAULT_NORMALIZE, type NormalizedSize, type NormalizeSettings } from './normalize';
 import type { ImportFormat } from './precheck';
@@ -99,6 +100,8 @@ export class ImportedAsset {
   readonly notices: readonly string[];
   readonly warnings: readonly string[];
   readonly rootMotion: readonly RootMotion[];
+  /** 绑定姿态的片段（带骨骼的模型才有）：“绑定姿态”兜底用它淡入淡出。轨道按模板骨骼的 UUID 指定目标。 */
+  readonly bindClip: AnimationClip | null;
   private readonly loops: readonly ReturnType<typeof classifyLoop>[];
 
   // 用户设置（只在内存里）
@@ -125,6 +128,8 @@ export class ImportedAsset {
     this.warnings = input.warnings;
     this.loops = input.clips.map((clip) => classifyLoop(clip.userData));
     this.rootMotion = input.clips.map((clip) => analyzeRootMotion(clip, this.template));
+    const bindPose = computeBindPose(this.template);
+    this.bindClip = bindPose ? bindPoseClip(bindPose) : null;
   }
 
   /** 设置变化时通知（实例重新归一化、动画重新选择片段）。 */
@@ -275,15 +280,6 @@ export class ImportedAsset {
   get isDisposed(): boolean {
     return this.disposed;
   }
-}
-
-/** 同时遍历两棵结构相同的树（与 SkeletonUtils.clone 的对应方式一致）。 */
-function parallelTraverse(a: Object3D, b: Object3D, visit: (a: Object3D, b: Object3D) => void): void {
-  visit(a, b);
-  a.children.forEach((child, i) => {
-    const other = b.children[i];
-    if (other) parallelTraverse(child, other, visit);
-  });
 }
 
 /**

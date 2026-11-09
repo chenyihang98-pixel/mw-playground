@@ -105,7 +105,11 @@ export function singleBoneSkin(options: {
   boneScale?: [number, number, number];
   jointIndex?: number;
   morph?: boolean;
-  clips?: { name: string; path: 'rotation' | 'scale'; times: number[]; values: number[] }[];
+  /** 把骨骼挂在一个普通（非骨骼）的 Armature 节点下，这个节点带这个缩放。 */
+  armatureScale?: [number, number, number];
+  /** 自定义逆绑定矩阵（列主序 16 个数），默认单位矩阵。 */
+  ibm?: number[];
+  clips?: { name: string; path: 'rotation' | 'scale'; times: number[]; values: number[]; loop?: boolean }[];
 }): Uint8Array {
   const b = new GltfBuilder();
   const bone = b.addNode({ ...(options.boneName === undefined ? {} : { name: options.boneName }), ...(options.boneScale ? { scale: options.boneScale } : {}) });
@@ -113,13 +117,14 @@ export function singleBoneSkin(options: {
   const j = options.jointIndex ?? 0;
   const joints = b.addAccessor({ array: new Uint8Array([j, 0, 0, 0, j, 0, 0, 0, j, 0, 0, 0]), type: 'VEC4', minMax: false });
   const weights = b.addAccessor({ array: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]), type: 'VEC4', minMax: false });
-  const ibm = b.addAccessor({ array: new Float32Array(IDENTITY_IBM), type: 'MAT4', minMax: false });
+  const ibm = b.addAccessor({ array: new Float32Array(options.ibm ?? IDENTITY_IBM), type: 'MAT4', minMax: false });
   const morph = options.morph ? b.addAccessor({ array: new Float32Array([0, -1, 0, 0, -1, 0, 0, 1, 0]), type: 'VEC3' }) : null;
   const mesh = b.addMesh('Skinned', [{ attributes: { POSITION: position, JOINTS_0: joints, WEIGHTS_0: weights } }]);
   const skin = b.addSkin({ joints: [bone], inverseBindMatrices: ibm });
-  b.addScene([bone, b.addNode({ name: 'Body', mesh, skin })]);
+  const top = options.armatureScale ? b.addNode({ name: 'Armature', children: [bone], scale: options.armatureScale }) : bone;
+  b.addScene([top, b.addNode({ name: 'Body', mesh, skin })]);
   for (const clip of options.clips ?? []) {
-    b.addAnimation({ name: clip.name, extras: { loop: true }, channels: [{ node: bone, path: clip.path, times: clip.times, values: clip.values }] });
+    b.addAnimation({ name: clip.name, extras: { loop: clip.loop ?? true }, channels: [{ node: bone, path: clip.path, times: clip.times, values: clip.values }] });
   }
   const json = b.json();
   if (morph !== null) addMorphTarget(json, morph);
