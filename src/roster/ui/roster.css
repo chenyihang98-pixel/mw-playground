@@ -176,9 +176,8 @@
 }
 
 .person-file {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .person-status {

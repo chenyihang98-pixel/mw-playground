@@ -16,7 +16,7 @@ export function muteToggle(sound: SoundBoard, options: { size?: 'md' | 'lg'; cla
   }, { icon: 'volume', iconOnly: true, size: options.size, className: options.className });
   const render = () => {
     b.setAttribute('aria-pressed', String(sound.muted));
-    b.title = sound.muted ? '已静音（点一下恢复声音）' : '静音';
+    b.title = sound.muted ? '已静音（点一下恢复声音）' : sound.storageAvailable ? '静音' : '静音（浏览器禁止本地存储，静音设置存不下来，声音照常）';
     b.querySelector('svg')?.replaceWith(icon(sound.muted ? 'mute' : 'volume'));
     b.classList.toggle('is-muted', sound.muted);
   };

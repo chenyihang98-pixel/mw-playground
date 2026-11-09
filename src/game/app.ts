@@ -144,7 +144,9 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
       setState(startGame(fresh));
     },
     onHome: () => {
-      // 回到开始界面：这一关重置到开局（和“重开”一样），停在开始面板，开始界面盖在上面
+      // 回到开始界面：关掉打开着的主面板（名册、导入卡片等），这一关重置到开局（和“重开”一样），
+      // 停在开始面板，开始界面盖在上面
+      panels.closeAll();
       homeMode = true;
       const fresh = restartGame(state);
       cameraRig.reset(fresh.level.spawn.yaw, fresh.player.position);

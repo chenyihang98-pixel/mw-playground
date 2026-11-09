@@ -107,6 +107,18 @@ export class PanelManager {
     }
   }
 
+  /**
+   * 关掉所有主面板（回到开始界面时用）：先全部隐藏、清空栈，再让有 dismiss 的面板释放内容（导入卡片）。
+   * 不移动焦点（接着显示的开始界面会把焦点放到“开始”上）。
+   */
+  closeAll(): void {
+    const open = [...this.order];
+    this.order = [];
+    this.returnFocus = null;
+    this.apply();
+    for (const id of open) this.panels.get(id)?.dismiss?.();
+  }
+
   /** 游玩中：全部隐藏（栈保留，暂停或结算后恢复）。 */
   setSuspended(suspended: boolean): void {
     if (suspended === this.suspended) return;

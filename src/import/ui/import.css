@@ -18,11 +18,10 @@
 
 #import-card h2 {
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: var(--mw-text-l);
   font-weight: 700;
+  line-height: 1.4;
 }
 
 .card-meta {
@@ -71,12 +70,16 @@
 
 .card-stat dd {
   margin: 2px 0 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: var(--mw-text-m);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+/* 贴图列表：占一整行，放不下就换行 */
+.card-stat--wide {
+  grid-column: 1 / -1;
 }
 
 #import-card .lock-note {
@@ -185,9 +188,7 @@
 .clip-name {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-weight: 700;
 }
 

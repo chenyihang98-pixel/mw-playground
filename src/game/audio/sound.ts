@@ -1,5 +1,5 @@
 // 音效（P6）：收集、扣时、胜利、失败、按钮。全部用 WebAudio 现场合成，不用外部音频文件。
-// 静音开关的状态存在 localStorage；读写失败（被禁止、抛错）时按“没有静音”处理，不影响游戏。
+// 静音开关的状态存在 localStorage；读写失败（被禁止、抛错）时按“没有静音”处理（静音开关不起作用），不影响游戏。
 // AudioContext 在第一次需要发声时才创建（浏览器要求先有用户操作）；创建失败也只是没有声音。
 
 export type SoundName = 'collect' | 'penalty' | 'win' | 'lose' | 'button';
@@ -8,7 +8,7 @@ export const MUTE_STORAGE_KEY = 'mw-playground:muted';
 
 export interface SoundSnapshot {
   readonly muted: boolean;
-  /** 静音状态有没有存进 localStorage（存储被禁止时为 false，静音只在本次会话里有效）。 */
+  /** 最近一次读写 localStorage 是否成功（存储被禁止时为 false，这时一直按没有静音处理）。 */
   readonly persisted: boolean;
   /** 各种音效被触发的次数（静音时也计数，便于测试核对触发时机）。 */
   readonly played: Readonly<Record<SoundName, number>>;
@@ -77,16 +77,22 @@ export class SoundBoard {
     return () => this.listeners.delete(listener);
   }
 
+  /** 能不能存静音设置（最近一次读写 localStorage 成功）。 */
+  get storageAvailable(): boolean {
+    return this.persisted;
+  }
+
   setMuted(muted: boolean): void {
-    this.mutedNow = muted;
     try {
       window.localStorage.setItem(MUTE_STORAGE_KEY, muted ? '1' : '0');
       this.persisted = true;
+      this.mutedNow = muted;
     } catch {
-      // 存不了：只在本次会话里有效
+      // 存不了：按没有静音处理
       this.persisted = false;
+      this.mutedNow = false;
     }
-    if (!muted) this.context?.resume().catch(() => undefined);
+    if (!this.mutedNow) this.context?.resume().catch(() => undefined);
     for (const listener of this.listeners) listener();
   }
 

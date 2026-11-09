@@ -110,7 +110,7 @@ describe('静音开关', () => {
     expect(new SoundBoard().snapshot()).toMatchObject({ muted: true, persisted: true });
   });
 
-  it('localStorage 读写都抛错：当作没有静音，静音只在本次有效，不抛错；没有 AudioContext 时播放也不抛错', () => {
+  it('localStorage 读写都抛错：按没有静音处理（点静音也不静音），不抛错；没有 AudioContext 时播放也不抛错', () => {
     vi.stubGlobal('window', {
       get localStorage(): Storage {
         throw new DOMException('测试：禁止使用 localStorage', 'SecurityError');
@@ -124,8 +124,28 @@ describe('静音开关', () => {
     expect(() => {
       sound.toggle();
     }).not.toThrow();
-    expect(sound.snapshot()).toMatchObject({ muted: true, persisted: false });
+    expect(sound.snapshot()).toMatchObject({ muted: false, persisted: false });
+    expect(sound.storageAvailable).toBe(false);
     sound.play('win');
     expect(sound.snapshot().played).toMatchObject({ collect: 1, win: 1, lose: 0 });
+  });
+
+  it('能读但写入抛错（例如配额满了）：静音不生效，仍按没有静音处理', () => {
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: () => null,
+        setItem: () => {
+          throw new DOMException('测试：写不进去', 'QuotaExceededError');
+        },
+      },
+    });
+    const sound = new SoundBoard();
+    expect(sound.snapshot()).toMatchObject({ muted: false, persisted: true });
+    let changed = 0;
+    sound.onChange(() => changed++);
+    sound.setMuted(true);
+    expect(sound.snapshot()).toMatchObject({ muted: false, persisted: false });
+    expect(sound.muted).toBe(false);
+    expect(changed).toBe(1);
   });
 });

@@ -54,6 +54,7 @@ test.beforeAll(() => {
   const fixtures: [string, FixtureId][] = [
     ['skinned-humanoid.glb', 'skinned-humanoid'],
     ['static-mesh.glb', 'static-mesh'],
+    ['textured.glb', 'textured'],
   ];
   for (const [name, id] of fixtures) {
     const path = join(dir, name);
@@ -214,6 +215,64 @@ test('?level= 直接进入这一关的开始面板（开发和测试用），不
   expect(back.level.key).toBe('builtin:test-b');
 });
 
+test('暂停时打开名册、结算时打开导入卡片，再“返回开始界面”：主面板一起关掉，开始界面出现', async ({ page }) => {
+  await open(page, '/?level=test-a');
+  // 暂停菜单 + 名册（暂停菜单让到右边）
+  await page.getByRole('button', { name: '开始', exact: true }).click();
+  await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
+  await page.keyboard.press('KeyP');
+  await expect.poll(async () => (await read(page)).game.phase).toBe('paused');
+  await openRoster(page);
+  expect((await read(page)).ui.overlayDock).toBe('right');
+  await page.getByRole('button', { name: '返回开始界面' }).click();
+  await expect.poll(async () => (await read(page)).ui.home).toBe(true);
+  let s = await read(page);
+  expect(s.ui).toMatchObject({ homeMode: true, panel: null, panelStack: [], topBar: false });
+  expect(s.game.phase).toBe('ready');
+  await expect(page.locator('#roster-panel')).toBeHidden();
+  await expect(page.getByRole('button', { name: '开始', exact: true })).toBeFocused();
+
+  // 结算 + 导入卡片（结算让到左边），名册也在栈里
+  await page.getByRole('button', { name: '开始', exact: true }).click();
+  await page.getByRole('button', { name: '开始', exact: true }).click();
+  await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
+  await page.keyboard.down('KeyW');
+  await expect.poll(async () => (await read(page)).game.phase, { timeout: 15_000 }).toBe('won');
+  await page.keyboard.up('KeyW');
+  await openRoster(page);
+  await chooseFile(page, 'static-mesh.glb');
+  s = await read(page);
+  expect(s.ui).toMatchObject({ panel: 'import', panelStack: ['roster', 'import'], overlayDock: 'left' });
+  await page.getByRole('button', { name: '返回开始界面' }).click();
+  await expect.poll(async () => (await read(page)).ui.home).toBe(true);
+  s = await read(page);
+  expect(s.ui).toMatchObject({ homeMode: true, panel: null, panelStack: [] });
+  // 没加入名册的导入卡片随之关掉（和点“关闭”一样）
+  expect(s.import.card).toBeNull();
+  await expect(page.locator('#import-card')).toBeHidden();
+  // 从开始界面再进入：开始面板正常显示
+  await page.getByRole('button', { name: '开始', exact: true }).click();
+  await expect.poll(async () => (await read(page)).ui.overlayVisible).toBe(true);
+  expect((await read(page)).game.phase).toBe('ready');
+});
+
+test('导入卡片上的贴图尺寸逐张完整显示（不截断）', async ({ page }) => {
+  for (const size of SIZES) {
+    await page.setViewportSize(size);
+    await open(page, '/?level=test-a');
+    await chooseFile(page, 'textured.glb');
+    const card = (await read(page)).import.card;
+    const textures = (card?.textures ?? []).map((t) => `${String(t.width)}×${String(t.height)}`);
+    expect(textures.length).toBeGreaterThan(0);
+    const stat = page.locator('#import-card .card-stat--wide');
+    await expect(stat).toContainText(`贴图（${String(textures.length)} 张）`);
+    await expect(stat.locator('dd')).toHaveText(textures.join('、'));
+    // 文字没有被裁掉：内容不比格子宽，也不比格子高
+    const clipped = await stat.locator('dd').evaluate((el) => el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1);
+    expect(clipped).toBe(false);
+  }
+});
+
 test('只用键盘：开始界面 → 选关 → 加载一关 → 开始 → 暂停 → 继续；Esc 关掉主面板；焦点看得见', async ({ page }) => {
   await open(page, '/');
   const focusRing = () =>
@@ -314,7 +373,7 @@ test('静音开关存进 localStorage，刷新后还在；音效按事件触发'
   expect(after.lose).toBe(played.lose);
 });
 
-test('localStorage 读写都抛错：当作没有静音，静音只在本次有效，游戏照常', async ({ page }) => {
+test('localStorage 读写都抛错：按没有静音处理（点静音也不静音），游戏照常', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, 'localStorage', {
       configurable: true,
@@ -326,7 +385,8 @@ test('localStorage 读写都抛错：当作没有静音，静音只在本次有�
   await open(page, '/?level=test-a');
   expect((await read(page)).audio).toMatchObject({ muted: false, persisted: false });
   await page.getByRole('button', { name: '静音', exact: true }).click();
-  expect((await read(page)).audio).toMatchObject({ muted: true, persisted: false });
+  expect((await read(page)).audio).toMatchObject({ muted: false, persisted: false });
+  await expect(page.getByRole('button', { name: '静音', exact: true })).toHaveAttribute('aria-pressed', 'false');
   await page.getByRole('button', { name: '开始', exact: true }).click();
   await page.keyboard.down('KeyW');
   await expect.poll(async () => (await read(page)).game.phase, { timeout: 15_000 }).toBe('won');

@@ -139,11 +139,9 @@
 }
 
 .level-facts {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   color: var(--mw-text-subtle);
   font-size: var(--mw-text-xs);
+  line-height: 1.5;
 }
 
 .level-delete {

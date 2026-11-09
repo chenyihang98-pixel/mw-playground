@@ -421,17 +421,19 @@ export class ImportPanel {
     const skinned = asset.stats.skinnedMeshes > 0;
     const { plan } = asset.decisions();
     const size = this.preview.currentInstance()?.normalizedSize();
-    const stat = (label: string, value: string) => {
-      const box = el('div', { className: 'card-stat' });
+    const stat = (label: string, value: string, wide = false) => {
+      const box = el('div', { className: wide ? 'card-stat card-stat--wide' : 'card-stat' });
       box.append(el('dt', { text: label }), el('dd', { text: value }));
       return box;
     };
+    const textures = asset.stats.textures.map((t) => `${String(t.width)}×${String(t.height)}`);
     parts.stats.replaceChildren(
       stat('尺寸（米）', `${(size?.width ?? 0).toFixed(2)} × ${(size?.height ?? 0).toFixed(2)} × ${(size?.depth ?? 0).toFixed(2)}`),
       stat('三角面', asset.stats.triangles.toLocaleString('en-US')),
       stat('骨骼', skinned ? String(asset.stats.bones) : '无骨骼'),
       stat('片段', String(asset.clips.length)),
-      stat('贴图', asset.stats.textures.map((t) => `${String(t.width)}×${String(t.height)}`).join('、') || '无'),
+      // 贴图逐张列出，单独占一整行，放不下就换行（不截断）
+      stat(textures.length > 0 ? `贴图（${String(textures.length)} 张）` : '贴图', textures.length > 0 ? textures.join('、') : '无', true),
     );
     const height = String(asset.settings.displayHeight);
     if (parts.slider.value !== height && Number(parts.slider.value) !== asset.settings.displayHeight) parts.slider.value = height;
