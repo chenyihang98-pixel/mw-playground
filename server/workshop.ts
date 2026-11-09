@@ -27,7 +27,7 @@ import type { WorkshopConfig } from './config';
 import { CallTimeout, CancelledByUser, WorkshopError } from './errors';
 import { MAX_BRIEF_ATTEMPTS, ModelCallError, buildWorkshopGraph, historyLine, type AttemptLog, type GraphDeps, type WorkshopGraph, type WorkshopStateType } from './graph';
 import type { Logger } from './log';
-import type { LlmProvider } from './providers';
+import type { Availability, LlmProvider } from './providers';
 import { rosterEntries } from './roster';
 import type { StatsSink } from './stats';
 
@@ -153,7 +153,13 @@ export class Workshop {
       controller.abort(new CallTimeout('整个生成请求', config.limits.requestTimeoutMs));
     }, config.limits.requestTimeoutMs);
     try {
-      const availability = await provider.availability(AbortSignal.any([controller.signal, AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS)]));
+      let availability: Availability;
+      try {
+        availability = await provider.availability(AbortSignal.any([controller.signal, AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS)]));
+      } catch {
+        // 检查本身出了意外（提供方本应不抛错）：按不可用处理；下面先看是不是被取消或超时
+        availability = { available: false, reason: '检查模型能不能用时出错' };
+      }
       // 先看这次请求是不是已经被取消或超时：检查被中止时提供方也会报“不可用”，那不是模型的问题
       if (controller.signal.aborted) return await this.finishFailure(request, EMPTY_STATE, controller.signal.reason, controller.signal.reason, this.now() - start);
       if (!availability.available) {

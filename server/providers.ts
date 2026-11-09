@@ -187,7 +187,16 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     );
   }
 
+  /** 模型能不能用。不抛错：出了意外也只报不可用。 */
   async availability(signal: AbortSignal): Promise<Availability> {
+    try {
+      return await this.check(signal);
+    } catch {
+      return { available: false, reason: '检查 OpenAI 兼容接口时出错' };
+    }
+  }
+
+  private async check(signal: AbortSignal): Promise<Availability> {
     const { baseUrl, model, apiKey } = this.config;
     const missing = [baseUrl ? null : 'MW_OPENAI_BASE_URL', model ? null : 'MW_OPENAI_MODEL', apiKey ? null : 'MW_OPENAI_API_KEY'].filter((m): m is string => m !== null);
     if (missing.length > 0 || !baseUrl || !model || !apiKey) return { available: false, reason: `OpenAI 兼容接口的配置不全：缺少 ${missing.join('、')}` };
@@ -206,12 +215,14 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     }
     // 收到了 HTTP 响应：网络是通的，之前“连不上”的记录作废
     if (this.lastFailure?.kind === 'network') this.lastFailure = null;
-    // 之前对话请求被拒或找不到模型：能列出模型不代表能调用，发一个最小的对话请求再确认
-    if (this.lastFailure?.kind === 'access') {
+    // 之前对话请求被拒或找不到模型：能列出模型不代表能调用，发一个最小的对话请求再确认。
+    // 失败记录是共享的，探测等待期间别的探测可能已经把它清掉或改掉：先把这次的原因记下来，等待之后不假定它还在。
+    const failure = this.lastFailure;
+    if (failure?.kind === 'access') {
       try {
         await this.remember(this.create(signal, { temperature: 0, maxTokens: 1 }).invoke([new HumanMessage('ping')], { signal }));
       } catch {
-        return { available: false, reason: this.lastFailure.reason };
+        return { available: false, reason: this.lastFailure?.reason ?? failure.reason };
       }
     }
     return { available: true, reason: null };

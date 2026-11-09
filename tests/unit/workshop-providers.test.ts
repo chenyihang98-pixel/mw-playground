@@ -305,8 +305,8 @@ describe('OpenAI 兼容接口（可选）', () => {
     });
   }
 
-  function openAiWorkshop(url: string) {
-    const cfg = config({ MW_LLM_PROVIDER: 'openai', MW_OPENAI_BASE_URL: `${url}/v1`, MW_OPENAI_MODEL: 'test-model', MW_OPENAI_API_KEY: FAKE_KEY });
+  function openAiWorkshop(url: string, env: Record<string, string> = {}) {
+    const cfg = config({ MW_LLM_PROVIDER: 'openai', MW_OPENAI_BASE_URL: `${url}/v1`, MW_OPENAI_MODEL: 'test-model', MW_OPENAI_API_KEY: FAKE_KEY, ...env });
     const stats = new MemoryStats();
     const workshop = new Workshop({ config: cfg, provider: createProvider(cfg), stats, log: createLogger(new Redactor([FAKE_KEY]), () => undefined), newSeed: () => 'recovery-seed' });
     return { workshop, stats };
@@ -336,6 +336,50 @@ describe('OpenAI 兼容接口（可选）', () => {
     const again = await workshop.generate({ generationId: 'access-0003', text: '雨夜', roster: [] });
     expect(again.status).toBe('preview');
     expect(stats.records.map((r) => r.outcome)).toEqual(['error', 'model-first']);
+  });
+
+  /**
+   * 并发探测：第一次对话被拒（403）后，下一次生成在检查处发出探测并一直等着；这时另一个页面的健康检查探测成功，
+   * 把失败记录清掉；然后取消（或超时）前一个生成。前一个生成要按取消（或超时）正常结束，并记一条统计。
+   */
+  async function concurrentProbe(end: 'cancel' | 'timeout') {
+    let chats = 0;
+    const fake = await openAiService({
+      models: () => 200,
+      chat: (_req, res) => {
+        chats++;
+        if (chats === 1) {
+          res.writeHead(403, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'denied' } }));
+          return false;
+        }
+        // 第 2 个对话请求是生成前的探测：不回复，等它被中止
+        if (chats === 2) return false;
+        return true;
+      },
+    });
+    const { workshop, stats } = openAiWorkshop(fake.url, end === 'timeout' ? { MW_WORKSHOP_REQUEST_TIMEOUT_MS: '1500' } : {});
+    expect((await workshop.generate({ generationId: 'probe-0001', text: '雨夜', roster: [] })).status).toBe('fallback');
+    const pending = workshop.generate({ generationId: 'probe-0002', text: '雨夜', roster: [] });
+    await expect.poll(() => chats).toBe(2);
+    // 另一个页面的健康检查：探测成功，失败记录被清掉
+    expect(await workshop.health()).toMatchObject({ available: true, reason: null });
+    if (end === 'cancel') workshop.cancel('probe-0002');
+    return { result: await pending, stats, fake };
+  }
+
+  it('并发探测：另一个页面的健康检查把失败记录清掉后，取消正在探测的生成——正常取消，记一条取消', async () => {
+    const { result, stats, fake } = await concurrentProbe('cancel');
+    expect(result.status).toBe('cancelled');
+    expect(stats.records.map((r) => r.outcome)).toEqual(['error', 'cancelled']);
+    await expect.poll(() => fake.requests.filter((r) => r.path.endsWith('/chat/completions'))[1]?.aborted).toBe(true);
+  });
+
+  it('并发探测：同样的情况下正在探测的生成超时——服务错误并回退，记一条服务错误', async () => {
+    const { result, stats } = await concurrentProbe('timeout');
+    expect(result).toMatchObject({ status: 'fallback', fallback: { outcome: 'error' } });
+    if (result.status === 'fallback') expect(result.fallback.reason).toContain('整个生成请求超时');
+    expect(stats.records.map((r) => r.outcome)).toEqual(['error', 'error']);
   });
 
   it('经 Workshop：不支持列出模型（404）的接口发生一次瞬时网络故障后，健康检查和再次生成都能恢复', async () => {
