@@ -182,7 +182,8 @@ function inspectSkins(doc: GltfJson): SkinsReport {
     jointCount: skin.joints.length,
     skeleton: skin.skeleton ?? null,
   }));
-  return { count: skins.length, skins };
+  const unique = new Set((doc.skins ?? []).flatMap((skin) => skin.joints));
+  return { count: skins.length, skins, uniqueJointCount: unique.size };
 }
 
 // ---------- 动画 ----------

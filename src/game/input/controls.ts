@@ -77,6 +77,8 @@ export class Controls {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    // 焦点在按钮、输入框、下拉框上时（例如导入卡片），按键交给这些控件，不当作游戏输入
+    if (e.target instanceof Element && e.target.closest('button, input, select, textarea, [contenteditable="true"]')) return;
     const action = keyAction(e.code);
     if (!action) return;
     if (action === 'jump' || action.startsWith('look')) e.preventDefault();

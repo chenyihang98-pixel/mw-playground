@@ -1,0 +1,94 @@
+// 导入流程：类型和大小 → GLB 预检（不经过加载器）→ 加载 → 加载后检查（超限就释放）→ 包围盒 → SHA-256 → 资产。
+// 任何一步失败都返回友好的错误；已经加载的几何、材质、贴图在失败时释放。
+
+import { ImportedAsset, sha256Hex } from './asset';
+import { IMPORT_LIMITS, type ImportLimits } from './limits';
+import { loadModel, type LoadedModel } from './load';
+import { bindPoseBounds } from './normalize';
+import { checkBeforeRead, precheckGlb } from './precheck';
+import { disposeObject, loadedStats, postLoadCheck } from './resources';
+
+export interface ImportSource {
+  readonly name: string;
+  readonly size: number;
+  read(): Promise<Uint8Array>;
+}
+
+export type ImportStage = 'type' | 'read' | 'precheck' | 'parse' | 'postcheck';
+
+export type ImportOutcome =
+  | { readonly ok: true; readonly asset: ImportedAsset; readonly warnings: readonly string[] }
+  | { readonly ok: false; readonly stage: ImportStage; readonly error: string; readonly warnings: readonly string[] };
+
+function message(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return typeof error === 'string' ? error : '未知错误';
+}
+
+export async function importModel(source: ImportSource, limits: ImportLimits = IMPORT_LIMITS): Promise<ImportOutcome> {
+  const warnings: string[] = [];
+  const fail = (stage: ImportStage, error: string): ImportOutcome => ({ ok: false, stage, error, warnings });
+
+  const before = checkBeforeRead(source.name, source.size, limits);
+  warnings.push(...before.warnings);
+  if (!before.ok) return fail('type', before.error);
+  const format = before.value;
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await source.read();
+  } catch (error) {
+    return fail('read', `读不了文件：${message(error)}`);
+  }
+
+  if (format === 'glb') {
+    const pre = precheckGlb(bytes, limits);
+    warnings.push(...pre.warnings);
+    if (!pre.ok) return fail('precheck', pre.error);
+  }
+
+  let loaded: LoadedModel;
+  try {
+    loaded = await loadModel(format, bytes);
+  } catch (error) {
+    return fail('parse', `文件损坏或格式不对，无法解析：${message(error)}`);
+  }
+
+  const stats = loadedStats(loaded.scene);
+  const post = postLoadCheck(stats, limits);
+  for (const w of post.warnings) if (!warnings.includes(w)) warnings.push(w);
+  if (!post.ok) {
+    disposeObject(loaded.scene);
+    return fail('postcheck', post.error);
+  }
+  const bounds = bindPoseBounds(loaded.scene);
+  if (!bounds) {
+    disposeObject(loaded.scene);
+    return fail('postcheck', '文件里没有可显示的几何');
+  }
+
+  const asset = new ImportedAsset({
+    id: await sha256Hex(bytes),
+    fileName: source.name,
+    format,
+    sizeBytes: source.size,
+    scene: loaded.scene,
+    clips: loaded.clips,
+    bounds,
+    stats,
+    notices: loaded.notices,
+    warnings,
+  });
+  return { ok: true, asset, warnings };
+}
+
+/** 从浏览器的 File 生成导入源（大小检查在读取之前完成）。 */
+export function fileSource(file: File): ImportSource {
+  return {
+    name: file.name,
+    size: file.size,
+    read: async () => new Uint8Array(await file.arrayBuffer()),
+  };
+}
+
+export { IMPORT_LIMITS };

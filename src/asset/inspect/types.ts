@@ -102,6 +102,8 @@ export interface SkinReport {
 export interface SkinsReport {
   readonly count: number;
   readonly skins: readonly SkinReport[];
+  /** 所有 skin 的关节去重后的数量（同一个节点被多个 skin 引用只算一次）。 */
+  readonly uniqueJointCount: number;
 }
 
 /** 原始 JSON 里 animation.extras 的情况。 */

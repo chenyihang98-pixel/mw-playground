@@ -19,6 +19,9 @@ import {
 } from './sim';
 import { Hud } from './ui/hud';
 import type { SceneApp } from '../scene/createScene';
+import { ImportedCharacterModel } from '../import/animator';
+import { InstanceLimitError, InstanceRegistry, type ImportedAsset } from '../import/asset';
+import { ImportPanel } from '../import/ui/importPanel';
 
 export type { GameAppSnapshot } from './appTypes';
 
@@ -92,7 +95,34 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
 
   hud.showOverlay(overlayFor(state.phase), state);
 
+  // ---------- 导入角色（P3）----------
+  const registry = new InstanceRegistry();
+  let playerAsset: ImportedAsset | null = null;
+  let playerModel: ImportedCharacterModel | null = null;
+  const importPanel = new ImportPanel(uiRoot, {
+    isPlaying: () => state.phase === 'playing',
+    playerAsset: () => playerAsset,
+    setPlayer: (asset) => {
+      if (asset === playerAsset) return { ok: true };
+      let model: ImportedCharacterModel;
+      try {
+        model = new ImportedCharacterModel(asset.createInstance(registry));
+      } catch (error) {
+        if (error instanceof InstanceLimitError) return { ok: false, error: error.message };
+        throw error;
+      }
+      // 换模型只换模型槽里的内容；物理胶囊和玩法规格不变。只存在内存里，刷新后恢复默认主角。
+      const previous = playerAsset;
+      player.setModel(model);
+      playerAsset = asset;
+      playerModel = model;
+      if (previous?.instanceCount === 0 && importPanel.currentAsset() !== previous) previous.dispose();
+      return { ok: true };
+    },
+  });
+
   scene.onFrame((delta) => {
+    importPanel.update(delta);
     // 暂停时连装饰性的动画（宝石旋转、待机呼吸）也停下
     if (state.phase !== 'paused') renderTime += delta;
     if (state.phase === 'playing') {
@@ -124,6 +154,14 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
       camera: { yaw: cameraRig.yaw, pitch: cameraRig.pitch, lookMode: controls.lookMode(), pointerLocked: controls.pointerLocked() },
       overlay: hud.currentOverlay(),
       render: scene.stats(),
+      import: importPanel.snapshot(),
+      player: {
+        model: playerModel ? 'imported' : 'default',
+        assetId: playerAsset?.id ?? null,
+        fileName: playerAsset?.fileName ?? null,
+        animator: playerModel?.snapshot() ?? null,
+      },
+      instances: registry.count,
     }),
   };
 }
