@@ -8,7 +8,7 @@ import {
   GLB_MAGIC,
   GLB_VERSION,
 } from '../gltf/constants';
-import type { ChunkReport, ContainerReport, InspectError } from './types';
+import type { ChunkReport, ContainerReport, InspectError, InspectErrorCode } from './types';
 
 export interface GlbContainer {
   readonly report: ContainerReport;
@@ -57,6 +57,10 @@ export function sniffNonGlb(bytes: Uint8Array): string | null {
   return null;
 }
 
+function badContainer(code: InspectErrorCode, message: string): ContainerResult {
+  return { ok: false, error: { code, message } };
+}
+
 function notGlb(bytes: Uint8Array, detail: string): ContainerResult {
   const hint = sniffNonGlb(bytes);
   return {
@@ -99,62 +103,54 @@ export function parseGlbContainer(bytes: Uint8Array): ContainerResult {
     };
   }
 
-  const issues: string[] = [];
   if (declaredLength < actualLength) {
-    issues.push(`头部声明长度 ${declaredLength} 字节，小于实际长度 ${actualLength} 字节；多出的 ${actualLength - declaredLength} 字节被忽略`);
+    return badContainer(
+      'length-mismatch',
+      `头部声明长度 ${declaredLength} 字节，小于实际长度 ${actualLength} 字节（文件末尾多出 ${actualLength - declaredLength} 字节）`,
+    );
   }
 
+  // 下面检查到的都是容器损坏：不合规范的 GLB 不当作检查成功。
+  // 只有未知类型的块是规范允许的（读取方必须忽略），记在问题里。
+  const issues: string[] = [];
   const chunks: ChunkReport[] = [];
   let offset = GLB_HEADER_BYTES;
   while (offset < declaredLength) {
+    const index = chunks.length;
     if (offset + GLB_CHUNK_HEADER_BYTES > declaredLength) {
-      return {
-        ok: false,
-        error: { code: 'bad-chunks', message: `第 ${chunks.length} 个块的块头不完整（偏移 ${offset}，声明长度 ${declaredLength}）` },
-      };
+      return badContainer('bad-chunks', `第 ${index} 个块的块头不完整（偏移 ${offset}，声明长度 ${declaredLength}）`);
     }
     const length = view.getUint32(offset, true);
     const typeCode = view.getUint32(offset + 4, true);
     const dataStart = offset + GLB_CHUNK_HEADER_BYTES;
     if (dataStart + length > declaredLength) {
-      return {
-        ok: false,
-        error: {
-          code: 'bad-chunks',
-          message: `第 ${chunks.length} 个块声明长度 ${length} 字节，超出了文件声明长度（块数据从偏移 ${dataStart} 开始，文件声明长度 ${declaredLength}）`,
-        },
-      };
+      return badContainer(
+        'bad-chunks',
+        `第 ${index} 个块声明长度 ${length} 字节，超出了文件声明长度（块数据从偏移 ${dataStart} 开始，文件声明长度 ${declaredLength}）`,
+      );
     }
     const type = typeCode === CHUNK_TYPE_JSON ? 'JSON' : typeCode === CHUNK_TYPE_BIN ? 'BIN' : 'unknown';
-    if (length % 4 !== 0) issues.push(`第 ${chunks.length} 个块（${type}）长度 ${length} 不是 4 的倍数`);
-    chunks.push({ index: chunks.length, type, typeCode, byteOffset: dataStart, byteLength: length });
+    if (length % 4 !== 0) {
+      return badContainer('bad-chunks', `第 ${index} 个块（${type}）长度 ${length} 字节，不是 4 的倍数（规范要求块按 4 字节对齐）`);
+    }
+    if (index === 0 && type !== 'JSON') {
+      return badContainer('bad-chunks', `第一个块的类型是 ${hex32(typeCode)}，应为 JSON 块（0x4e4f534a）`);
+    }
+    if (index > 0 && type === 'JSON') {
+      return badContainer('bad-chunks', `第 ${index} 个块又是 JSON 块（规范只允许一个 JSON 块）`);
+    }
+    if (index !== 1 && type === 'BIN') {
+      return badContainer('bad-chunks', `第 ${index} 个块是 BIN 块（规范只允许一个 BIN 块，而且必须是第二个块）`);
+    }
+    if (type === 'unknown') issues.push(`第 ${index} 个块类型未知（${hex32(typeCode)}），按规范忽略`);
+    chunks.push({ index, type, typeCode, byteOffset: dataStart, byteLength: length });
     offset = dataStart + length;
   }
 
   const first = chunks[0];
-  if (!first) return { ok: false, error: { code: 'bad-chunks', message: 'GLB 里没有任何块（缺少 JSON 块）' } };
-  if (first.type !== 'JSON') {
-    return {
-      ok: false,
-      error: { code: 'bad-chunks', message: `第一个块的类型是 ${hex32(first.typeCode)}，应为 JSON 块（0x4e4f534a）` },
-    };
-  }
-
-  let bin: Uint8Array | null = null;
-  for (const chunk of chunks.slice(1)) {
-    if (chunk.type === 'JSON') {
-      issues.push(`第 ${chunk.index} 个块又是 JSON 块（规范只允许一个），已忽略`);
-    } else if (chunk.type === 'BIN') {
-      if (bin) {
-        issues.push(`第 ${chunk.index} 个块是多余的 BIN 块（规范只允许一个），已忽略`);
-      } else {
-        if (chunk.index !== 1) issues.push(`第 ${chunk.index} 个块是 BIN 块，规范要求 BIN 块紧跟在 JSON 块后面`);
-        bin = bytes.subarray(chunk.byteOffset, chunk.byteOffset + chunk.byteLength);
-      }
-    } else {
-      issues.push(`第 ${chunk.index} 个块类型未知（${hex32(chunk.typeCode)}），已忽略`);
-    }
-  }
+  if (!first) return badContainer('bad-chunks', 'GLB 里没有任何块（缺少 JSON 块）');
+  const second = chunks[1];
+  const bin = second?.type === 'BIN' ? bytes.subarray(second.byteOffset, second.byteOffset + second.byteLength) : null;
 
   return {
     ok: true,

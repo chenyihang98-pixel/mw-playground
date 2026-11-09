@@ -3,7 +3,7 @@
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildFixture, type FixtureId } from '../../src/asset/fixtures';
+import { GltfBuilder, buildFixture, encodeGlb, type FixtureId } from '../../src/asset/fixtures';
 import { PROJECT_ROOT, makeTempDir, runScript } from '../helpers/node';
 
 const SCRIPT = 'scripts/inspect-asset.ts';
@@ -67,6 +67,20 @@ describe('退出码 0：检查完成', () => {
     expect(r.stdout).toContain('实际值（从 BIN 读出的顶点 + 节点静态变换）：未计算（');
   });
 
+  it('访问器 count 巨大：检查完成（不是内部错误），相关指标写未计算', () => {
+    const b = new GltfBuilder();
+    const position = b.addAccessor({ array: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), type: 'VEC3' });
+    b.addScene([b.addNode({ mesh: b.addMesh('Tri', [{ attributes: { POSITION: position } }]) })]);
+    const json = b.json();
+    (json.accessors as Record<string, unknown>[])[0] = { ...(json.accessors as Record<string, unknown>[])[0], count: 2 ** 50 };
+    const file = join(temp.dir, 'huge-count.glb');
+    writeFileSync(file, encodeGlb(json, b.binary()));
+    const r = inspect([file]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/三角面数.*：未计算（.*超出 bufferViews\[0\] 的范围/);
+    expect(r.stderr).toBe('');
+  });
+
   it('相对路径按运行命令时的目录（INIT_CWD）解析', () => {
     writeFixture('static-mesh');
     const r = inspect(['static-mesh.glb'], { cwd: PROJECT_ROOT, env: { INIT_CWD: temp.dir } });
@@ -98,6 +112,21 @@ describe('退出码 1：不是合法的 GLB', () => {
     const r = inspect([writeFixture('corrupt-magic')]);
     expect(r.status).toBe(1);
     expect(r.stderr).toContain('不是 GLB 文件');
+  });
+
+  it('容器损坏：两个 JSON 块', () => {
+    const glb = buildFixture('static-mesh');
+    const jsonLength = new DataView(glb.buffer).getUint32(12, true);
+    const jsonChunk = glb.slice(12, 20 + jsonLength);
+    const bytes = new Uint8Array(glb.byteLength + jsonChunk.byteLength);
+    bytes.set(glb);
+    bytes.set(jsonChunk, glb.byteLength);
+    new DataView(bytes.buffer).setUint32(8, bytes.byteLength, true);
+    const file = join(temp.dir, 'two-json-chunks.glb');
+    writeFileSync(file, bytes);
+    const r = inspect([file]);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('又是 JSON 块');
   });
 
   it('文件被截断；--json 时标准输出是 ok:false 的 JSON', () => {

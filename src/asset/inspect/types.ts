@@ -31,7 +31,7 @@ export interface ChunkReport {
 }
 
 export interface ContainerReport {
-  /** 文件实际大小（字节）。 */
+  /** 文件实际大小（字节）。声明长度与实际长度不一致的文件按容器损坏处理，不会生成报告。 */
   readonly fileSize: number;
   readonly version: number;
   /** GLB 头里声明的总长度。 */
@@ -44,7 +44,8 @@ export interface ContainerReport {
 
 export interface AssetInfo {
   readonly generator: string | null;
-  readonly version: string | null;
+  /** 必需字段；缺失或不是 2.x 时检查以 invalid-gltf 结束。 */
+  readonly version: string;
   readonly minVersion: string | null;
 }
 
@@ -189,6 +190,7 @@ export type InspectErrorCode =
   | 'not-glb'
   | 'unsupported-version'
   | 'truncated'
+  | 'length-mismatch'
   | 'bad-chunks'
   | 'invalid-json'
   | 'invalid-gltf';

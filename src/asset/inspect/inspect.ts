@@ -43,6 +43,13 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** 数组最大值。不用 Math.max(...list)：通道很多时展开参数会超出调用栈。 */
+function maxOf(list: readonly number[]): number {
+  let max = -Infinity;
+  for (const v of list) if (v > max) max = v;
+  return max;
+}
+
 /** 合并原因：去重，最多列出 3 条。 */
 function joinReasons(reasons: readonly string[]): string {
   const unique = [...new Set(reasons)];
@@ -73,7 +80,7 @@ function trianglesFor(mode: number, count: number): number | null {
   }
 }
 
-function inspectMeshes(doc: GltfJson, issues: string[]): MeshesReport {
+function inspectMeshes(doc: GltfJson, data: GltfData, issues: string[]): MeshesReport {
   const meshes = doc.meshes ?? [];
   const primitives: PrimitiveReport[] = [];
   meshes.forEach((mesh, m) => {
@@ -87,19 +94,23 @@ function inspectMeshes(doc: GltfJson, issues: string[]): MeshesReport {
       } else {
         const source = prim.indices !== undefined ? 'indices' : 'POSITION';
         const accessorIndex = prim.indices ?? prim.attributes.POSITION;
-        const accessor = accessorIndex === undefined ? undefined : doc.accessors?.[accessorIndex];
-        const tri = accessor ? trianglesFor(mode, accessor.count) : null;
-        if (accessorIndex === undefined) {
+        // count 先按声明的 bufferView / buffer 长度核对过，才用来计数。
+        const layout = accessorIndex === undefined ? undefined : data.layout(accessorIndex);
+        if (!layout) {
           triangles = notComputed(`${where} 既没有 indices 也没有 POSITION`);
-        } else if (!accessor) {
-          triangles = notComputed(`${where} 的 ${source} 访问器 accessors[${accessorIndex}] 不存在`);
-        } else if (tri === null) {
-          triangles = notComputed(`${where} 的 mode ${mode} 未知`);
+        } else if (!layout.ok) {
+          triangles = notComputed(`${where} 的 ${source} 访问器无效：${layout.reason}`);
         } else {
-          if (mode === PRIMITIVE_MODE.TRIANGLES && accessor.count % 3 !== 0) {
-            issues.push(`${where} 的 ${source} count（${accessor.count}）不是 3 的倍数`);
+          const count = layout.value.count;
+          const tri = trianglesFor(mode, count);
+          if (tri === null) {
+            triangles = notComputed(`${where} 的 mode ${mode} 未知`);
+          } else {
+            if (mode === PRIMITIVE_MODE.TRIANGLES && count % 3 !== 0) {
+              issues.push(`${where} 的 ${source} count（${count}）不是 3 的倍数`);
+            }
+            triangles = computed(tri);
           }
-          triangles = computed(tri);
         }
       }
       primitives.push({ mesh: m, primitive: p, mode, compression, triangles });
@@ -132,7 +143,7 @@ function inspectTextures(doc: GltfJson, data: GltfData): TexturesReport {
     if (image.bufferView !== undefined) {
       source = 'bufferView';
       const view = data.bufferView(image.bufferView);
-      if (view.ok) bytes = view.value.bytes;
+      if (view.ok) bytes = view.value;
       else unavailable = view.reason;
     } else if (image.uri !== undefined && isDataUri(image.uri)) {
       source = 'data-uri';
@@ -193,13 +204,40 @@ function loopOf(anim: GltfAnimation): LoopReport {
   return { kind: 'other', valueType: valueType(loop), value: loop };
 }
 
-function maxOf(values: Float64Array): number {
-  let max = -Infinity;
-  for (const v of values) if (v > max) max = v;
-  return max;
+/** 输入（时间）访问器里的最大时间，按访问器缓存：很多通道共用同一条时间轴时只读一次。 */
+type TimeMax = (accessor: number) => { ok: true; value: number } | { ok: false; reason: string };
+
+function timeMaxReader(data: GltfData): TimeMax {
+  const cache = new Map<number, ReturnType<TimeMax>>();
+  return (accessor) => {
+    const cached = cache.get(accessor);
+    if (cached) return cached;
+    let result: ReturnType<TimeMax>;
+    const times = data.accessor(accessor);
+    if (!times.ok) {
+      result = times;
+    } else if (times.value.count === 0) {
+      result = { ok: false, reason: `输入访问器 accessors[${accessor}] 没有关键帧` };
+    } else {
+      let max = -Infinity;
+      const scanned = data.scan(times.value, (values) => {
+        max = Math.max(max, values[0] ?? -Infinity);
+      });
+      result = scanned.ok ? { ok: true, value: max } : scanned;
+    }
+    cache.set(accessor, result);
+    return result;
+  };
 }
 
-function inspectAnimation(doc: GltfJson, data: GltfData, anim: GltfAnimation, index: number, issues: string[]): AnimationReport {
+function inspectAnimation(
+  doc: GltfJson,
+  data: GltfData,
+  timeMax: TimeMax,
+  anim: GltfAnimation,
+  index: number,
+  issues: string[],
+): AnimationReport {
   const where = `animations[${index}]`;
   const rawName = anim.name ?? null;
   const unnamed = rawName === null || rawName === '';
@@ -227,10 +265,9 @@ function inspectAnimation(doc: GltfJson, data: GltfData, anim: GltfAnimation, in
     else if (maxDeclared === undefined) declaredMissing.push(`输入访问器 accessors[${sampler.input}] 缺 max`);
     else declaredMax.push(maxDeclared);
 
-    const times = data.accessor(sampler.input);
-    if (!times.ok) actualMissing.push(times.reason);
-    else if (times.value.count === 0) actualMissing.push(`输入访问器 accessors[${sampler.input}] 没有关键帧`);
-    else actualMax.push(maxOf(times.value.values));
+    const time = timeMax(sampler.input);
+    if (time.ok) actualMax.push(time.value);
+    else actualMissing.push(time.reason);
 
     if (channel.target.path === 'translation' && channel.target.node !== undefined) {
       const node = channel.target.node;
@@ -244,17 +281,22 @@ function inspectAnimation(doc: GltfJson, data: GltfData, anim: GltfAnimation, in
         // CUBICSPLINE 的输出按 [入切线, 值, 出切线] 排列，取中间的值。
         const cubic = sampler.interpolation === 'CUBICSPLINE';
         const keys = cubic ? Math.floor(output.value.count / 3) : output.value.count;
-        const v = output.value.values;
-        const keyAt = (k: number): [number, number] => {
-          const element = cubic ? k * 3 + 1 : k;
-          return [v[element * 3] ?? 0, v[element * 3 + 2] ?? 0];
-        };
-        if (keys === 0) {
+        const keyAt = (k: number) => data.element(output.value, cubic ? k * 3 + 1 : k);
+        const first = keys > 0 ? keyAt(0) : null;
+        const last = keys > 0 ? keyAt(keys - 1) : null;
+        if (!first || !last) {
           displacement = notComputed(`输出访问器 accessors[${sampler.output}] 没有关键帧`);
+        } else if (!first.ok) {
+          displacement = notComputed(first.reason);
+        } else if (!last.ok) {
+          displacement = notComputed(last.reason);
         } else {
-          const from = keyAt(0);
-          const to = keyAt(keys - 1);
-          displacement = computed({ from, to, distance: Math.hypot(to[0] - from[0], to[1] - from[1]) });
+          const from: [number, number] = [first.value[0] ?? 0, first.value[2] ?? 0];
+          const to: [number, number] = [last.value[0] ?? 0, last.value[2] ?? 0];
+          const distance = Math.hypot(to[0] - from[0], to[1] - from[1]);
+          displacement = Number.isFinite(distance)
+            ? computed({ from, to, distance })
+            : notComputed('位移超出数值范围（坐标过大）');
         }
       }
       horizontalMotion.push({ channel: c, node, nodeName: doc.nodes?.[node]?.name ?? null, displacement });
@@ -267,13 +309,13 @@ function inspectAnimation(doc: GltfJson, data: GltfData, anim: GltfAnimation, in
       ? notComputed(noChannels)
       : declaredMissing.length > 0
         ? notComputed(joinReasons(declaredMissing))
-        : computed(Math.max(...declaredMax));
+        : computed(maxOf(declaredMax));
   const actual: Metric<number> =
     noChannels !== null
       ? notComputed(noChannels)
       : actualMissing.length > 0
         ? notComputed(joinReasons(actualMissing))
-        : computed(Math.max(...actualMax));
+        : computed(maxOf(actualMax));
 
   return {
     index,
@@ -292,7 +334,8 @@ function inspectAnimation(doc: GltfJson, data: GltfData, anim: GltfAnimation, in
 }
 
 function inspectAnimations(doc: GltfJson, data: GltfData, issues: string[]): AnimationsReport {
-  const animations = (doc.animations ?? []).map((anim, i) => inspectAnimation(doc, data, anim, i, issues));
+  const timeMax = timeMaxReader(data);
+  const animations = (doc.animations ?? []).map((anim, i) => inspectAnimation(doc, data, timeMax, anim, i, issues));
   const byName = new Map<string, number[]>();
   for (const a of animations) byName.set(a.loaderName, [...(byName.get(a.loaderName) ?? []), a.index]);
   const duplicateNames = [...byName.entries()]
@@ -318,10 +361,14 @@ class BoxBuilder {
     this.max = [Math.max(this.max[0], x), Math.max(this.max[1], y), Math.max(this.max[2], z)];
   }
 
-  result(): Box3 | null {
-    if (this.empty) return null;
+  /** emptyReason：一个点都没有加入时的原因。 */
+  result(emptyReason: string): Metric<Box3> {
+    if (this.empty) return notComputed(emptyReason);
     const size: Vec3 = [this.max[0] - this.min[0], this.max[1] - this.min[1], this.max[2] - this.min[2]];
-    return { min: [...this.min], max: [...this.max], size };
+    if (![...this.min, ...this.max, ...size].every(Number.isFinite)) {
+      return notComputed('计算结果超出数值范围（节点变换或坐标过大）');
+    }
+    return computed({ min: [...this.min], max: [...this.max], size });
   }
 }
 
@@ -369,8 +416,7 @@ function declaredBounds(doc: GltfJson, instances: readonly MeshInstance[]): Metr
     }
   }
   if (missing.length > 0) return notComputed(joinReasons(missing));
-  const result = box.result();
-  return result ? computed(result) : notComputed('没有图元');
+  return box.result('没有图元');
 }
 
 function actualBounds(doc: GltfJson, data: GltfData, instances: readonly MeshInstance[]): Metric<Box3> {
@@ -396,14 +442,13 @@ function actualBounds(doc: GltfJson, data: GltfData, instances: readonly MeshIns
       missing.push(`${where} 的 POSITION 不是 VEC3`);
       continue;
     }
-    const v = positions.value.values;
-    for (let i = 0; i < positions.value.count; i++) {
-      box.add(transformPoint(inst.world, v[i * 3] ?? 0, v[i * 3 + 1] ?? 0, v[i * 3 + 2] ?? 0));
-    }
+    const scanned = data.scan(positions.value, ([x = 0, y = 0, z = 0]) => {
+      box.add(transformPoint(inst.world, x, y, z));
+    });
+    if (!scanned.ok) missing.push(scanned.reason);
   }
   if (missing.length > 0) return notComputed(joinReasons(missing));
-  const result = box.result();
-  return result ? computed(result) : notComputed('所有图元都没有顶点');
+  return box.result('所有图元都没有顶点');
 }
 
 // ---------- 入口 ----------
@@ -419,14 +464,16 @@ function externalResources(doc: GltfJson): ExternalResource[] {
   return list;
 }
 
-function decodeJsonChunk(bytes: Uint8Array, issues: string[]): { ok: true; value: unknown } | { ok: false; message: string } {
-  let end = bytes.byteLength;
-  while (end > 0 && bytes[end - 1] === 0) end--;
-  if (end < bytes.byteLength) issues.push('JSON 块末尾用 0 字节补齐（规范要求用空格）');
-  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) issues.push('JSON 块以 UTF-8 BOM 开头（规范不允许）');
+function decodeJsonChunk(bytes: Uint8Array): { ok: true; value: unknown } | { ok: false; message: string } {
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return { ok: false, message: 'JSON 块以 UTF-8 BOM 开头（规范不允许）' };
+  }
+  if (bytes.byteLength > 0 && bytes[bytes.byteLength - 1] === 0) {
+    return { ok: false, message: 'JSON 块末尾是 0 字节（规范要求用空格补齐），无法按 JSON 解析' };
+  }
   let text: string;
   try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, end));
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
     return { ok: false, message: 'JSON 块不是合法的 UTF-8' };
   }
@@ -444,7 +491,7 @@ export function inspectGlb(input: ArrayBuffer | Uint8Array): InspectResult {
   const { container } = parsed;
   const issues = [...container.issues];
 
-  const json = decodeJsonChunk(container.json, issues);
+  const json = decodeJsonChunk(container.json);
   if (!json.ok) return { ok: false, error: { code: 'invalid-json', message: json.message } };
   if (!isPlainObject(json.value)) {
     return { ok: false, error: { code: 'invalid-gltf', message: `JSON 块的顶层是 ${valueType(json.value)}，应为对象` } };
@@ -455,8 +502,12 @@ export function inspectGlb(input: ArrayBuffer | Uint8Array): InspectResult {
   }
   const doc = schema.data;
 
-  if (!doc.asset) issues.push('缺少必需的 asset 对象');
-  else if (doc.asset.version === undefined) issues.push('缺少必需的 asset.version');
+  const invalid = (message: string): InspectResult => ({ ok: false, error: { code: 'invalid-gltf', message } });
+  if (!doc.asset) return invalid('缺少必需的 asset 对象');
+  if (doc.asset.version === undefined) return invalid('缺少必需的 asset.version');
+  if (!/^2\.\d+$/.test(doc.asset.version)) return invalid(`asset.version 是 "${doc.asset.version}"，只支持 glTF 2.x`);
+  const binError = checkBinChunk(doc, container.bin, issues);
+  if (binError) return { ok: false, error: { code: 'bad-chunks', message: binError } };
   const used = doc.extensionsUsed ?? [];
   const required = doc.extensionsRequired ?? [];
   for (const ext of required) {
@@ -468,14 +519,14 @@ export function inspectGlb(input: ArrayBuffer | Uint8Array): InspectResult {
     reportVersion: 1,
     container: container.report,
     asset: {
-      generator: doc.asset?.generator ?? null,
-      version: doc.asset?.version ?? null,
-      minVersion: doc.asset?.minVersion ?? null,
+      generator: doc.asset.generator ?? null,
+      version: doc.asset.version,
+      minVersion: doc.asset.minVersion ?? null,
     },
     extensionsUsed: used,
     extensionsRequired: required,
     externalResources: externalResources(doc),
-    meshes: inspectMeshes(doc, issues),
+    meshes: inspectMeshes(doc, data, issues),
     textures: inspectTextures(doc, data),
     skins: inspectSkins(doc),
     animations: inspectAnimations(doc, data, issues),
@@ -483,6 +534,23 @@ export function inspectGlb(input: ArrayBuffer | Uint8Array): InspectResult {
     issues,
   };
   return { ok: true, report };
+}
+
+/** BIN 块与 buffers[0] 的对应关系。返回错误信息；没有错误返回 null。 */
+function checkBinChunk(doc: GltfJson, bin: Uint8Array | null, issues: string[]): string | null {
+  const first = doc.buffers?.[0];
+  const glbStored = first !== undefined && first.uri === undefined;
+  if (first && glbStored) {
+    if (!bin) return 'buffers[0] 没有 uri（指向 GLB 的 BIN 块），但文件里没有 BIN 块';
+    if (bin.byteLength < first.byteLength) {
+      return `BIN 块只有 ${bin.byteLength} 字节，小于 buffers[0].byteLength（${first.byteLength}）`;
+    }
+    if (bin.byteLength > first.byteLength + 3) {
+      return `BIN 块有 ${bin.byteLength} 字节，比 buffers[0].byteLength（${first.byteLength}）多出 ${bin.byteLength - first.byteLength} 字节（规范最多允许 3 字节补齐）`;
+    }
+  }
+  if (!glbStored && bin) issues.push('文件有 BIN 块，但没有 buffer 引用它（buffers[0] 有 uri 或没有 buffers）');
+  return null;
 }
 
 /** 报告里要标出的“需要解码器”的扩展。 */

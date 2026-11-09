@@ -29,9 +29,10 @@
 - 实际安装的版本：three 0.187.0；@playwright/test 1.65.0；Chromium 158.0.8127.18（Playwright 的 chromium 与 chromium-headless-shell，修订号 1254）。
 - `npm run typecheck`：通过。
 - `npm run lint`：通过，没有警告。
-- `npm test`：5 个测试文件、100 个测试全部通过。包括：
+- `npm test`：6 个测试文件、148 个测试全部通过。包括：
   - 每个夹具的报告字段（`tests/unit/inspect-fixtures.test.ts`）；loop 的四种情况；extras 不是对象；同名和无名片段；外部 buffer 和 Draco 时写“未计算”和原因；损坏容器的错误。
-  - 边界情况（`tests/unit/inspect-edge.test.ts`）：OBJ / STL / PLY / .gltf、版本 1、截断、块越界、JSON 错误、缺 min/max、稀疏访问器、量化的 POSITION、data URI buffer 等。
+  - 边界情况（`tests/unit/inspect-edge.test.ts`）：OBJ / STL / PLY / .gltf、版本 1、截断、尾部多余字节、块越界、块未对齐、重复的 JSON / BIN 块、BIN 不在第二位、BIN 与 buffers[0].byteLength 不符、JSON 的 BOM 和 0 字节补齐、缺 asset.version、缺 min/max、稀疏访问器、量化的 POSITION、data URI buffer 等。
+  - 健壮性（`tests/unit/inspect-robustness.test.ts`）：count 为 2**50、越界的偏移和 byteStride、NaN / Infinity、数值溢出、30 万个通道；并对每个合法夹具的访问器和 bufferView 字段做变异、把 BIN 覆盖成 NaN / Infinity / 随机字节，断言不抛异常、报告里没有非有限数。
   - GLTFLoader 对应关系（`tests/unit/gltfloader-mapping.test.ts`）：在 vitest 的 Node 环境里用 three 0.187.0 的 `GLTFLoader.parseAsync` 加载 9 个不含贴图的夹具，断言 `clip.userData.loop` 与检查报告的原始值一致、loop 缺失时 `clip.userData` 没有 loop、无名片段名为 `animation_<序号>`、extras 为数字时只打警告不合并。不需要任何环境补丁。
   - 命令行（`tests/unit/inspect-cli.test.ts`）：夹具写到系统临时目录后运行 inspect-asset；退出码 0 / 1（OBJ、.gltf、magic 错误、截断）/ 2（文件不存在、目录、缺参数、未知选项）；运行前后临时目录里的文件不变。
   - lock-summary（`tests/unit/lock-summary.test.ts`）：在系统临时目录建临时 git 仓库，验证新增、删除、升级、来源变化、缺 integrity、hasInstallScript；起点没有锁文件时全部列为新增；读的是提交而不是工作区。临时仓库由测试文件自己删除。
@@ -40,6 +41,16 @@
 - `npm run build`：通过；生产构建的 JS 里没有 `__MW_TEST__`（夹具预览和测试钩子没有打进去）。
 - 测试跑完后 `git status` 干净（`test-results/`、`dist/` 都已被忽略）。
 - `git diff --stat f178799..HEAD` 与加 `--ignore-cr-at-eol` 的结果一致（没有 CRLF）。
+
+### 第 1 轮审查后的修改
+
+Codex 第 1 轮审查（候选 abf8088）提出 3 项阻塞问题，都已修正（违反的都是要求 5）：
+
+1. 容器损坏被当作检查成功：重复的 JSON 块、重复的 BIN 块、未按 4 字节对齐的块只记在“问题”里，退出码 0。现在凡是检查到的容器损坏都返回错误（退出码 1）：块长度不是 4 的倍数、重复的 JSON 块、重复或不在第二位的 BIN 块、头部声明长度小于实际长度（尾部多余字节）、BIN 块比 buffers[0].byteLength 短或长出 3 字节以上、buffers[0] 指向 BIN 块但没有 BIN 块。顺带把 JSON 块的 BOM、0 字节补齐，以及缺 asset / asset.version、版本不是 2.x 也改为错误（three r187 的 GLTFLoader 在缺 asset.version 时会直接出错）。规范允许的未知类型块仍只记在“问题”里。
+2. 访问器按未经验证的 count 分配数组：count 为 2**50 时抛 RangeError，被当作内部错误。现在先按 JSON 声明的 bufferView / buffer 长度检查访问区间（外部 buffer 也能检查），再读数据；读取改成按需逐个读取，不再按 count 分配数组；没有 bufferView 的全零访问器只检查一个元素。三角面数用到的 count 也先经过同样的检查。
+3. FLOAT 分量的 NaN / Infinity 没有检查：包围盒在 JSON 里变成 null 但仍标为已计算。现在读取时逐个检查有限性，受影响的指标（实际包围盒、实际时长、水平位移）写“未计算”和原因，并在“问题”里记一条；包围盒和位移的计算结果也检查是否溢出。
+
+另外修了一处同类问题：动画时长原来用 `Math.max(...列表)`，通道数很多时（实测 30 万个）会超出调用栈而抛异常。
 
 ### 未运行或未验证
 

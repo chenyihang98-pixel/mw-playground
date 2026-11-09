@@ -139,7 +139,7 @@ export function formatInspectReport(report: InspectReport, options: FormatOption
 
   out.push('[资产]');
   out.push(`  asset.generator：${report.asset.generator ?? '（无）'}`);
-  out.push(`  asset.version：${report.asset.version ?? '（无）'}`);
+  out.push(`  asset.version：${report.asset.version}`);
   if (report.asset.minVersion !== null) out.push(`  asset.minVersion：${report.asset.minVersion}`);
   out.push(`  extensionsUsed：${list(report.extensionsUsed)}`);
   const decoders = decoderExtensionsIn(report.extensionsRequired);

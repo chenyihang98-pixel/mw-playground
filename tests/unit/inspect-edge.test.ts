@@ -141,23 +141,96 @@ describe('损坏或不合规的容器', () => {
     expect(error.message).toContain('animations.0.channels');
   });
 
-  it('文件末尾有多余字节：照常检查，并记在问题里', () => {
+  it('文件末尾有多余字节（声明长度小于实际长度）：length-mismatch，写出两个长度', () => {
     const glb = buildFixture('static-mesh');
     const padded = new Uint8Array(glb.byteLength + 8);
     padded.set(glb);
-    const r = ok(padded);
-    expect(r.container.lengthMatches).toBe(false);
-    expect(r.container.declaredLength).toBe(glb.byteLength);
-    expect(r.container.actualLength).toBe(glb.byteLength + 8);
-    expect(r.issues.join('\n')).toContain('多出的 8 字节');
+    const error = err(padded);
+    expect(error.code).toBe('length-mismatch');
+    expect(error.message).toContain(`声明长度 ${glb.byteLength} 字节`);
+    expect(error.message).toContain(`实际长度 ${glb.byteLength + 8} 字节`);
   });
 
-  it('缺 asset.version：照常检查，记在问题里', () => {
-    const r = ok(rawGlb([jsonChunk('{"asset":{}}')]));
-    expect(r.asset.version).toBeNull();
-    expect(r.issues).toContain('缺少必需的 asset.version');
+  it('两个 JSON 块：bad-chunks', () => {
+    const json = jsonChunk(MINIMAL_JSON);
+    const error = err(rawGlb([json, json]));
+    expect(error.code).toBe('bad-chunks');
+    expect(error.message).toContain('又是 JSON 块');
+  });
+
+  it('两个 BIN 块：bad-chunks', () => {
+    const bin = { type: CHUNK_TYPE_BIN, data: new Uint8Array(4) };
+    const error = err(rawGlb([jsonChunk(MINIMAL_JSON), bin, bin]));
+    expect(error.code).toBe('bad-chunks');
+    expect(error.message).toContain('第 2 个块是 BIN 块');
+  });
+
+  it('BIN 块不是第二个块：bad-chunks', () => {
+    const unknown = { type: 0x12345678, data: new Uint8Array(4) };
+    const error = err(rawGlb([jsonChunk(MINIMAL_JSON), unknown, { type: CHUNK_TYPE_BIN, data: new Uint8Array(4) }]));
+    expect(error.code).toBe('bad-chunks');
+    expect(error.message).toContain('必须是第二个块');
+  });
+
+  it('块长度不是 4 的倍数：bad-chunks', () => {
+    const error = err(rawGlb([jsonChunk(MINIMAL_JSON), { type: CHUNK_TYPE_BIN, data: new Uint8Array(5) }]));
+    expect(error.code).toBe('bad-chunks');
+    expect(error.message).toContain('不是 4 的倍数');
+  });
+
+  it('BIN 块后面的未知类型块：规范要求忽略，照常检查并记在问题里', () => {
+    const r = ok(rawGlb([jsonChunk(MINIMAL_JSON), { type: CHUNK_TYPE_BIN, data: new Uint8Array(4) }, { type: 0x12345678, data: new Uint8Array(4) }]));
+    expect(r.container.chunks.map((c) => c.type)).toEqual(['JSON', 'BIN', 'unknown']);
+    expect(r.issues.join('\n')).toContain('类型未知');
+  });
+
+  it('JSON 块用 0 字节补齐：invalid-json', () => {
+    const json = text(MINIMAL_JSON);
+    const data = new Uint8Array(Math.ceil((json.byteLength + 1) / 4) * 4); // 至少补 1 个 0 字节，并保持 4 字节对齐
+    data.set(json);
+    const error = err(rawGlb([{ type: CHUNK_TYPE_JSON, data }]));
+    expect(error.code).toBe('invalid-json');
+    expect(error.message).toContain('0 字节');
+  });
+
+  it('JSON 块以 BOM 开头：invalid-json', () => {
+    const error = err(rawGlb([jsonChunk(`﻿${MINIMAL_JSON}`)]));
+    expect(error.code).toBe('invalid-json');
+    expect(error.message).toContain('BOM');
+  });
+
+  it.each([
+    ['{}', '缺少必需的 asset 对象'],
+    ['{"asset":{}}', '缺少必需的 asset.version'],
+    ['{"asset":{"version":"1.0"}}', '只支持 glTF 2.x'],
+  ])('asset 不合法（%s）：invalid-gltf', (json, message) => {
+    const error = err(rawGlb([jsonChunk(json)]));
+    expect(error.code).toBe('invalid-gltf');
+    expect(error.message).toContain(message);
+  });
+
+  it('BIN 块比 buffers[0].byteLength 短：bad-chunks', () => {
+    const json = '{"asset":{"version":"2.0"},"buffers":[{"byteLength":64}]}';
+    const error = err(rawGlb([jsonChunk(json), { type: CHUNK_TYPE_BIN, data: new Uint8Array(16) }]));
+    expect(error.code).toBe('bad-chunks');
+    expect(error.message).toContain('小于 buffers[0].byteLength（64）');
+  });
+
+  it('BIN 块比 buffers[0].byteLength 长 3 字节以上：bad-chunks', () => {
+    const json = '{"asset":{"version":"2.0"},"buffers":[{"byteLength":4}]}';
+    const error = err(rawGlb([jsonChunk(json), { type: CHUNK_TYPE_BIN, data: new Uint8Array(16) }]));
+    expect(error.code).toBe('bad-chunks');
+    expect(error.message).toContain('多出 12 字节');
+  });
+
+  it('buffers[0] 指向 BIN 块但文件没有 BIN 块：bad-chunks', () => {
+    const error = err(rawGlb([jsonChunk('{"asset":{"version":"2.0"},"buffers":[{"byteLength":4}]}')]));
+    expect(error.code).toBe('bad-chunks');
+    expect(error.message).toContain('没有 BIN 块');
   });
 });
+
+const MINIMAL_JSON = '{"asset":{"version":"2.0"}}';
 
 describe('输入形式', () => {
   it('ArrayBuffer 和带偏移的 Uint8Array 都能用', () => {
