@@ -8,6 +8,7 @@ import { gaitOf } from '../game/render/pose';
 import type { ModelInstance } from './asset';
 import type { AnimationPlan, MotionSource } from './clipRules';
 import { CLIP_RULES } from './limits';
+import { poseBindPose } from './normalize';
 
 export type MotionState = 'idle' | 'walk' | 'run' | 'jump' | 'land';
 
@@ -75,7 +76,8 @@ export class ImportedCharacterModel implements CharacterModel {
     const previous = this.current;
     let action: AnimationAction | null = null;
     if (source.kind === 'clip' || source.kind === 'firstFrame') {
-      const clip = this.instance.asset.gameClip(source.index);
+      const gameClip = this.instance.asset.gameClip(source.index);
+      const clip = gameClip ? this.instance.clipFor(gameClip) : null;
       if (clip) {
         action = this.instance.mixer.clipAction(clip);
         action.reset();
@@ -99,7 +101,11 @@ export class ImportedCharacterModel implements CharacterModel {
         action.play();
       }
     }
-    if (previous?.action && previous.action !== action) {
+    if (source.kind === 'bindPose') {
+      // 绑定姿态：立即停掉所有动作（mixer 把骨骼还原成文件里的初始值），再按逆绑定矩阵摆成绑定姿态
+      this.instance.mixer.stopAllAction();
+      poseBindPose(this.instance.object);
+    } else if (previous?.action && previous.action !== action) {
       if (fade > 0) previous.action.fadeOut(fade);
       else previous.action.stop();
     }

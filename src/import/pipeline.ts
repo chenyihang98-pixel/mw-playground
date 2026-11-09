@@ -54,32 +54,35 @@ export async function importModel(source: ImportSource, limits: ImportLimits = I
     return fail('parse', `文件损坏或格式不对，无法解析：${message(error)}`);
   }
 
-  const stats = loadedStats(loaded.scene);
-  const post = postLoadCheck(stats, limits);
-  for (const w of post.warnings) if (!warnings.includes(w)) warnings.push(w);
-  if (!post.ok) {
-    disposeObject(loaded.scene);
-    return fail('postcheck', post.error);
+  // 从这里起 loaded.scene 已经可用：任何一步失败（包括意外的异常）都先释放它
+  const scene = loaded.scene;
+  const release = (error: string): ImportOutcome => {
+    disposeObject(scene);
+    return fail('postcheck', error);
+  };
+  try {
+    const stats = loadedStats(scene);
+    const post = postLoadCheck(stats, limits);
+    for (const w of post.warnings) if (!warnings.includes(w)) warnings.push(w);
+    if (!post.ok) return release(post.error);
+    const bounds = bindPoseBounds(scene);
+    if (!bounds) return release('文件里没有可显示的几何');
+    const asset = new ImportedAsset({
+      id: await sha256Hex(bytes),
+      fileName: source.name,
+      format,
+      sizeBytes: source.size,
+      scene,
+      clips: loaded.clips,
+      bounds,
+      stats,
+      notices: loaded.notices,
+      warnings,
+    });
+    return { ok: true, asset, warnings };
+  } catch (error) {
+    return release(`文件损坏或格式不对，加载后的检查失败：${message(error)}`);
   }
-  const bounds = bindPoseBounds(loaded.scene);
-  if (!bounds) {
-    disposeObject(loaded.scene);
-    return fail('postcheck', '文件里没有可显示的几何');
-  }
-
-  const asset = new ImportedAsset({
-    id: await sha256Hex(bytes),
-    fileName: source.name,
-    format,
-    sizeBytes: source.size,
-    scene: loaded.scene,
-    clips: loaded.clips,
-    bounds,
-    stats,
-    notices: loaded.notices,
-    warnings,
-  });
-  return { ok: true, asset, warnings };
 }
 
 /** 从浏览器的 File 生成导入源（大小检查在读取之前完成）。 */

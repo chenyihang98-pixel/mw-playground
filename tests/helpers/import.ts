@@ -96,3 +96,53 @@ export function instancedTriangles(): Uint8Array {
   if (node) node.extensions = { EXT_mesh_gpu_instancing: { attributes: { TRANSLATION: translation } } };
   return encodeGlb(json, b.binary());
 }
+
+const IDENTITY_IBM = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+/** 单骨骼蒙皮的三角形（高 1 m）；骨骼可选名字和初始缩放；可选片段。 */
+export function singleBoneSkin(options: {
+  boneName?: string;
+  boneScale?: [number, number, number];
+  jointIndex?: number;
+  morph?: boolean;
+  clips?: { name: string; path: 'rotation' | 'scale'; times: number[]; values: number[] }[];
+}): Uint8Array {
+  const b = new GltfBuilder();
+  const bone = b.addNode({ ...(options.boneName === undefined ? {} : { name: options.boneName }), ...(options.boneScale ? { scale: options.boneScale } : {}) });
+  const position = b.addAccessor({ array: new Float32Array([-0.2, 0, 0, 0.2, 0, 0, 0, 1, 0.1]), type: 'VEC3' });
+  const j = options.jointIndex ?? 0;
+  const joints = b.addAccessor({ array: new Uint8Array([j, 0, 0, 0, j, 0, 0, 0, j, 0, 0, 0]), type: 'VEC4', minMax: false });
+  const weights = b.addAccessor({ array: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]), type: 'VEC4', minMax: false });
+  const ibm = b.addAccessor({ array: new Float32Array(IDENTITY_IBM), type: 'MAT4', minMax: false });
+  const morph = options.morph ? b.addAccessor({ array: new Float32Array([0, -1, 0, 0, -1, 0, 0, 1, 0]), type: 'VEC3' }) : null;
+  const mesh = b.addMesh('Skinned', [{ attributes: { POSITION: position, JOINTS_0: joints, WEIGHTS_0: weights } }]);
+  const skin = b.addSkin({ joints: [bone], inverseBindMatrices: ibm });
+  b.addScene([bone, b.addNode({ name: 'Body', mesh, skin })]);
+  for (const clip of options.clips ?? []) {
+    b.addAnimation({ name: clip.name, extras: { loop: true }, channels: [{ node: bone, path: clip.path, times: clip.times, values: clip.values }] });
+  }
+  const json = b.json();
+  if (morph !== null) addMorphTarget(json, morph);
+  return encodeGlb(json, b.binary());
+}
+
+/** 给第一个网格的第一个图元加一个 morph 目标，默认权重 1。 */
+function addMorphTarget(json: Record<string, unknown>, accessor: number): void {
+  const meshes = json.meshes as { primitives: Record<string, unknown>[]; weights?: number[] }[];
+  const mesh = meshes[0];
+  const primitive = mesh?.primitives[0];
+  if (!mesh || !primitive) throw new Error('没有网格');
+  primitive.targets = [{ POSITION: accessor }];
+  mesh.weights = [1];
+}
+
+/** 无骨骼的三角形（y ∈ [0, 1]），带一个默认权重为 1 的 morph：把 y 变成 [−1, 2]。 */
+export function morphedTriangle(): Uint8Array {
+  const b = new GltfBuilder();
+  const position = b.addAccessor({ array: new Float32Array([-0.2, 0, 0, 0.2, 0, 0, 0, 1, 0.1]), type: 'VEC3' });
+  const morph = b.addAccessor({ array: new Float32Array([0, -1, 0, 0, -1, 0, 0, 1, 0]), type: 'VEC3' });
+  b.addScene([b.addNode({ name: 'Morphed', mesh: b.addMesh('Morphed', [{ attributes: { POSITION: position } }]) })]);
+  const json = b.json();
+  addMorphTarget(json, morph);
+  return encodeGlb(json, b.binary());
+}

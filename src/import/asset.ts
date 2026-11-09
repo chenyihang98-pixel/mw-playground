@@ -1,7 +1,7 @@
 // 导入的资产：加载结果（模板场景 + 原片段）、片段分析、用户设置，以及创建实例。
 // 模板场景从不播放动画，也不加入任何场景；每个实例用 SkeletonUtils.clone 复制，有自己的骨骼和 AnimationMixer。
 
-import { AnimationMixer, Group, type AnimationClip, type Box3, type Object3D } from 'three';
+import { AnimationMixer, Group, PropertyBinding, type AnimationClip, type Box3, type Object3D } from 'three';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { SPEC } from '../game/spec';
 import {
@@ -277,6 +277,15 @@ export class ImportedAsset {
   }
 }
 
+/** 同时遍历两棵结构相同的树（与 SkeletonUtils.clone 的对应方式一致）。 */
+function parallelTraverse(a: Object3D, b: Object3D, visit: (a: Object3D, b: Object3D) => void): void {
+  visit(a, b);
+  a.children.forEach((child, i) => {
+    const other = b.children[i];
+    if (other) parallelTraverse(child, other, visit);
+  });
+}
+
 /**
  * 一个实例：外层节点 swayPivot（整体摆动用）→ outer（归一化）→ object（克隆的场景）。
  * 每个实例有自己的骨骼和 AnimationMixer；几何、材质、贴图与模板共享，由资产统一释放。
@@ -287,6 +296,9 @@ export class ModelInstance {
   readonly object: Object3D;
   /** 这个实例自己的 AnimationMixer（播放状态不与其他实例共享）。 */
   readonly mixer: AnimationMixer;
+  /** 模板节点的 UUID → 克隆节点的 UUID（无名节点的轨道按 UUID 指定目标）。 */
+  private readonly uuidMap = new Map<string, string>();
+  private readonly retargeted = new Map<AnimationClip, AnimationClip>();
   private released = false;
   private size: NormalizedSize;
   private readonly unsubscribe: () => void;
@@ -298,6 +310,9 @@ export class ModelInstance {
     this.swayPivot.name = 'imported-sway';
     this.outer.name = 'imported-outer';
     this.object = cloneSkinned(asset.template);
+    parallelTraverse(asset.template, this.object, (source, cloned) => {
+      this.uuidMap.set(source.uuid, cloned.uuid);
+    });
     this.mixer = new AnimationMixer(this.object);
     this.outer.add(this.object);
     this.swayPivot.add(this.outer);
@@ -309,6 +324,29 @@ export class ModelInstance {
 
   normalizedSize(): NormalizedSize {
     return this.size;
+  }
+
+  /**
+   * 这个实例上播放用的片段。GLTFLoader 给无名节点的轨道用模板节点的 UUID 指定目标，
+   * 克隆后节点的 UUID 变了，所以这类片段为每个实例生成一份把目标改成克隆节点的副本；原片段不改。
+   * 所有轨道都指向有名字的节点时，直接用原片段。
+   */
+  clipFor(clip: AnimationClip): AnimationClip {
+    const cached = this.retargeted.get(clip);
+    if (cached) return cached;
+    const remap = (trackName: string): string | null => {
+      const { nodeName } = PropertyBinding.parseTrackName(trackName);
+      const mapped = this.uuidMap.get(nodeName);
+      return mapped !== undefined && trackName.startsWith(nodeName) ? mapped + trackName.slice(nodeName.length) : null;
+    };
+    let result = clip;
+    if (clip.tracks.some((track) => remap(track.name) !== null)) {
+      result = clip.clone();
+      result.userData = structuredClone(clip.userData);
+      for (const track of result.tracks) track.name = remap(track.name) ?? track.name;
+    }
+    this.retargeted.set(clip, result);
+    return result;
   }
 
   /** 释放这个实例：从场景移除，释放它自己的骨骼；不碰共享的几何、材质、贴图，不影响其他实例。 */

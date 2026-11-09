@@ -5,12 +5,17 @@ import { describe, expect, it, vi } from 'vitest';
 import { GltfBuilder } from '../../src/asset/fixtures';
 import { SPEC } from '../../src/game/spec';
 import { ImportedCharacterModel } from '../../src/import/animator';
-import { InstanceLimitError, InstanceRegistry } from '../../src/import/asset';
-import { bindPoseBounds } from '../../src/import/normalize';
-import { importFixture, importGlb, instancedTriangles, skinnedWithMeshTransform } from '../helpers/import';
+import { InstanceLimitError, InstanceRegistry, type ModelInstance } from '../../src/import/asset';
+import { poseBindPose, renderedBounds } from '../../src/import/normalize';
+import { importFixture, importGlb, instancedTriangles, morphedTriangle, singleBoneSkin, skinnedWithMeshTransform } from '../helpers/import';
 
-function normalizedBox(root: Object3D): Box3 {
-  const box = bindPoseBounds(root);
+/**
+ * 实例实际显示的包围盒（摆动节点空间）：先把骨骼摆成绑定姿态（由逆绑定矩阵决定），
+ * 再用 three 自己的 getVertexPosition（morph + 当前骨骼的蒙皮）逐个顶点计算。与归一化用的公式无关，用来独立核对。
+ */
+function normalizedBox(instance: ModelInstance): Box3 {
+  poseBindPose(instance.object);
+  const box = renderedBounds(instance.swayPivot);
   if (!box) throw new Error('没有几何');
   return box;
 }
@@ -35,8 +40,9 @@ function facingPlusX(scale: number): Uint8Array {
 }
 
 /** 模型空间里鼻尖（x 最大的顶点）经过外层节点后的方向。 */
-function noseDirection(root: Object3D): Vector3 {
-  const box = normalizedBox(root);
+function noseDirection(instance: ModelInstance): Vector3 {
+  const box = normalizedBox(instance);
+  const root = instance.swayPivot;
   let nose = new Vector3();
   let best = -Infinity;
   root.updateMatrixWorld(true);
@@ -61,7 +67,7 @@ describe('归一化（作用在外层节点上）', () => {
     for (const scale of [1, 10, 0.01]) {
       const asset = await importGlb(facingPlusX(scale));
       const instance = asset.createInstance();
-      expectGrounded(normalizedBox(instance.swayPivot), 1.75);
+      expectGrounded(normalizedBox(instance), 1.75);
       expect(instance.normalizedSize().height).toBeCloseTo(1.75, 6);
     }
   });
@@ -70,7 +76,7 @@ describe('归一化（作用在外层节点上）', () => {
     const asset = await importFixture('static-mesh');
     expect(asset.bounds.min.y).toBeCloseTo(0.5, 5);
     const instance = asset.createInstance();
-    expectGrounded(normalizedBox(instance.swayPivot), 1.75);
+    expectGrounded(normalizedBox(instance), 1.75);
   });
 
   it('不改模型内部的节点：归一化只写外层节点', async () => {
@@ -86,7 +92,7 @@ describe('归一化（作用在外层节点上）', () => {
     const asset = await importGlb(facingPlusX(1));
     const instance = asset.createInstance();
     asset.setDisplayHeight(2.2);
-    expectGrounded(normalizedBox(instance.swayPivot), 2.2);
+    expectGrounded(normalizedBox(instance), 2.2);
     asset.setDisplayHeight(3);
     expect(instance.normalizedSize().height).toBeCloseTo(2.4, 6);
     asset.setDisplayHeight(0.5);
@@ -98,16 +104,16 @@ describe('归一化（作用在外层节点上）', () => {
   it('默认 +Z 为正前方；面向 +X 的模型转 90° 后朝 +Z，仍然贴地居中', async () => {
     const asset = await importGlb(facingPlusX(1));
     const instance = asset.createInstance();
-    const before = noseDirection(instance.swayPivot);
+    const before = noseDirection(instance);
     expect(before.x).toBeCloseTo(1, 6); // 默认不转：鼻子还朝 +X
     asset.rotateQuarter(-1);
     expect(asset.settings.quarterTurns).toBe(3);
-    const after = noseDirection(instance.swayPivot);
+    const after = noseDirection(instance);
     expect(after.z).toBeCloseTo(1, 6);
     expect(after.x).toBeCloseTo(0, 6);
-    expectGrounded(normalizedBox(instance.swayPivot), 1.75);
+    expectGrounded(normalizedBox(instance), 1.75);
     // 转 90° 后宽和深互换
-    expect(instance.normalizedSize().width).toBeCloseTo(normalizedBox(instance.swayPivot).max.x * 2, 6);
+    expect(instance.normalizedSize().width).toBeCloseTo(normalizedBox(instance).max.x * 2, 6);
   });
 
   it('带骨骼的模型按绑定姿态下实际的蒙皮顶点算：网格节点的变换被蒙皮抵消时也贴地、居中、达到显示身高', async () => {
@@ -115,8 +121,7 @@ describe('归一化（作用在外层节点上）', () => {
     const asset = await importGlb(skinnedWithMeshTransform());
     expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(1, 6); // 实际蒙皮顶点：网格节点的变换不起作用
     const instance = asset.createInstance();
-    // normalizedBox 用 three 的 applyBoneTransform 计算实际显示的顶点
-    expectGrounded(normalizedBox(instance.swayPivot), 1.75);
+    expectGrounded(normalizedBox(instance), 1.75);
   });
 
   it('带骨骼的夹具：实际蒙皮顶点贴地、身高 1.75 m；实例播放动画不改变资产的包围盒和归一化', async () => {
@@ -131,13 +136,13 @@ describe('归一化（作用在外层节点上）', () => {
     expect(asset.bounds.equals(before)).toBe(true);
     const outer = playing.outer.matrix.clone();
     expect(playing.outer.matrix.equals(outer)).toBe(true);
-    expectGrounded(normalizedBox(asset.createInstance().swayPivot), 1.75);
+    expectGrounded(normalizedBox(asset.createInstance()), 1.75);
   });
 
   it('实例化网格（EXT_mesh_gpu_instancing）：每个实例的变换都算进包围盒', async () => {
     const asset = await importGlb(instancedTriangles());
     expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(5, 6); // 实例在 y = 0、2、4，三角形高 1 m
-    expectGrounded(normalizedBox(asset.createInstance().swayPivot), 1.75);
+    expectGrounded(normalizedBox(asset.createInstance()), 1.75);
   });
 });
 
@@ -281,5 +286,107 @@ describe('动画驱动', () => {
     const model = new ImportedCharacterModel(asset.createInstance());
     model.update(motion(0), 0.5);
     expect(model.snapshot()).toMatchObject({ state: 'idle', source: 'firstFrame', clipIndex: 1 });
+  });
+});
+
+describe('审查补充（第 2 轮）', () => {
+  const rot45 = [0, 0, Math.sin(Math.PI / 8), Math.cos(Math.PI / 8)];
+
+  it('无名骨骼的片段也能驱动克隆实例；原片段的轨道名不改', async () => {
+    const asset = await importGlb(singleBoneSkin({ clips: [{ name: 'idle', path: 'rotation', times: [0, 0.5], values: [0, 0, 0, 1, ...rot45] }] }));
+    const clip = asset.clips[0];
+    if (!clip) throw new Error('没有片段');
+    const originalNames = clip.tracks.map((t) => t.name);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const a = asset.createInstance();
+      const b = asset.createInstance();
+      const retargeted = a.clipFor(clip);
+      expect(retargeted).not.toBe(clip);
+      expect(clip.tracks.map((t) => t.name)).toEqual(originalNames); // 原片段不改
+      a.mixer.clipAction(retargeted).play();
+      a.mixer.update(0.25); // 循环片段长 0.5 秒：取一半，转到 22.5°（正好 0.5 秒会回到起点）
+      const boneA = bonesOf(a.object)[0];
+      const boneB = bonesOf(b.object)[0];
+      expect(boneA?.quaternion.z).toBeCloseTo(Math.sin(Math.PI / 16), 6);
+      expect(boneB?.quaternion.toArray()).toEqual([0, 0, 0, 1]); // 另一个实例不受影响
+      expect(warn.mock.calls.flat().join(' ')).not.toContain('No target node found');
+      // 主角的动画驱动也走同一条路径
+      const model = new ImportedCharacterModel(b);
+      model.update({ position: { x: 0, y: 0, z: 0 }, facing: 0, horizontalSpeed: 0, grounded: true, vy: 0 }, 0.25);
+      expect(model.snapshot()).toMatchObject({ clipIndex: 0, clipName: 'idle' });
+      expect(bonesOf(b.object)[0]?.quaternion.z).toBeCloseTo(Math.sin(Math.PI / 16), 6);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('骨骼都有名字时直接用原片段', async () => {
+    const asset = await importFixture('skinned-humanoid');
+    const clip = asset.clips[0];
+    if (!clip) throw new Error('没有片段');
+    expect(asset.createInstance().clipFor(clip)).toBe(clip);
+  });
+
+  it('文件里的初始骨骼姿态不是绑定姿态：包围盒按逆绑定矩阵决定的绑定姿态算', async () => {
+    // 几何高 1 m、逆绑定矩阵为单位矩阵、骨骼初始 Y 缩放为 2；idle 把骨骼缩放播回 1（即绑定姿态）
+    const asset = await importGlb(
+      singleBoneSkin({ boneName: 'Bone', boneScale: [1, 2, 1], clips: [{ name: 'idle', path: 'scale', times: [0, 1], values: [1, 1, 1, 1, 1, 1] }] }),
+    );
+    expect(asset.bounds.max.y - asset.bounds.min.y).toBeCloseTo(1, 6);
+    // 初始姿态下（没播动画）实际显示的高度是绑定姿态的 2 倍，说明两者确实不同
+    const fresh = asset.createInstance();
+    expect((renderedBounds(fresh.swayPivot)?.max.y ?? 0) - (renderedBounds(fresh.swayPivot)?.min.y ?? 0)).toBeCloseTo(3.5, 5);
+    // 播放回到绑定姿态的 idle：显示 1.75 m，贴地
+    const model = new ImportedCharacterModel(asset.createInstance());
+    model.update({ position: { x: 0, y: 0, z: 0 }, facing: 0, horizontalSpeed: 0, grounded: true, vy: 0 }, 0.5);
+    expectGrounded(renderedBounds(model.instance.swayPivot) ?? new Box3(), 1.75);
+  });
+
+  it('没有片段时“绑定姿态”兜底真的摆成绑定姿态', async () => {
+    const asset = await importGlb(singleBoneSkin({ boneName: 'Bone', boneScale: [1, 2, 1] }));
+    expect(asset.decisions().plan.idle).toEqual({ kind: 'bindPose' });
+    const model = new ImportedCharacterModel(asset.createInstance());
+    model.update({ position: { x: 0, y: 0, z: 0 }, facing: 0, horizontalSpeed: 0, grounded: true, vy: 0 }, 0.1);
+    expectGrounded(renderedBounds(model.instance.swayPivot) ?? new Box3(), 1.75);
+  });
+
+  it('计入已经生效的 morph 权重：无骨骼和带骨骼的网格都一样', async () => {
+    const plain = await importGlb(morphedTriangle());
+    expect(plain.bounds.min.y).toBeCloseTo(-1, 6);
+    expect(plain.bounds.max.y).toBeCloseTo(2, 6);
+    expectGrounded(normalizedBox(plain.createInstance()), 1.75);
+    const skinned = await importGlb(singleBoneSkin({ boneName: 'Bone', morph: true }));
+    expect(skinned.bounds.max.y - skinned.bounds.min.y).toBeCloseTo(3, 6);
+    expectGrounded(normalizedBox(skinned.createInstance()), 1.75);
+  });
+});
+
+describe('绑定姿态按 three 的约定（Skeleton.pose()）', () => {
+  it('根骨骼挂在有旋转和缩放的父节点下（逆绑定矩阵相对父节点）：包围盒保持父节点的朝向和缩放', async () => {
+    // 与真实资产 armored-soldier 的结构相同：根骨骼的父节点绕 Y 转 −90°、放大 1.75 倍，逆绑定矩阵为单位矩阵。
+    // 几何沿 X 长 1 m、沿 Z 厚 0.2 m、高 1 m。显示时（以及绑定姿态下）是 父节点 · 顶点：高 1.75 m，长边转到 Z 方向。
+    const b = new GltfBuilder();
+    const bone = b.addNode({ name: 'Hip' });
+    const position = b.addAccessor({ array: new Float32Array([-0.5, 0, -0.1, 0.5, 0, 0.1, 0, 1, 0]), type: 'VEC3' });
+    const joints = b.addAccessor({ array: new Uint8Array(12), type: 'VEC4', minMax: false });
+    const weights = b.addAccessor({ array: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]), type: 'VEC4', minMax: false });
+    const ibm = b.addAccessor({ array: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]), type: 'MAT4', minMax: false });
+    const mesh = b.addMesh('Body', [{ attributes: { POSITION: position, JOINTS_0: joints, WEIGHTS_0: weights } }]);
+    const skin = b.addSkin({ joints: [bone], inverseBindMatrices: ibm });
+    const q = Math.sin(-Math.PI / 4);
+    const frame = b.addNode({ name: 'Frame', children: [bone], rotation: [0, q, 0, Math.cos(-Math.PI / 4)], scale: [1.75, 1.75, 1.75] });
+    b.addScene([frame, b.addNode({ name: 'Body', mesh, skin })]);
+    const asset = await importGlb(b.toGlb());
+    const size = asset.bounds.getSize(new Vector3());
+    expect(size.y).toBeCloseTo(1.75, 5);
+    expect(size.x).toBeCloseTo(0.35, 5); // 0.2 × 1.75
+    expect(size.z).toBeCloseTo(1.75, 5); // 1 × 1.75，转到了 Z 方向
+    const instance = asset.createInstance();
+    expect(instance.normalizedSize()).toMatchObject({ width: expect.closeTo(0.35, 5) as number, depth: expect.closeTo(1.75, 5) as number });
+    // 初始姿态就是绑定姿态：不摆姿态直接看实际显示，也贴地、高 1.75 m
+    const rendered = renderedBounds(instance.swayPivot);
+    if (!rendered) throw new Error('没有几何');
+    expectGrounded(rendered, 1.75);
   });
 });

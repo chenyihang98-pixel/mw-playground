@@ -86,6 +86,8 @@ export interface LoadedStats {
   readonly meshes: number;
   readonly skinnedMeshes: number;
   readonly bones: number;
+  /** 关节索引（权重不为 0 的）超出骨骼数量的蒙皮网格数。 */
+  readonly invalidSkinMeshes: number;
   readonly textures: readonly TextureInfo[];
 }
 
@@ -95,11 +97,29 @@ function textureSize(texture: Texture): TextureInfo | null {
   return { width: image.width, height: image.height };
 }
 
+/** 有没有权重不为 0、却指向不存在的骨骼的关节索引。 */
+function hasInvalidSkinIndex(mesh: SkinnedMesh): boolean {
+  const geometry = mesh.geometry;
+  if (!geometry.hasAttribute('skinIndex') || !geometry.hasAttribute('skinWeight')) return false;
+  const indices = geometry.getAttribute('skinIndex');
+  const weights = geometry.getAttribute('skinWeight');
+  const boneCount = mesh.skeleton.bones.length;
+  for (let i = 0; i < indices.count; i++) {
+    for (let c = 0; c < indices.itemSize; c++) {
+      if (weights.getComponent(i, c) === 0) continue;
+      const index = indices.getComponent(i, c);
+      if (!Number.isInteger(index) || index < 0 || index >= boneCount || !mesh.skeleton.bones[index]) return true;
+    }
+  }
+  return false;
+}
+
 /** 实际的三角面数、骨骼数和能读到的贴图尺寸。 */
 export function loadedStats(root: Object3D): LoadedStats {
   let triangles = 0;
   let meshes = 0;
   let skinnedMeshes = 0;
+  let invalidSkinMeshes = 0;
   const bones = new Set<Object3D>();
   root.traverse((obj) => {
     if (!isMesh(obj)) return;
@@ -113,6 +133,7 @@ export function loadedStats(root: Object3D): LoadedStats {
     if (skinned.isSkinnedMesh === true && skinned.skeleton) {
       skinnedMeshes++;
       for (const bone of skinned.skeleton.bones) bones.add(bone);
+      if (hasInvalidSkinIndex(obj as SkinnedMesh)) invalidSkinMeshes++;
     }
   });
   const textures: TextureInfo[] = [];
@@ -120,7 +141,7 @@ export function loadedStats(root: Object3D): LoadedStats {
     const size = textureSize(texture);
     if (size) textures.push(size);
   }
-  return { triangles, meshes, skinnedMeshes, bones: bones.size, textures };
+  return { triangles, meshes, skinnedMeshes, bones: bones.size, invalidSkinMeshes, textures };
 }
 
 /** 加载之后的检查：实际三角面数、骨骼数、能读到的贴图尺寸。超限时调用方负责释放资源。 */
@@ -131,6 +152,9 @@ export function postLoadCheck(stats: LoadedStats, limits: ImportLimits = IMPORT_
     return { ok: false, error: `三角面太多（${formatCount(stats.triangles)}），超过 ${formatCount(limits.trianglesReject)} 的上限`, warnings };
   }
   if (stats.triangles > limits.trianglesWarn) warnings.push(`三角面较多（${formatCount(stats.triangles)}），可能影响帧率`);
+  if (stats.invalidSkinMeshes > 0) {
+    return { ok: false, error: '蒙皮数据引用了不存在的骨骼（关节索引超出范围），文件可能已损坏', warnings };
+  }
   if (stats.bones > limits.bonesMax) {
     return { ok: false, error: `骨骼太多（${formatCount(stats.bones)}），超过 ${formatCount(limits.bonesMax)} 的上限`, warnings };
   }

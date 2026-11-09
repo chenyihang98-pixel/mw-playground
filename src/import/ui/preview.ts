@@ -67,8 +67,9 @@ export class PreviewViewport {
   play(index: number): void {
     const instance = this.instance;
     if (!instance) return;
-    const clip = instance.asset.gameClip(index);
-    if (!clip) return;
+    const gameClip = instance.asset.gameClip(index);
+    if (!gameClip) return;
+    const clip = instance.clipFor(gameClip);
     instance.mixer.stopAllAction();
     const decision = instance.asset.decisions().clips[index];
     const loops = decision?.playback !== 'once';
