@@ -24,8 +24,17 @@ export interface GameResult {
   readonly at: number;
 }
 
+/** 这一关生效的规则（P5）：守卫扣时和冷却。默认取 SPEC；已保存的关卡用保存时的值。 */
+export interface GameRules {
+  readonly penaltySeconds: number;
+  readonly cooldownSeconds: number;
+}
+
+export const DEFAULT_RULES: GameRules = Object.freeze({ penaltySeconds: SPEC.guard.penaltySeconds, cooldownSeconds: SPEC.guard.cooldownSeconds });
+
 export interface GameState {
   readonly level: LevelLayout;
+  readonly rules: GameRules;
   readonly world: World;
   readonly phase: Phase;
   /** 已推进的模拟时间（秒）。只在 playing 时增加。 */
@@ -48,11 +57,12 @@ const COOLDOWN_EPSILON = 1e-9;
 const TIME_EPSILON = 1e-9;
 
 /** 关卡的初始状态（phase = ready，等玩家点“开始”）。companionIds 是同伴的标识（按顺序），同伴出现在主角身后附近。 */
-export function createInitialState(level: LevelLayout, companionIds: readonly string[] = []): GameState {
+export function createInitialState(level: LevelLayout, companionIds: readonly string[] = [], rules: GameRules = DEFAULT_RULES): GameState {
   const world = buildWorld(level);
   const player = spawnPlayer(world, level.spawn.x, level.spawn.z, level.spawn.yaw);
   return {
     level,
+    rules,
     world,
     phase: 'ready',
     simTime: 0,
@@ -84,7 +94,7 @@ export function togglePause(state: GameState): GameState {
 
 /** 重开：恢复关卡的初始状态（同伴保持同一组，回到初始位置）。 */
 export function restartGame(state: GameState): GameState {
-  return createInitialState(state.level, state.companions.map((c) => c.id));
+  return createInitialState(state.level, state.companions.map((c) => c.id), state.rules);
 }
 
 /**
@@ -129,8 +139,8 @@ export function stepGame(state: GameState, input: InputFrame, dt: number = SPEC.
   if (hitCooldown === 0) {
     const toucher = guards.find((g) => capsulesTouch(g.position, player.position));
     if (toucher) {
-      timeLeft -= SPEC.guard.penaltySeconds;
-      hitCooldown = SPEC.guard.cooldownSeconds;
+      timeLeft -= state.rules.penaltySeconds;
+      hitCooldown = state.rules.cooldownSeconds;
       hits = [...hits, { at: simTime, guard: toucher.id, timeLeftAfter: Math.max(0, timeLeft) }];
     }
   }

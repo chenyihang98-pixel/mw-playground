@@ -52,6 +52,9 @@ const baseSchema = z.strictObject({
 export type LevelLayoutInput = z.input<typeof baseSchema>;
 type ParsedLayout = z.output<typeof baseSchema>;
 
+/** 只有结构校验（不含依赖规格的语义校验）。P5 的检查器先用它解析，再自己逐项报告问题。 */
+export const levelLayoutBaseSchema = baseSchema;
+
 export interface LayoutProblem {
   readonly path: (string | number)[];
   readonly message: string;

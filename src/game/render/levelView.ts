@@ -16,6 +16,7 @@ import {
   Vector3,
   type Scene,
 } from 'three';
+import type { Theme } from '../level/gen/brief';
 import type { Rect, Solid } from '../level/geometry';
 import type { GameState } from '../sim';
 import { SPEC } from '../spec';
@@ -32,6 +33,13 @@ const COLORS = {
   gem: 0xffd23f,
   route: 0xc0392b,
 } as const;
+
+/** 主题（P5 的视觉预设）对应的地面、网格和障碍颜色。P2 的三张手工地图用 grass。 */
+export const THEME_COLORS: Readonly<Record<Theme, { ground: number; grid: number; box: number }>> = {
+  grass: { ground: COLORS.ground, grid: COLORS.grid, box: COLORS.box },
+  sand: { ground: 0xd9c08a, grid: 0xc4a96f, box: 0x9c6b3c },
+  snow: { ground: 0xeef2f7, grid: 0xcfd8e3, box: 0x7d8a99 },
+};
 
 /** 坡道的楔形几何：矩形底面，沿 rise 方向从 0 升到 height。 */
 export function rampGeometry(rect: Rect, height: number, rise: NonNullable<Solid['rise']>): BufferGeometry {
@@ -82,16 +90,18 @@ export class LevelView {
   readonly group = new Group();
   private readonly gems = new Map<string, Mesh>();
   private readonly guardViews: CharacterView[] = [];
+  private readonly palette: { ground: number; grid: number; box: number };
 
-  constructor(scene: Scene, state: GameState) {
+  constructor(scene: Scene, state: GameState, theme: Theme = 'grass') {
     this.group.name = `level-${state.level.id}`;
     const { width, depth } = state.level.size;
+    this.palette = THEME_COLORS[theme];
 
-    const ground = new Mesh(new PlaneGeometry(width, depth), material(COLORS.ground));
+    const ground = new Mesh(new PlaneGeometry(width, depth), material(this.palette.ground));
     ground.rotation.x = -Math.PI / 2;
     ground.name = 'ground';
     this.group.add(ground);
-    const grid = new GridHelper(Math.max(width, depth), Math.max(width, depth), COLORS.grid, COLORS.grid);
+    const grid = new GridHelper(Math.max(width, depth), Math.max(width, depth), this.palette.grid, this.palette.grid);
     grid.position.y = 0.003;
     grid.scale.set(width / Math.max(width, depth), 1, depth / Math.max(width, depth));
     this.group.add(grid);
@@ -156,7 +166,7 @@ export class LevelView {
     }
     const mesh = new Mesh(
       new BoxGeometry(r.maxX - r.minX, solid.height, r.maxZ - r.minZ),
-      material(solid.kind === 'platform' ? COLORS.platform : COLORS.box),
+      material(solid.kind === 'platform' ? COLORS.platform : this.palette.box),
     );
     mesh.name = `${solid.kind}-${solid.id}`;
     mesh.position.set((r.minX + r.maxX) / 2, solid.height / 2, (r.minZ + r.maxZ) / 2);

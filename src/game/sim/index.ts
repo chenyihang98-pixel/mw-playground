@@ -10,7 +10,8 @@ export {
   stepGame,
   togglePause,
 } from './game';
-export type { AdvanceResult, GameResult, GameState, HitRecord, Phase } from './game';
+export { DEFAULT_RULES } from './game';
+export type { AdvanceResult, GameResult, GameRules, GameState, HitRecord, Phase } from './game';
 export { NO_INPUT, moveDirection, spawnPlayer, stepPlayer } from './player';
 export type { InputFrame, PlayerState } from './player';
 export { capsulesTouch, guardAt, pointOnRoute, spawnGuards, stepGuards } from './guards';

@@ -1,5 +1,5 @@
 import { startGameApp } from './game/app';
-import { resolveLevel } from './game/boot';
+import { resolveLevelPackage } from './game/boot';
 import { createScene } from './scene/createScene';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#scene');
@@ -17,7 +17,7 @@ if (devMode && params.get('view') === 'fixtures') {
   });
 } else {
   const scene = createScene(canvas, { ground: false });
-  const level = resolveLevel(devMode ? params.get('level') : null);
+  const level = resolveLevelPackage(devMode ? params.get('level') : null);
   const game = startGameApp(scene, level, document.body);
   if (devMode) {
     void Promise.all([import('./dev/gameTestHooks'), import('./game/boot')]).then(([hooks, boot]) => {

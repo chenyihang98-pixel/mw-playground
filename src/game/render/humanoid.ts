@@ -15,6 +15,8 @@ export interface HumanoidPalette {
 
 export const PLAYER_PALETTE: HumanoidPalette = { skin: 0xf1c7a1, shirt: 0x3f7fd9, pants: 0x2f3b55, shoes: 0x3a2a20, accent: 0xffd34d };
 export const GUARD_PALETTE: HumanoidPalette = { skin: 0xd9a27e, shirt: 0xc0392b, pants: 0x222222, shoes: 0x111111, accent: 0x111111 };
+/** 默认替身（P5：关卡列出的同伴已不在名册里时用）。 */
+export const STAND_IN_PALETTE: HumanoidPalette = { skin: 0xe0b896, shirt: 0x7a8a99, pants: 0x3c4450, shoes: 0x2a2a2a, accent: 0xb0bec5 };
 
 /** 设计身高：下面的尺寸按 1.75 m 设计，最后整体缩放到胶囊高度。 */
 const DESIGN_HEIGHT = 1.75;

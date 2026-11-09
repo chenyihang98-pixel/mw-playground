@@ -149,3 +149,14 @@
 #game-overlay[data-kind='lost'] h1 {
   color: #ff7a6e;
 }
+
+#game-overlay .intro-line {
+  margin: 4px 0;
+  color: #d8e6f5;
+}
+
+#game-overlay .intro-notice {
+  margin: 4px 0;
+  color: #ffd98a;
+  font-size: 13px;
+}

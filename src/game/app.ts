@@ -1,10 +1,15 @@
 // 把模拟、渲染、输入、HUD 接在一起。模拟按固定步长推进（advance），渲染层每帧只读最新状态。
+// P5 起可以在页面里换关卡（内置、随机、已保存）：换关卡时释放旧的关卡视图和出场实例，按新的布局、规则和视觉预设重建。
 
-import type { LevelLayout } from './level/schema';
 import type { GameAppSnapshot, OverlayKind } from './appTypes';
 import { Controls } from './input/controls';
+import { builtinEntries, builtinPackage, fallbackPackage } from './levels/catalog';
+import type { LevelPackage } from './levels/package';
+import { RandomLevelJob } from './levels/randomJob';
+import { SAVED_LEVELS_DB, SavedLevels } from './levels/saved';
 import { CameraRig } from './render/cameraRig';
 import { CharacterView } from './render/characterView';
+import { Environment } from './render/environment';
 import { PLAYER_PALETTE } from './render/humanoid';
 import { LevelView } from './render/levelView';
 import {
@@ -18,11 +23,12 @@ import {
   type GameState,
   type Phase,
 } from './sim';
-import { Hud } from './ui/hud';
+import { Hud, type LevelIntro } from './ui/hud';
+import { LevelSelectPanel } from './ui/levelSelect';
 import type { SceneApp } from '../scene/createScene';
 import { InstanceRegistry, type ImportedAsset } from '../import/asset';
 import { ImportPanel, type HostResult } from '../import/ui/importPanel';
-import { assignCast } from '../roster/cast';
+import { STAND_IN_PREFIX, assignLevelCast } from '../roster/cast';
 import { isPlayerRole } from '../roster/config';
 import { CastDirector } from '../roster/director';
 import { IndexedDbRosterStore } from '../roster/idbStore';
@@ -50,16 +56,26 @@ function overlayFor(phase: Phase): OverlayKind | null {
   }
 }
 
-export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLElement): GameApp {
-  let state: GameState = createInitialState(level);
+/** “随机一关”的根种子：来自浏览器的密码学随机数（生成器本身只用种子，不读随机源）。 */
+function randomSeed(): string {
+  const bytes = new Uint32Array(2);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map((b) => b.toString(16).padStart(8, '0')).join('');
+}
+
+export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTMLElement): GameApp {
+  let current: LevelPackage = initial;
+  let state: GameState = createInitialState(initial.layout, [], initial.rules);
   let accumulator = 0;
   let renderTime = 0;
 
-  const levelView = new LevelView(scene.scene, state);
+  const environment = new Environment(scene.scene);
+  environment.apply(initial.visual);
+  let levelView = new LevelView(scene.scene, state, initial.visual.theme);
   const player = new CharacterView('player', PLAYER_PALETTE);
   scene.scene.add(player.root);
-  const cameraRig = new CameraRig(scene.camera, level.spawn.yaw);
-  cameraRig.reset(level.spawn.yaw, state.player.position);
+  const cameraRig = new CameraRig(scene.camera, initial.layout.spawn.yaw);
+  cameraRig.reset(initial.layout.spawn.yaw, state.player.position);
 
   const setState = (next: GameState) => {
     const before = state.phase;
@@ -99,15 +115,10 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
     },
   });
 
-  hud.showOverlay(overlayFor(state.phase), state);
-
   // ---------- 导入角色（P3）和名册（P4）----------
   const registry = new InstanceRegistry();
   const roster = new Roster(new IndexedDbRosterStore());
-  const director = new CastDirector(
-    { player, guards: levelView.guards, guardIds: state.guards.map((g) => g.id), parent: scene.scene },
-    registry,
-  );
+  let director = new CastDirector({ player, guards: levelView.guards, guardIds: state.guards.map((g) => g.id), parent: scene.scene }, registry);
 
   const importPanel = new ImportPanel(uiRoot, {
     isPlaying: () => state.phase === 'playing',
@@ -157,22 +168,105 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
     castNotices: () => director.notices,
   });
 
-  /** 名册变了：重新分配出场的人物，换模型，同步模拟里的同伴。 */
+  /** 开始面板里的开场白、台词和提示。 */
+  const introOf = (pkg: LevelPackage, notices: readonly string[]): LevelIntro => ({
+    opening: pkg.brief?.opening ?? '',
+    lines: (pkg.brief?.cast ?? [])
+      .filter((c) => c.line !== '')
+      .map((c) => ({
+        name: roster.has(c.personId) ? roster.nameOf(c.personId) : '（已不在名册里的人物）',
+        role: c.role === 'guard' ? '守卫' : '同伴',
+        line: c.line,
+      })),
+    notices: notices.filter((n) => n.includes('默认替身')),
+  });
+
+  /**
+   * 名册或关卡变了：重新分配出场的人物，换模型，同步模拟里的同伴。主角按名册；关卡说明书列了出场人物时，
+   * 同伴和守卫按说明书，人物已不在名册里就用默认替身并提示（名册还在恢复时先不提示）。
+   */
   const recast = () => {
-    const cast = assignCast(roster.members(), state.guards.length, registry.max);
-    const companions = director.apply(cast, (id) => roster.assetOf(id));
+    const levelCast = (current.brief?.cast ?? []).map((c) => ({ personId: c.personId, role: c.role }));
+    const cast = assignLevelCast(roster.members(), levelCast, state.guards.length, registry.max);
+    const shown = roster.restoring ? { ...cast, notices: cast.notices.filter((n) => !n.includes('默认替身')) } : cast;
+    const companions = director.apply(shown, (id) => (id.startsWith(STAND_IN_PREFIX) ? null : roster.assetOf(id)));
     setState(setCompanions(state, companions));
+    hud.setIntro(introOf(current, shown.notices));
+    if (hud.currentOverlay() === 'start') hud.showOverlay('start', state);
     rosterPanel.refresh();
     importPanel.refreshCard();
   };
   roster.onChange(recast);
-  // 页面加载时恢复名册：每个人物的原文件重新走一遍导入流程
+
+  // ---------- 关卡（P5）----------
+  const savedLevels = new SavedLevels(new IndexedDbRosterStore(SAVED_LEVELS_DB));
+
+  /** 换一关：释放旧的关卡视图和出场实例，按新的布局、规则和视觉预设重建，回到开始面板。不重新生成，也不重算时间。 */
+  const loadLevel = (pkg: LevelPackage) => {
+    director.releaseAll();
+    levelView.dispose();
+    current = pkg;
+    controls.release();
+    accumulator = 0;
+    state = createInitialState(pkg.layout, [], pkg.rules);
+    levelView = new LevelView(scene.scene, state, pkg.visual.theme);
+    environment.apply(pkg.visual);
+    director = new CastDirector({ player, guards: levelView.guards, guardIds: state.guards.map((g) => g.id), parent: scene.scene }, registry);
+    cameraRig.reset(pkg.layout.spawn.yaw, state.player.position);
+    hud.showOverlay('start', state);
+    recast();
+    levelSelect.refresh();
+  };
+
+  const levelSelect = new LevelSelectPanel(uiRoot, {
+    isPlaying: () => state.phase === 'playing',
+    current: () => current,
+    builtins: () => builtinEntries(),
+    loadBuiltin: (id) => {
+      const pkg = builtinPackage(id);
+      if (pkg) loadLevel(pkg);
+    },
+    loadPackage: (pkg) => {
+      loadLevel(pkg);
+    },
+    startRandom: (onUpdate) => {
+      const people = roster
+        .members()
+        .filter((m) => m.available)
+        .map((m) => ({ id: m.id, name: m.name }));
+      const job = new RandomLevelJob(
+        {
+          seed: randomSeed(),
+          people,
+          schedule: (step) => {
+            setTimeout(step, 0);
+          },
+        },
+        onUpdate,
+      );
+      job.start();
+      return job;
+    },
+    loadFallback: () => {
+      const pkg = fallbackPackage();
+      loadLevel(pkg);
+      return pkg;
+    },
+    saved: savedLevels,
+  });
+
+  hud.setIntro(introOf(current, []));
+  hud.showOverlay(overlayFor(state.phase), state);
+  recast();
+  // 页面加载时恢复名册（每个人物的原文件重新走一遍导入流程）和已保存的关卡
   void roster.restore();
+  void savedLevels.load();
 
   scene.onFrame((delta) => {
     importPanel.update(delta);
     rosterPanel.update();
-    // 暂停时连装饰性的动画（宝石旋转、待机呼吸）也停下
+    levelSelect.update();
+    // 暂停时连装饰性的动画（宝石旋转、待机呼吸、雨）也停下
     if (state.phase !== 'paused') renderTime += delta;
     if (state.phase === 'playing') {
       const look = controls.lookKeys();
@@ -187,13 +281,15 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
       controls.consumeJump();
     }
     const p = state.player;
+    const dt = state.phase === 'paused' ? 0 : delta;
     player.update(
       { position: p.position, facing: p.facing, horizontalSpeed: state.phase === 'playing' ? p.horizontalSpeed : 0, grounded: p.grounded, vy: p.vy },
-      state.phase === 'paused' ? 0 : delta,
+      dt,
       renderTime,
     );
-    levelView.update(state, state.phase === 'paused' ? 0 : delta, renderTime);
-    director.updateCompanions(state.companions, state.phase === 'playing', state.phase === 'paused' ? 0 : delta, renderTime);
+    levelView.update(state, dt, renderTime);
+    director.updateCompanions(state.companions, state.phase === 'playing', dt, renderTime);
+    environment.update(dt, p.position);
     cameraRig.update(p.position, delta);
     hud.update(state);
   });
@@ -209,6 +305,27 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
       instances: registry.count,
       roster: roster.snapshot(),
       cast: director.snapshot(),
+      level: {
+        key: current.key,
+        source: current.source,
+        title: current.title,
+        layoutHash: current.layoutHash,
+        seed: current.seed,
+        brief: current.brief,
+        visual: current.visual,
+        rules: current.rules,
+        schemaVersion: current.schemaVersion,
+        generatorVersion: current.generatorVersion,
+        adjustment: current.adjustment ? { reason: current.adjustment.reason, change: current.adjustment.change } : null,
+      },
+      levels: {
+        select: levelSelect.snapshot(),
+        saved: savedLevels.list(),
+        loading: savedLevels.loading,
+        storage: { ok: savedLevels.storageProblem === null, problem: savedLevels.storageProblem },
+        notices: [...savedLevels.notices],
+      },
+      environment: environment.snapshot(),
     }),
   };
 }

@@ -3,8 +3,15 @@
 import './hud.css';
 import type { OverlayKind } from '../appTypes';
 import type { GameState } from '../sim';
-import { SPEC } from '../spec';
 import { formatTime } from './format';
+
+/** 关卡开始前说明面板里的开场白和出场人物的台词（P5）。 */
+export interface LevelIntro {
+  readonly opening: string;
+  readonly lines: readonly { readonly name: string; readonly role: string; readonly line: string }[];
+  /** 加载时的提示（例如出场人物已被删除，用默认替身代替）。 */
+  readonly notices: readonly string[];
+}
 
 export interface HudActions {
   onStart(): void;
@@ -35,6 +42,7 @@ export class Hud {
   private readonly flash = element('div', 'hit-flash');
   private readonly overlay = element('div', 'game-overlay');
   private overlayKind: OverlayKind | null = null;
+  private intro: LevelIntro = { opening: '', lines: [], notices: [] };
   private seenHits = 0;
 
   constructor(
@@ -67,7 +75,7 @@ export class Hud {
     if (levelName) levelName.textContent = state.level.name;
     if (state.hits.length > this.seenHits) {
       this.restartAnimation(this.flash, 'active');
-      this.penalty.textContent = `−${String(SPEC.guard.penaltySeconds)} 秒`;
+      this.penalty.textContent = `−${String(state.rules.penaltySeconds)} 秒`;
       this.restartAnimation(this.penalty, 'show');
     }
     this.seenHits = state.hits.length;
@@ -77,6 +85,11 @@ export class Hud {
     el.classList.remove(cls);
     el.getBoundingClientRect(); // 强制重排，让同一个动画能再次播放
     el.classList.add(cls);
+  }
+
+  /** 设置这一关的开场白和台词（换关卡时调用，下次显示开始面板时生效）。 */
+  setIntro(intro: LevelIntro): void {
+    this.intro = intro;
   }
 
   currentOverlay(): OverlayKind | null {
@@ -110,8 +123,19 @@ export class Hud {
           'p',
           undefined,
           `在 ${String(state.level.timeLimit)} 秒内收集 ${String(state.level.target)} 个宝石。` +
-            (state.level.guards.length > 0 ? `小心巡逻的守卫：碰到会扣 ${String(SPEC.guard.penaltySeconds)} 秒。` : ''),
+            (state.level.guards.length > 0 ? `小心巡逻的守卫：碰到会扣 ${String(state.rules.penaltySeconds)} 秒。` : ''),
         ),
+        ...(this.intro.opening ? [element('p', 'intro-opening', this.intro.opening)] : []),
+        ...this.intro.lines.map((l) => {
+          const p = element('p', undefined, `${l.name}（${l.role}）：${l.line}`);
+          p.className = 'intro-line';
+          return p;
+        }),
+        ...this.intro.notices.map((n) => {
+          const p = element('p', undefined, n);
+          p.className = 'intro-notice';
+          return p;
+        }),
         ...CONTROLS_HELP.map((line) => {
           const p = element('p', undefined, line);
           p.className = 'controls';

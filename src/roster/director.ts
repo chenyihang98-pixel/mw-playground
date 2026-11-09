@@ -5,7 +5,7 @@
 
 import type { Object3D } from 'three';
 import { CharacterView, HumanoidModel } from '../game/render/characterView';
-import { GUARD_PALETTE, PLAYER_PALETTE } from '../game/render/humanoid';
+import { GUARD_PALETTE, PLAYER_PALETTE, STAND_IN_PALETTE } from '../game/render/humanoid';
 import type { CompanionState } from '../game/sim';
 import { ImportedCharacterModel } from '../import/animator';
 import { InstanceLimitError, type ImportedAsset, type InstanceRegistry } from '../import/asset';
@@ -17,6 +17,12 @@ interface Slot {
   readonly id: string;
   readonly asset: ImportedAsset;
   readonly model: ImportedCharacterModel;
+}
+
+/** 同伴的位置：导入人物的实例，或者默认替身（asset 为 null）。 */
+interface CompanionSlot {
+  readonly id: string;
+  readonly asset: ImportedAsset | null;
 }
 
 export interface CastViews {
@@ -31,7 +37,7 @@ export interface CastViews {
 export class CastDirector {
   private playerSlot: Slot | null = null;
   private readonly guardSlots: (Slot | null)[];
-  private readonly companions = new Map<string, { slot: Slot; view: CharacterView }>();
+  private readonly companions = new Map<string, { slot: CompanionSlot; view: CharacterView }>();
   private companionOrder: readonly string[] = [];
   private noticeList: readonly string[] = [];
 
@@ -73,8 +79,11 @@ export class CastDirector {
         this.guardSlots[i] = null;
       }
     });
+    const standIns = new Set(cast.standIns ?? []);
     for (const [id, companion] of [...this.companions]) {
-      if (!cast.companions.includes(id) || !this.keeps(companion.slot, id, assetOf)) {
+      const slot = companion.slot;
+      const stays = slot.asset === null ? standIns.has(id) : slot.id === id && assetOf(id) === slot.asset && !slot.asset.isDisposed;
+      if (!cast.companions.includes(id) || !stays) {
         companion.view.root.removeFromParent();
         companion.view.currentModel.dispose();
         this.companions.delete(id);
@@ -101,6 +110,13 @@ export class CastDirector {
     });
     for (const id of cast.companions) {
       if (this.companions.has(id)) continue;
+      if (standIns.has(id)) {
+        // 默认替身：程序化的低模小人，不占导入实例的名额
+        const standIn = new CharacterView(`companion-${id}`, STAND_IN_PALETTE);
+        this.views.parent.add(standIn.root);
+        this.companions.set(id, { slot: { id, asset: null }, view: standIn });
+        continue;
+      }
       const view = new CharacterView(`companion-${id.slice(0, 8)}`, PLAYER_PALETTE);
       const slot = fill(id, (model) => {
         view.setModel(model);
@@ -115,6 +131,27 @@ export class CastDirector {
     this.companionOrder = cast.companions.filter((id) => this.companions.has(id));
     this.noticeList = notices;
     return this.companionOrder;
+  }
+
+  /**
+   * 释放所有位置上的导入实例（换关卡之前调用）：主角和守卫换回默认小人，同伴移除。
+   * 守卫的视图随后由关卡视图一起释放；导入资产的几何和材质不在这里释放（由名册负责）。
+   */
+  releaseAll(): void {
+    if (this.playerSlot) {
+      this.views.player.setModel(new HumanoidModel(PLAYER_PALETTE));
+      this.playerSlot = null;
+    }
+    this.guardSlots.forEach((slot, i) => {
+      if (slot) this.views.guards[i]?.setModel(new HumanoidModel(GUARD_PALETTE));
+      this.guardSlots[i] = null;
+    });
+    for (const companion of this.companions.values()) {
+      companion.view.root.removeFromParent();
+      companion.view.currentModel.dispose();
+    }
+    this.companions.clear();
+    this.companionOrder = [];
   }
 
   /** 每帧：同伴的视图跟随模拟里的同伴（只读状态）。 */
@@ -156,10 +193,12 @@ export class CastDirector {
 
   snapshot(): CastSnapshot {
     const slotOf = (slot: Slot | null) => ({ personId: slot?.id ?? null, model: slot ? ('imported' as const) : ('default' as const) });
+    const companionOf = (slot: CompanionSlot | null) =>
+      slot?.asset ? { personId: slot.id, model: 'imported' as const } : { personId: null, model: 'default' as const };
     return {
       player: slotOf(this.playerSlot),
       guards: this.views.guardIds.map((guardId, i) => ({ guardId, ...slotOf(this.guardSlots[i] ?? null) })),
-      companions: this.companionOrder.map((id) => slotOf(this.companions.get(id)?.slot ?? null)),
+      companions: this.companionOrder.map((id) => companionOf(this.companions.get(id)?.slot ?? null)),
       notices: [...this.noticeList],
     };
   }

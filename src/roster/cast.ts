@@ -24,7 +24,18 @@ export interface Cast {
   readonly guards: readonly (string | null)[];
   readonly companions: readonly string[];
   readonly notices: readonly string[];
+  /** 用默认替身出场的同伴（P5：关卡列出的人物已不在名册里）。这些 id 不是名册里的人物。 */
+  readonly standIns?: readonly string[];
 }
+
+/** 关卡说明书里列出的出场人物（P5）。 */
+export interface LevelCastEntry {
+  readonly personId: string;
+  readonly role: 'companion' | 'guard';
+}
+
+/** 默认替身的 id 前缀（不会和名册里的 SHA-256 冲突）。 */
+export const STAND_IN_PREFIX = 'stand-in:';
 
 function names(members: readonly CastMember[]): string {
   return members.map((m) => `“${m.name}”`).join('、');
@@ -86,4 +97,64 @@ export function assignCast(members: readonly CastMember[], guardCount: number, c
     notices.push(`同屏的导入实例最多 ${String(capacity)} 个：${names(dropped)} 不出场`);
   }
   return { player, guards, companions, notices };
+}
+
+/**
+ * 关卡的分配（P5）：主角按名册；关卡说明书列了出场人物时，同伴和守卫的外观按说明书
+ * （同伴最多 maxCompanions 个，守卫按列出的顺序分给关卡里的守卫，规则同 P4），名册里的同伴、守卫分工这一关不用；
+ * 列出的人物已不在名册里（或没有恢复）时用默认替身：守卫用默认小人，同伴用默认替身，并给出提示。
+ * 没列出场人物时按名册的分工（assignCast）。
+ */
+export function assignLevelCast(members: readonly CastMember[], levelCast: readonly LevelCastEntry[], guardCount: number, capacity: number): Cast {
+  if (levelCast.length === 0) return assignCast(members, guardCount, capacity);
+  const notices: string[] = [];
+  const byId = new Map(members.map((m) => [m.id, m]));
+  const usable = (id: string) => byId.get(id)?.available === true;
+  const missing = (id: string) => {
+    const known = byId.get(id);
+    notices.push(known ? `出场人物“${known.name}”没有恢复，用默认替身代替` : `出场人物（ID ${id.slice(0, 8)}）已不在名册里，用默认替身代替`);
+  };
+  let free = Math.max(0, capacity);
+  const dropped: string[] = [];
+  const take = (id: string): boolean => {
+    if (free > 0) {
+      free--;
+      return true;
+    }
+    dropped.push(byId.get(id)?.name ?? id.slice(0, 8));
+    return false;
+  };
+
+  const playerMember = members.find((m) => m.available && isPlayerRole(m.role)) ?? null;
+  const player = playerMember && take(playerMember.id) ? playerMember.id : null;
+
+  const guards: (string | null)[] = Array.from({ length: Math.max(0, guardCount) }, () => null);
+  const guardEntries = levelCast.filter((c) => c.role === 'guard');
+  guardEntries.forEach((entry, i) => {
+    if (i >= guards.length) return;
+    if (!usable(entry.personId)) {
+      missing(entry.personId);
+      return;
+    }
+    if (take(entry.personId)) guards[i] = entry.personId;
+  });
+  if (guardEntries.length > guards.length) notices.push(`关卡里只有 ${String(guards.length)} 个守卫：多列出的守卫不出场`);
+
+  const companions: string[] = [];
+  const standIns: string[] = [];
+  levelCast
+    .filter((c) => c.role === 'companion')
+    .slice(0, ROSTER_LIMITS.maxCompanions)
+    .forEach((entry, i) => {
+      if (!usable(entry.personId)) {
+        missing(entry.personId);
+        const id = `${STAND_IN_PREFIX}${String(i)}`;
+        companions.push(id);
+        standIns.push(id);
+        return;
+      }
+      if (take(entry.personId)) companions.push(entry.personId);
+    });
+  if (dropped.length > 0) notices.push(`同屏的导入实例最多 ${String(capacity)} 个：${dropped.map((n) => `“${n}”`).join('、')} 不出场`);
+  return { player, guards, companions, notices, standIns };
 }

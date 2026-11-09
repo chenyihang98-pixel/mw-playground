@@ -1,5 +1,6 @@
 // 名册存储的 IndexedDB 实现。数据库 mw-playground（版本 1），对象仓库 roster，键是人物的 id（文件的 SHA-256），
 // 值是 format.ts 里的记录（原文件内容以 Blob 保存）。
+// P5 起也用来保存关卡：传入另一个数据库名和对象仓库名（mw-playground-levels / levels），与名册分库。
 // 浏览器不支持、被禁止、配额不够、读写出错时，操作返回被拒绝的 Promise（不同步抛错），由名册给出提示。
 
 import type { RosterStore, StoredEntry } from './store';
@@ -14,8 +15,15 @@ function failure(error: unknown, fallback: string): Error {
   return new Error(fallback);
 }
 
+export interface IndexedDbNames {
+  readonly database: string;
+  readonly store: string;
+}
+
 export class IndexedDbRosterStore implements RosterStore {
   private db: Promise<IDBDatabase> | null = null;
+
+  constructor(private readonly names: IndexedDbNames = { database: DB_NAME, store: STORE }) {}
 
   private open(): Promise<IDBDatabase> {
     if (this.db) return this.db;
@@ -25,10 +33,10 @@ export class IndexedDbRosterStore implements RosterStore {
           reject(new Error('浏览器不支持 IndexedDB'));
           return;
         }
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        const request = indexedDB.open(this.names.database, DB_VERSION);
         request.onupgradeneeded = () => {
           const db = request.result;
-          if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+          if (!db.objectStoreNames.contains(this.names.store)) db.createObjectStore(this.names.store);
         };
         request.onsuccess = () => {
           resolve(request.result);
@@ -55,7 +63,7 @@ export class IndexedDbRosterStore implements RosterStore {
     const db = await this.open();
     return new Promise<T>((resolve, reject) => {
       try {
-        const tx = db.transaction(STORE, mode);
+        const tx = db.transaction(this.names.store, mode);
         let result: T | undefined;
         let finished = false;
         tx.oncomplete = () => {
@@ -68,7 +76,7 @@ export class IndexedDbRosterStore implements RosterStore {
         tx.onabort = () => {
           reject(failure(tx.error, 'IndexedDB 事务被中止'));
         };
-        work(tx.objectStore(STORE), (value) => {
+        work(tx.objectStore(this.names.store), (value) => {
           result = value;
           finished = true;
         });
