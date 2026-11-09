@@ -594,6 +594,10 @@ Codex 第 2 轮审查（候选 3b4beef）提出 1 项阻塞问题，已修正：
   - 节点有多个父节点或节点树成环（父链不确定）；
   - 数据读不出、有 NaN / Infinity、换算后溢出。
 - 只有一个关键帧时位移为 0（已计算）。没有 bufferView 的访问器（按规范全为 0）只读不同的元素，不按声明的 count 逐个遍历。
+- 耗时和节点数、通道数成正比：
+  - 每个节点的静态全局变换只算一次，整个报告共用；
+  - 每个动画只建一次“有 rotation / scale 通道的节点”的索引，每个节点父链上最近的这种节点也只算一次；
+  - 两者都不用递归，很深的父链也不会爆栈。
 - 和 P3 导入时的带位移识别（P3“规则”里“带位移的识别”）口径一致：都在模型空间，都相对第一个关键帧。不同之处只有一点：inspect 不在关键帧之间插值（P3 用轨道自己的插值器，CUBICSPLINE 在每个区间里再取样）。
 - 报告的数据结构从 `{ from, to, distance }` 改为 `{ maxDistance, atKeyframe, keyframes, first }`，并增加 `interpolation`。
 
@@ -602,8 +606,8 @@ Codex 第 2 轮审查（候选 3b4beef）提出 1 项阻塞问题，已修正：
 环境：Windows 11、Node v24.18.0、Chromium 158.0.8127.18（Playwright 1.65.0，无头）。
 
 - `npm run typecheck`、`npm run lint`：通过（minimatch 11.0.5 下；lint 能报出故意放的错误，见上）。
-- `npm test`：20 个测试文件、391 个测试全部通过，包括 lock-summary 的单元测试。
-  - 新增 `tests/unit/inspect-motion.test.ts`（14 个，GLB 用 P1 的夹具写入器在内存里生成）：
+- `npm test`：20 个测试文件、394 个测试全部通过，包括 lock-summary 的单元测试。
+  - 新增 `tests/unit/inspect-motion.test.ts`（17 个，GLB 用 P1 的夹具写入器在内存里生成）：
     - 父节点绕 Y 轴转 90°、子节点本地 Z 移动 1 m 报告 1 m（本地坐标算法也是 1 m）；首帧在模型空间里带上了父节点的平移。
     - 父节点绕 X 轴转 90°、子节点本地 Y 移动 1 m 报告 1 m（旧算法是 0）。
     - 父节点缩放 2 报告 2 m；祖父节点的静态缩放也计入。
@@ -612,6 +616,10 @@ Codex 第 2 轮审查（候选 3b4beef）提出 1 项阻塞问题，已修正：
     - 父节点或更高的节点在同一个动画里有 rotation / scale 通道时写“坐标系不确定”、不填数字；在另一个动画里时照常计算。
     - 节点自己的 rotation 不影响结果；多个父节点时坐标系不确定。
     - 文字报告的口径说明。
+    - 耗时（第 1 轮审查后加入，在本机各约 0.2 s）：
+      - 50000 个独立节点各有一条 translation 通道；
+      - 50000 层的父链；
+      - 50000 层父链、根节点在同一个动画里有 rotation 通道（根以下全部写“坐标系不确定”）。
   - 按新口径改写的原有断言（只有这两处）：
     - `inspect-fixtures.test.ts` 的 root-motion：原来断言 `distance ≈ 2`、`from = [0, 0]`、`to[1] ≈ 2`；改为 `maxDistance ≈ 2`、`atKeyframe = 2`、`keyframes = 3`、`first = [0, 0]`、`interpolation = LINEAR`。
     - node-animation 的 bob：原来断言 `distance = 0`，改为 `maxDistance = 0`。
@@ -623,6 +631,16 @@ Codex 第 2 轮审查（候选 3b4beef）提出 1 项阻塞问题，已修正：
 - 真实资产组（`MW_ASSET_DIR`）在任务内运行过，3 个都通过。
 - `npm run build`：通过，不含测试钩子。测试跑完后 `git status` 干净；`git diff --stat bac6687..HEAD` 与加 `--ignore-cr-at-eol` 的结果一致。除 minimatch 外没有改依赖。
 
+### 第 1 轮审查后的修改
+
+Codex 第 1 轮审查（候选 22a9644）提出 1 项阻塞问题，已修正：
+
+1. 支持范围：每条 translation 通道都用 `find` 扫描整个动画的通道数组，检查变成 O(N²)。审查用约 4 MB 的合法 GLB（50000 个独立节点各有一条 translation 通道，共用采样器），检查耗时从约 161 ms 增至约 8684 ms；P3 的预检会在主线程同步调用 inspect，导入界面会冻结。
+   - 现在每个动画只建一次 rotation / scale 目标节点的索引，按父链查询。
+   - 同时把每个通道各自沿父链往上走、各自乘矩阵，改为每个节点的静态变换只算一次。这一项原来在很深的父链上同样是平方级。
+
+新增 3 个耗时测试，阈值 3 s，本机各约 0.2 s。在 22a9644 的代码上，50000 个独立节点的用例耗时约 9.5 s，失败。
+
 ### 未运行或未验证
 
 - 没有在 CI 或别的机器上验证 overrides 的效果，也没有确认 GitHub 上的 Dependabot 警报 #1 已关闭（要推送之后才能看到）；由操作者推送后确认。
@@ -631,6 +649,7 @@ Codex 第 2 轮审查（候选 3b4beef）提出 1 项阻塞问题，已修正：
 
 ### 已知问题和后续项
 
+- 耗时测试的阈值（3 s）比本机实测（约 0.2 s）宽很多，留给较慢的机器；在明显更慢的环境里仍可能误报。
 - inspect 报告不在关键帧之间插值：CUBICSPLINE 的切线让关键帧之间走得更远时，报告的值会偏小（P3 导入时的识别会在区间里取样）。
 - 父链在同一个动画里有 rotation 或 scale 通道时，inspect 只写“坐标系不确定”。需要具体数字时，要按时间把整条父链的动画一起求值，本任务没有做。
 - 等 eslint 和 typescript-eslint 把 minimatch 的依赖范围升到 11 以后，可以去掉 overrides。

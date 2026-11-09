@@ -3,7 +3,7 @@
 // GLB 都用 P1 的夹具写入器在内存里生成。
 
 import { describe, expect, it } from 'vitest';
-import { GltfBuilder, type AnimationChannelSpec } from '../../src/asset/fixtures';
+import { GltfBuilder, encodeGlb, type AnimationChannelSpec, type JsonObject } from '../../src/asset/fixtures';
 import { formatInspectReport, inspectGlb, type HorizontalMotionReport, type InspectReport } from '../../src/asset/inspect';
 
 const H = Math.SQRT1_2;
@@ -204,5 +204,63 @@ describe('报告的说明文字', () => {
     expect(text).toContain('水平位移（translation；模型空间，XZ 平面，各关键帧相对首帧的最大水平距离）');
     expect(text).toContain('父链按文件里的静态变换换到模型空间，父链上其他节点的 translation 动画不计入；关键帧之间不插值');
     expect(text).not.toContain('首末关键帧');
+  });
+});
+
+describe('通道和节点很多时的耗时（第 1 轮审查）', () => {
+  /**
+   * count 个节点，每个节点一条两帧的 translation 通道（本地 Z 移动 1 m），所有通道共用一个采样器；只有一个动画。
+   * chain 为 true 时节点一个套一个（父链长度到 count − 1），rootRotation 为 true 时根节点在同一个动画里还有 rotation 通道。
+   */
+  function manyChannels(count: number, options: { chain?: boolean; rootRotation?: boolean } = {}): Uint8Array {
+    const b = new GltfBuilder();
+    const input = b.addAccessor({ array: new Float32Array([0, 1]), type: 'SCALAR' });
+    const output = b.addAccessor({ array: new Float32Array([0, 0, 0, 0, 0, 1]), type: 'VEC3', minMax: false });
+    const rotation = b.addAccessor({ array: new Float32Array([0, 0, 0, 1, ...ROTATE_Y_90]), type: 'VEC4', minMax: false });
+    const json = b.json();
+    json.nodes = Array.from({ length: count }, (_, i): JsonObject => (options.chain && i + 1 < count ? { name: `n${String(i)}`, children: [i + 1] } : { name: `n${String(i)}` }));
+    json.scenes = [{ nodes: options.chain ? [0] : Array.from({ length: count }, (_, i) => i) }];
+    json.scene = 0;
+    const channels: JsonObject[] = Array.from({ length: count }, (_, i) => ({ sampler: 0, target: { node: i, path: 'translation' } }));
+    const samplers: JsonObject[] = [{ input, output, interpolation: 'LINEAR' }];
+    if (options.rootRotation) {
+      samplers.push({ input, output: rotation, interpolation: 'LINEAR' });
+      channels.push({ sampler: 1, target: { node: 0, path: 'rotation' } });
+    }
+    json.animations = [{ name: 'many', samplers, channels }];
+    return encodeGlb(json, b.binary());
+  }
+
+  function timed<T>(work: () => T): { result: T; ms: number } {
+    const start = performance.now();
+    const result = work();
+    return { result, ms: performance.now() - start };
+  }
+
+  it('50000 个独立节点各有一条 translation 通道：每个动画只建一次索引，不逐通道扫描全部通道', () => {
+    const { result, ms } = timed(() => inspect(manyChannels(50_000)));
+    const list = motions(result);
+    expect(list).toHaveLength(50_000);
+    expect(list.every((m) => m.displacement.status === 'computed' && Math.abs(m.displacement.value.maxDistance - 1) < 1e-9)).toBe(true);
+    console.log(`50000 个独立节点：${ms.toFixed(0)} ms`);
+    expect(ms).toBeLessThan(3000);
+  });
+
+  it('50000 层的父链：每个节点的静态变换只算一次，不递归（不爆栈）', () => {
+    const { result, ms } = timed(() => inspect(manyChannels(50_000, { chain: true })));
+    const list = motions(result);
+    expect(list).toHaveLength(50_000);
+    expect(list.every((m) => m.displacement.status === 'computed' && Math.abs(m.displacement.value.maxDistance - 1) < 1e-9)).toBe(true);
+    console.log(`50000 层父链：${ms.toFixed(0)} ms`);
+    expect(ms).toBeLessThan(3000);
+  });
+
+  it('50000 层的父链、根节点在同一个动画里有 rotation 通道：根以下全部坐标系不确定，根节点自己照常计算', () => {
+    const { result, ms } = timed(() => inspect(manyChannels(50_000, { chain: true, rootRotation: true })));
+    const list = motions(result);
+    expect(list[0]?.displacement.status).toBe('computed');
+    expect(list.slice(1).every((m) => m.displacement.status === 'not-computed' && m.displacement.reason.includes('坐标系不确定：父链上的 nodes[0] "n0" 在这个动画里有 rotation 通道'))).toBe(true);
+    console.log(`50000 层父链 + 根节点 rotation：${ms.toFixed(0)} ms`);
+    expect(ms).toBeLessThan(3000);
   });
 });

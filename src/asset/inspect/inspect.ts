@@ -242,19 +242,121 @@ function parentIndex(doc: GltfJson): ParentIndex {
   return parents;
 }
 
-/** 节点的父链（从父节点往上到场景根）；有多个父节点或成环时返回原因。 */
-function ancestorsOf(node: number, parents: ParentIndex): { ok: true; chain: number[] } | { ok: false; reason: string } {
-  const chain: number[] = [];
-  const seen = new Set<number>([node]);
-  let current = node;
-  for (;;) {
-    const parent = parents.get(current);
-    if (parent === undefined) return { ok: true, chain };
-    if (parent === 'multiple') return { ok: false, reason: `父链上的 nodes[${current}] 有多个父节点，无法确定父链` };
-    if (seen.has(parent)) return { ok: false, reason: `节点树在 nodes[${parent}] 处成环，无法确定父链` };
-    seen.add(parent);
-    chain.push(parent);
-    current = parent;
+type Frame = { readonly ok: true; readonly world: Mat4 } | { readonly ok: false; readonly reason: string };
+
+/**
+ * 节点在文件里的静态全局变换（父链从场景根乘到这个节点），每个节点只算一次（整个报告共用）。
+ * 不用递归：沿父链往上走到已经算过的节点或场景根，再往下依次算，所以很深的父链也不会爆栈，总耗时和节点数成正比。
+ */
+class StaticFrames {
+  private readonly worlds = new Map<number, Frame>();
+
+  constructor(
+    private readonly doc: GltfJson,
+    private readonly parents: ParentIndex,
+  ) {}
+
+  /** 节点自己的静态全局变换（含节点自己的变换）。 */
+  world(node: number): Frame {
+    const cached = this.worlds.get(node);
+    if (cached) return cached;
+    const path: number[] = [];
+    const onPath = new Set<number>();
+    let base: Frame = { ok: true, world: identity() };
+    let current: number | undefined = node;
+    while (current !== undefined) {
+      const hit = this.worlds.get(current);
+      if (hit) {
+        base = hit;
+        break;
+      }
+      if (onPath.has(current)) {
+        base = { ok: false, reason: `节点树在 nodes[${current}] 处成环，无法确定父链` };
+        break;
+      }
+      onPath.add(current);
+      path.push(current);
+      const parent = this.parents.get(current);
+      if (parent === 'multiple') {
+        base = { ok: false, reason: `父链上的 nodes[${current}] 有多个父节点，无法确定父链` };
+        break;
+      }
+      current = parent;
+    }
+    for (let i = path.length - 1; i >= 0; i--) {
+      const index = path[i] ?? 0;
+      const gltfNode = this.doc.nodes?.[index];
+      let frame: Frame;
+      if (!base.ok) frame = base;
+      else if (!gltfNode) frame = { ok: false, reason: `父链上的 nodes[${index}] 不存在` };
+      else frame = { ok: true, world: multiply(base.world, localMatrix(gltfNode)) };
+      this.worlds.set(index, frame);
+      base = frame;
+    }
+    return this.worlds.get(node) ?? base;
+  }
+
+  /** 节点所在的父空间到模型空间的静态变换（节点的 translation 就在这个空间里）。 */
+  parentWorld(node: number): Frame {
+    const parent = this.parents.get(node);
+    if (parent === undefined) return { ok: true, world: identity() };
+    if (parent === 'multiple') return { ok: false, reason: `父链上的 nodes[${node}] 有多个父节点，无法确定父链` };
+    return this.world(parent);
+  }
+}
+
+/**
+ * 一个动画里有 rotation 或 scale 通道的节点（每个动画只建一次索引），以及每个节点父链上最近的这种节点
+ * （按节点记住结果，每个节点最多算一次；同样不用递归）。
+ */
+class MovingAncestors {
+  private readonly moving = new Map<number, string>();
+  private readonly nearest = new Map<number, number | null>();
+
+  constructor(
+    anim: GltfAnimation,
+    private readonly parents: ParentIndex,
+  ) {
+    for (const channel of anim.channels) {
+      const target = channel.target.node;
+      if (target === undefined || (channel.target.path !== 'rotation' && channel.target.path !== 'scale')) continue;
+      if (!this.moving.has(target)) this.moving.set(target, channel.target.path);
+    }
+  }
+
+  pathOf(node: number): string {
+    return this.moving.get(node) ?? '';
+  }
+
+  /** 父链上（不含节点自己）最近的、在这个动画里有 rotation 或 scale 通道的节点；没有时为 null。 */
+  of(node: number): number | null {
+    if (this.moving.size === 0) return null;
+    const cached = this.nearest.get(node);
+    if (cached !== undefined) return cached;
+    const path: number[] = [];
+    const onPath = new Set<number>();
+    let found: number | null = null;
+    let current = node;
+    for (;;) {
+      const hit = this.nearest.get(current);
+      if (hit !== undefined) {
+        found = hit;
+        break;
+      }
+      if (onPath.has(current)) break;
+      onPath.add(current);
+      path.push(current);
+      const parent = this.parents.get(current);
+      if (parent === undefined || parent === 'multiple') break;
+      if (this.moving.has(parent)) {
+        found = parent;
+        break;
+      }
+      current = parent;
+    }
+    // path 上每个节点的父链都经过 found（或都没有这种节点）
+    for (const n of path) this.nearest.set(n, found);
+    return found;
   }
 }
 
@@ -268,30 +370,21 @@ type MotionValue = HorizontalMotionReport['displacement'] extends Metric<infer T
 function horizontalMotionOf(
   doc: GltfJson,
   data: GltfData,
-  anim: GltfAnimation,
   node: number,
   outputIndex: number,
   cubic: boolean,
-  parents: ParentIndex,
+  frames: StaticFrames,
+  movers: MovingAncestors,
 ): Metric<MotionValue> {
-  const ancestry = ancestorsOf(node, parents);
-  if (!ancestry.ok) return notComputed(`坐标系不确定：${ancestry.reason}`);
-  const chain = new Set(ancestry.chain);
-  const moving = anim.channels.find(
-    (ch) => ch.target.node !== undefined && chain.has(ch.target.node) && (ch.target.path === 'rotation' || ch.target.path === 'scale'),
-  );
-  if (moving?.target.node !== undefined) {
-    const name = doc.nodes?.[moving.target.node]?.name;
+  const frame = frames.parentWorld(node);
+  if (!frame.ok) return notComputed(`坐标系不确定：${frame.reason}`);
+  const mover = movers.of(node);
+  if (mover !== null) {
+    const name = doc.nodes?.[mover]?.name;
     const label = name !== undefined ? ` "${name}"` : '';
-    return notComputed(`坐标系不确定：父链上的 nodes[${moving.target.node}]${label} 在这个动画里有 ${moving.target.path} 通道`);
+    return notComputed(`坐标系不确定：父链上的 nodes[${mover}]${label} 在这个动画里有 ${movers.pathOf(mover)} 通道`);
   }
-  // 父节点到模型空间的静态变换：从场景根往下乘到父节点
-  let toModel: Mat4 = identity();
-  for (const ancestor of [...ancestry.chain].reverse()) {
-    const ancestorNode = doc.nodes?.[ancestor];
-    if (!ancestorNode) return notComputed(`父链上的 nodes[${ancestor}] 不存在`);
-    toModel = multiply(toModel, localMatrix(ancestorNode));
-  }
+  const toModel = frame.world;
 
   const output = data.accessor(outputIndex);
   if (!output.ok) return notComputed(output.reason);
@@ -329,6 +422,7 @@ function inspectAnimation(
   doc: GltfJson,
   data: GltfData,
   timeMax: TimeMax,
+  frames: StaticFrames,
   parents: ParentIndex,
   anim: GltfAnimation,
   index: number,
@@ -345,6 +439,8 @@ function inspectAnimation(
   const actualMax: number[] = [];
   const actualMissing: string[] = [];
   const horizontalMotion: HorizontalMotionReport[] = [];
+  // 每个动画只建一次 rotation / scale 目标的索引，按父链查询（不对每条通道扫描全部通道）
+  const movers = new MovingAncestors(anim, parents);
 
   anim.channels.forEach((channel, c) => {
     targetPaths[channel.target.path] = (targetPaths[channel.target.path] ?? 0) + 1;
@@ -368,7 +464,7 @@ function inspectAnimation(
     if (channel.target.path === 'translation' && channel.target.node !== undefined) {
       const node = channel.target.node;
       const interpolation = sampler.interpolation ?? 'LINEAR';
-      const displacement = horizontalMotionOf(doc, data, anim, node, sampler.output, interpolation === 'CUBICSPLINE', parents);
+      const displacement = horizontalMotionOf(doc, data, node, sampler.output, interpolation === 'CUBICSPLINE', frames, movers);
       horizontalMotion.push({ channel: c, node, nodeName: doc.nodes?.[node]?.name ?? null, interpolation, displacement });
     }
   });
@@ -406,7 +502,8 @@ function inspectAnimation(
 function inspectAnimations(doc: GltfJson, data: GltfData, issues: string[]): AnimationsReport {
   const timeMax = timeMaxReader(data);
   const parents = parentIndex(doc);
-  const animations = (doc.animations ?? []).map((anim, i) => inspectAnimation(doc, data, timeMax, parents, anim, i, issues));
+  const frames = new StaticFrames(doc, parents);
+  const animations = (doc.animations ?? []).map((anim, i) => inspectAnimation(doc, data, timeMax, frames, parents, anim, i, issues));
   const byName = new Map<string, number[]>();
   for (const a of animations) byName.set(a.loaderName, [...(byName.get(a.loaderName) ?? []), a.index]);
   const duplicateNames = [...byName.entries()]
