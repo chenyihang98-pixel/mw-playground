@@ -183,6 +183,67 @@ test('再次导入名册里已有的文件：卡片打开的是名册里的那�
   expect(after.player.model).toBe('imported');
 });
 
+test('名册里的人物还在恢复时再次导入同一个文件：卡片上的设置先禁用，恢复好后换成名册里的那一份，修改会保存', async ({ page }) => {
+  // 只用于这个测试的页面脚本：设了标记的那次加载，把第一次读 Blob（恢复名册里保存的文件）挂起，直到测试放行。
+  // 标记读过就清掉，之后的加载照常。不经过游戏的测试钩子，也不改名册本身。
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('mw-hold-restore') !== '1') return;
+    sessionStorage.removeItem('mw-hold-restore');
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    (window as unknown as { mwReleaseRestore: () => void }).mwReleaseRestore = release;
+    let first = true;
+    Blob.prototype.arrayBuffer = function (this: Blob) {
+      // 经 Response 读出内容（不再调用被替换的 arrayBuffer）
+      const read = () => new Response(this).arrayBuffer();
+      if (!first) return read();
+      first = false;
+      return held.then(read);
+    };
+  });
+  await open(page, '/?level=test-a');
+  await chooseFile(page, 'skinned-humanoid.glb');
+  await page.getByRole('button', { name: '设为主角' }).click();
+  await expect.poll(async () => (await read(page)).player.model).toBe('imported');
+  await settled(page);
+
+  // 刷新，恢复挂起：名册里那一项停在“正在恢复”
+  await page.evaluate(() => {
+    sessionStorage.setItem('mw-hold-restore', '1');
+  });
+  await page.reload();
+  await page.waitForFunction(() => (window.__MW_TEST__ as Hooks | undefined)?.kind === 'game');
+  await expect.poll(async () => (await read(page)).roster.entries[0]?.status).toBe('loading');
+
+  // 这时再导入同一个文件：卡片上是另一份副本，设置被禁用并说明原因
+  await chooseFile(page, 'skinned-humanoid.glb');
+  const pending = (await read(page)).import.card;
+  expect(pending).toMatchObject({ inRoster: true, rosterOwned: false });
+  expect(pending?.settingsLockedReason).toContain('还在恢复');
+  await expect(page.getByRole('slider', { name: '显示身高' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: '向右转 90°' })).toBeDisabled();
+  await expect(page.getByRole('combobox', { name: '片段 0 的用途' })).toBeDisabled();
+  await expect(page.getByRole('note')).toContainText('还在恢复');
+
+  // 放行恢复：卡片换成名册里的那一份，设置可以改，改了会保存
+  await page.evaluate(() => {
+    (window as unknown as { mwReleaseRestore: () => void }).mwReleaseRestore();
+  });
+  await expect.poll(async () => (await read(page)).import.card?.rosterOwned).toBe(true);
+  expect((await read(page)).import.card?.settingsLockedReason).toBeNull();
+  await expect(page.getByRole('slider', { name: '显示身高' })).toBeEnabled();
+  await page.getByRole('slider', { name: '显示身高' }).fill('2.2');
+  await page.getByRole('button', { name: '向右转 90°' }).click();
+  await expect.poll(async () => (await read(page)).roster.entries[0]?.quarterTurns).toBe(3);
+  await settled(page);
+
+  await open(page, '/?level=test-a');
+  const after = await read(page);
+  expect(after.roster.entries.map((e) => [e.role, e.quarterTurns, e.displayHeight])).toEqual([['player', 3, 2.2]]);
+});
+
 test('同伴：在测试小关 A 里移动时跟随主角；结算不受同伴影响', async ({ page }, testInfo) => {
   await open(page, '/?level=test-a');
   await chooseFile(page, 'skinned-humanoid.glb');

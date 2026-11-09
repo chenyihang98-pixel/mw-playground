@@ -62,6 +62,8 @@ export interface ImportCardSnapshot {
   readonly inRoster: boolean;
   /** 卡片上的就是名册里的那一份资产（修改会保存到名册）（P4）。 */
   readonly rosterOwned: boolean;
+  /** 设置被禁用的原因（名册里同一个文件还在恢复或恢复失败，这份副本上的修改不会保存）；能改时为 null（P4）。 */
+  readonly settingsLockedReason: string | null;
 }
 
 export interface ImportPanelSnapshot {

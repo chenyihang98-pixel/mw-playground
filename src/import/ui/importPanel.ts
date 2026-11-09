@@ -36,6 +36,29 @@ export interface ImportPanelHost {
    * 卡片总是操作名册里的那一份，修改才会被名册保存。
    */
   canonical(asset: ImportedAsset): ImportedAsset;
+  /**
+   * 资产和名册的关系：absent 不在名册里；owned 就是名册里的那一份；
+   * pending 名册里同一个文件还在恢复；failed 名册里同一个文件恢复失败。
+   */
+  rosterStatus(asset: ImportedAsset): RosterRelation;
+}
+
+export type RosterRelation = 'absent' | 'owned' | 'pending' | 'failed';
+
+/**
+ * 卡片上的设置不能改的原因：资产是名册里已有文件的另一份副本、名册里的那一份还不可用时，在这份副本上的修改
+ * 不会被名册保存（恢复好以后卡片会换成名册里的那一份），所以先禁用设置。可以改时返回 null。
+ */
+export function settingsLockedReason(relation: RosterRelation): string | null {
+  switch (relation) {
+    case 'pending':
+      return '名册里的这个人物还在恢复：恢复好之后卡片会换成名册里的那一份，到时再修改设置（现在的修改不会保存，所以先禁用）';
+    case 'failed':
+      return '名册里的这个人物恢复失败：先在名册里删除它，再加入这个文件，才能修改并保存设置';
+    case 'absent':
+    case 'owned':
+      return null;
+  }
 }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: { id?: string; className?: string; text?: string } = {}): HTMLElementTagNameMap[K] {
@@ -80,6 +103,10 @@ interface CardParts {
   readonly table: HTMLTableElement;
   readonly setPlayer: HTMLButtonElement;
   readonly addPerson: HTMLButtonElement;
+  readonly rotateLeft: HTMLButtonElement;
+  readonly rotateRight: HTMLButtonElement;
+  /** 设置被禁用时的说明。 */
+  readonly lockNote: HTMLElement;
 }
 
 export class ImportPanel {
@@ -266,15 +293,15 @@ export class ImportPanel {
 
     const turnRow = el('div', { className: 'row' });
     const turnText = el('span');
-    turnRow.append(
-      button('向左转 90°', () => {
-        asset.rotateQuarter(1);
-      }),
-      button('向右转 90°', () => {
-        asset.rotateQuarter(-1);
-      }),
-      turnText,
-    );
+    const rotateLeft = button('向左转 90°', () => {
+      asset.rotateQuarter(1);
+    });
+    const rotateRight = button('向右转 90°', () => {
+      asset.rotateQuarter(-1);
+    });
+    turnRow.append(rotateLeft, rotateRight, turnText);
+    const lockNote = el('div', { className: 'lock-note' });
+    lockNote.setAttribute('role', 'note');
 
     const notices = el('ul', { id: 'import-notices' });
     const planLine = el('div');
@@ -301,6 +328,7 @@ export class ImportPanel {
       header,
       this.preview.canvas,
       info,
+      lockNote,
       heightRow,
       turnRow,
       el('div', { text: '提示：' }),
@@ -309,7 +337,7 @@ export class ImportPanel {
       table,
       actions,
     );
-    return { info, slider, heightValue, turnText, notices, planLine, table, setPlayer, addPerson };
+    return { info, slider, heightValue, turnText, notices, planLine, table, setPlayer, addPerson, rotateLeft, rotateRight, lockNote };
   }
 
   /** 设置变化后刷新卡片的可变部分；不重建身高滑块和按钮。 */
@@ -332,7 +360,15 @@ export class ImportPanel {
     parts.planLine.textContent = `动作：待机 ${sourceLabel(plan.idle)}；走 ${sourceLabel(plan.walk)}；跑 ${sourceLabel(plan.run)}；跳 ${sourceLabel(plan.jump)}`;
     parts.setPlayer.textContent = this.host.isPlayer(asset) ? '已设为主角' : '设为主角';
     parts.addPerson.textContent = this.host.inRoster(asset) ? '已在名册里' : '加入为新人物';
-    this.renderClipTable(asset, parts.table);
+    // 名册里同一个文件还不可用时，这份副本上的设置先禁用（修改不会被保存）
+    const lockedReason = settingsLockedReason(this.host.rosterStatus(asset));
+    const editable = lockedReason === null;
+    parts.slider.disabled = !editable;
+    parts.rotateLeft.disabled = !editable;
+    parts.rotateRight.disabled = !editable;
+    parts.lockNote.textContent = lockedReason ?? '';
+    parts.lockNote.hidden = editable;
+    this.renderClipTable(asset, parts.table, editable);
   }
 
   private notices(asset: ImportedAsset): string[] {
@@ -340,7 +376,7 @@ export class ImportPanel {
   }
 
   /** 重建片段表；之前焦点在表里的哪个控件，重建后还给同一个控件。 */
-  private renderClipTable(asset: ImportedAsset, table: HTMLTableElement): void {
+  private renderClipTable(asset: ImportedAsset, table: HTMLTableElement, editable: boolean): void {
     const active = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.control : undefined;
     const { clips: decisions } = asset.decisions();
     const head = el('tr');
@@ -357,6 +393,7 @@ export class ImportPanel {
       purposeSelect.add(new Option(`自动：${PURPOSE_LABELS[d.recognized]}`, ''));
       for (const p of PURPOSES) purposeSelect.add(new Option(PURPOSE_LABELS[p], p));
       purposeSelect.value = d.purposeSource === 'manual' ? d.purpose : '';
+      purposeSelect.disabled = !editable;
       purposeSelect.addEventListener('change', () => {
         asset.setPurpose(d.index, purposeSelect.value === '' ? null : (purposeSelect.value as Purpose));
       });
@@ -372,6 +409,7 @@ export class ImportPanel {
       playbackSelect.add(new Option('循环', 'loop'));
       playbackSelect.add(new Option('一次', 'once'));
       playbackSelect.value = d.playbackSource === 'manual' ? d.playback : '';
+      playbackSelect.disabled = !editable;
       playbackSelect.addEventListener('change', () => {
         asset.setPlayback(d.index, playbackSelect.value === '' ? null : (playbackSelect.value as Playback));
       });
@@ -385,6 +423,7 @@ export class ImportPanel {
         lock.type = 'checkbox';
         lock.dataset.control = `lock-${String(d.index)}`;
         lock.checked = asset.isMotionLocked(d.index);
+        lock.disabled = !editable;
         lock.setAttribute('aria-label', `锁定片段 ${String(d.index)} 的水平位移`);
         lock.addEventListener('change', () => {
           asset.setMotionLocked(d.index, lock.checked);
@@ -516,6 +555,7 @@ export class ImportPanel {
         isPlayer: this.host.isPlayer(asset),
         inRoster: this.host.inRoster(asset),
         rosterOwned: this.host.retains(asset),
+        settingsLockedReason: settingsLockedReason(this.host.rosterStatus(asset)),
       };
     }
     return { busy: this.busy, error: this.error, warnings: this.warnings, card };

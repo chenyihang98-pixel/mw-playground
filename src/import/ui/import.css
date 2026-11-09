@@ -146,3 +146,15 @@
 #import-card .tag.warn {
   background: #8a5a1a;
 }
+
+#import-card .lock-note {
+  margin: 6px 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(200, 140, 30, 0.25);
+  color: #ffd98a;
+}
+
+#import-card .lock-note[hidden] {
+  display: none;
+}

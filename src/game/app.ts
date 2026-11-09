@@ -134,6 +134,12 @@ export function startGameApp(scene: SceneApp, level: LevelLayout, uiRoot: HTMLEl
       return role !== null && isPlayerRole(role);
     },
     canonical: (asset: ImportedAsset) => roster.assetOf(asset.id) ?? asset,
+    rosterStatus: (asset: ImportedAsset) => {
+      if (roster.owns(asset)) return 'owned';
+      const status = roster.statusOf(asset.id);
+      if (status === null) return 'absent';
+      return status === 'failed' ? 'failed' : 'pending';
+    },
   });
 
   const rosterPanel = new RosterPanel(uiRoot, roster, {

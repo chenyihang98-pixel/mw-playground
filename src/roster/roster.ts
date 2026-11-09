@@ -175,6 +175,11 @@ export class Roster {
     return entry?.status === 'ready' ? entry.asset : null;
   }
 
+  /** 这一项的恢复状态；不在名册里时为 null。 */
+  statusOf(key: string): 'loading' | 'ready' | 'failed' | null {
+    return this.find(key)?.status ?? null;
+  }
+
   roleOf(key: string): Role | null {
     return this.find(key)?.record?.role ?? null;
   }
@@ -381,6 +386,7 @@ export class Roster {
   setRole(key: string, role: Role): ActionResult {
     const entry = this.find(key);
     if (!entry?.record) return { ok: false, error: '名册里没有这一项' };
+    if (entry.status === 'loading') return { ok: false, error: '这一项还在恢复，请稍后再试' };
     if (entry.status !== 'ready') return { ok: false, error: '这一项没有恢复，只能删除' };
     if (entry.record.role === role) return { ok: true };
     if (role === 'companion') {

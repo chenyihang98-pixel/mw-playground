@@ -234,8 +234,10 @@ describe('恢复期间的加入和分工（第 1 轮审查）', () => {
       expect(second.snapshot().entries[0]?.status).toBe('ready');
     });
     expect(second.snapshot().entries.slice(1).map((e) => e.status)).toEqual(['loading', 'loading', 'loading']);
-    // 第四个同伴设不上
+    // 第四个同伴设不上；还在恢复的项不能改分工
     expect(second.setRole(idleKey, 'companion')).toEqual({ ok: false, error: '同伴最多 3 个' });
+    expect(second.statusOf(friendKeys[0] ?? '')).toBe('loading');
+    expect(second.setRole(friendKeys[0] ?? '', 'guard')).toEqual({ ok: false, error: '这一项还在恢复，请稍后再试' });
     // 去重认得还在恢复的项；新人物排在最后
     const again = await importForRoster('c1-again.glb', distinctGlb(301));
     expect(second.add(again.asset, again.file)).toMatchObject({ ok: false, reason: 'duplicate', key: friendKeys[0] });
