@@ -6,7 +6,7 @@ import { parseGlbContainer } from './container';
 import { GltfData, decodeDataUri, isDataUri, normalizeDeclared } from './data';
 import { readImageSize, sniffImageFormat } from './images';
 import { formatSchemaIssues, gltfSchema, type GltfAnimation, type GltfJson } from './schema';
-import { transformPoint, traverseScene, type MeshInstance } from './transform';
+import { identity, localMatrix, multiply, transformPoint, traverseScene, type Mat4, type MeshInstance } from './transform';
 import {
   computed,
   notComputed,
@@ -231,10 +231,105 @@ function timeMaxReader(data: GltfData): TimeMax {
   };
 }
 
+/** 每个节点的父节点（作为 children 出现在谁下面）；有多个父节点的记为 'multiple'。 */
+type ParentIndex = ReadonlyMap<number, number | 'multiple'>;
+
+function parentIndex(doc: GltfJson): ParentIndex {
+  const parents = new Map<number, number | 'multiple'>();
+  (doc.nodes ?? []).forEach((node, i) => {
+    for (const child of node.children ?? []) parents.set(child, parents.has(child) ? 'multiple' : i);
+  });
+  return parents;
+}
+
+/** 节点的父链（从父节点往上到场景根）；有多个父节点或成环时返回原因。 */
+function ancestorsOf(node: number, parents: ParentIndex): { ok: true; chain: number[] } | { ok: false; reason: string } {
+  const chain: number[] = [];
+  const seen = new Set<number>([node]);
+  let current = node;
+  for (;;) {
+    const parent = parents.get(current);
+    if (parent === undefined) return { ok: true, chain };
+    if (parent === 'multiple') return { ok: false, reason: `父链上的 nodes[${current}] 有多个父节点，无法确定父链` };
+    if (seen.has(parent)) return { ok: false, reason: `节点树在 nodes[${parent}] 处成环，无法确定父链` };
+    seen.add(parent);
+    chain.push(parent);
+    current = parent;
+  }
+}
+
+type MotionValue = HorizontalMotionReport['displacement'] extends Metric<infer T> ? T : never;
+
+/**
+ * translation 通道在模型空间里的水平位移：父链（到场景根为止）用文件里的静态变换，把每个关键帧的位置换到模型空间，
+ * 取各关键帧相对第一个关键帧的 XZ 距离的最大值。关键帧之间不插值（CUBICSPLINE 只看关键帧的值）。
+ * 父链上其他节点的 translation 动画不计入。父链在同一个动画里有 rotation 或 scale 通道时坐标系不确定，不给数字。
+ */
+function horizontalMotionOf(
+  doc: GltfJson,
+  data: GltfData,
+  anim: GltfAnimation,
+  node: number,
+  outputIndex: number,
+  cubic: boolean,
+  parents: ParentIndex,
+): Metric<MotionValue> {
+  const ancestry = ancestorsOf(node, parents);
+  if (!ancestry.ok) return notComputed(`坐标系不确定：${ancestry.reason}`);
+  const chain = new Set(ancestry.chain);
+  const moving = anim.channels.find(
+    (ch) => ch.target.node !== undefined && chain.has(ch.target.node) && (ch.target.path === 'rotation' || ch.target.path === 'scale'),
+  );
+  if (moving?.target.node !== undefined) {
+    const name = doc.nodes?.[moving.target.node]?.name;
+    const label = name !== undefined ? ` "${name}"` : '';
+    return notComputed(`坐标系不确定：父链上的 nodes[${moving.target.node}]${label} 在这个动画里有 ${moving.target.path} 通道`);
+  }
+  // 父节点到模型空间的静态变换：从场景根往下乘到父节点
+  let toModel: Mat4 = identity();
+  for (const ancestor of [...ancestry.chain].reverse()) {
+    const ancestorNode = doc.nodes?.[ancestor];
+    if (!ancestorNode) return notComputed(`父链上的 nodes[${ancestor}] 不存在`);
+    toModel = multiply(toModel, localMatrix(ancestorNode));
+  }
+
+  const output = data.accessor(outputIndex);
+  if (!output.ok) return notComputed(output.reason);
+  if (output.value.components !== 3 || output.value.count === 0) {
+    return notComputed(`输出访问器 accessors[${outputIndex}] 不是非空的 VEC3`);
+  }
+  // CUBICSPLINE 的输出按 [入切线, 值, 出切线] 排列，取中间的值。
+  const keys = cubic ? Math.floor(output.value.count / 3) : output.value.count;
+  if (keys === 0) return notComputed(`输出访问器 accessors[${outputIndex}] 没有关键帧`);
+  // 只读不同的元素：没有 bufferView 的访问器全为 0（distinctCount 为 1），不按声明的 count 逐个遍历
+  const distinctKeys = Math.min(keys, cubic ? Math.ceil(output.value.distinctCount / 3) : output.value.distinctCount);
+  let first: [number, number] | null = null;
+  let maxDistance = 0;
+  let atKeyframe = 0;
+  for (let k = 0; k < distinctKeys; k++) {
+    const key = data.element(output.value, cubic ? k * 3 + 1 : k);
+    if (!key.ok) return notComputed(key.reason);
+    const [x, , z] = transformPoint(toModel, key.value[0] ?? 0, key.value[1] ?? 0, key.value[2] ?? 0);
+    if (!Number.isFinite(x) || !Number.isFinite(z)) return notComputed('位移超出数值范围（坐标过大）');
+    if (first === null) {
+      first = [x, z];
+      continue;
+    }
+    const distance = Math.hypot(x - first[0], z - first[1]);
+    if (!Number.isFinite(distance)) return notComputed('位移超出数值范围（坐标过大）');
+    if (distance > maxDistance) {
+      maxDistance = distance;
+      atKeyframe = k;
+    }
+  }
+  return computed({ maxDistance, atKeyframe, keyframes: keys, first: first ?? [0, 0] });
+}
+
 function inspectAnimation(
   doc: GltfJson,
   data: GltfData,
   timeMax: TimeMax,
+  parents: ParentIndex,
   anim: GltfAnimation,
   index: number,
   issues: string[],
@@ -272,35 +367,9 @@ function inspectAnimation(
 
     if (channel.target.path === 'translation' && channel.target.node !== undefined) {
       const node = channel.target.node;
-      const output = data.accessor(sampler.output);
-      let displacement: HorizontalMotionReport['displacement'];
-      if (!output.ok) {
-        displacement = notComputed(output.reason);
-      } else if (output.value.components !== 3 || output.value.count === 0) {
-        displacement = notComputed(`输出访问器 accessors[${sampler.output}] 不是非空的 VEC3`);
-      } else {
-        // CUBICSPLINE 的输出按 [入切线, 值, 出切线] 排列，取中间的值。
-        const cubic = sampler.interpolation === 'CUBICSPLINE';
-        const keys = cubic ? Math.floor(output.value.count / 3) : output.value.count;
-        const keyAt = (k: number) => data.element(output.value, cubic ? k * 3 + 1 : k);
-        const first = keys > 0 ? keyAt(0) : null;
-        const last = keys > 0 ? keyAt(keys - 1) : null;
-        if (!first || !last) {
-          displacement = notComputed(`输出访问器 accessors[${sampler.output}] 没有关键帧`);
-        } else if (!first.ok) {
-          displacement = notComputed(first.reason);
-        } else if (!last.ok) {
-          displacement = notComputed(last.reason);
-        } else {
-          const from: [number, number] = [first.value[0] ?? 0, first.value[2] ?? 0];
-          const to: [number, number] = [last.value[0] ?? 0, last.value[2] ?? 0];
-          const distance = Math.hypot(to[0] - from[0], to[1] - from[1]);
-          displacement = Number.isFinite(distance)
-            ? computed({ from, to, distance })
-            : notComputed('位移超出数值范围（坐标过大）');
-        }
-      }
-      horizontalMotion.push({ channel: c, node, nodeName: doc.nodes?.[node]?.name ?? null, displacement });
+      const interpolation = sampler.interpolation ?? 'LINEAR';
+      const displacement = horizontalMotionOf(doc, data, anim, node, sampler.output, interpolation === 'CUBICSPLINE', parents);
+      horizontalMotion.push({ channel: c, node, nodeName: doc.nodes?.[node]?.name ?? null, interpolation, displacement });
     }
   });
 
@@ -336,7 +405,8 @@ function inspectAnimation(
 
 function inspectAnimations(doc: GltfJson, data: GltfData, issues: string[]): AnimationsReport {
   const timeMax = timeMaxReader(data);
-  const animations = (doc.animations ?? []).map((anim, i) => inspectAnimation(doc, data, timeMax, anim, i, issues));
+  const parents = parentIndex(doc);
+  const animations = (doc.animations ?? []).map((anim, i) => inspectAnimation(doc, data, timeMax, parents, anim, i, issues));
   const byName = new Map<string, number[]>();
   for (const a of animations) byName.set(a.loaderName, [...(byName.get(a.loaderName) ?? []), a.index]);
   const duplicateNames = [...byName.entries()]

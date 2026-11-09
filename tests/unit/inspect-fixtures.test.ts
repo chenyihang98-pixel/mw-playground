@@ -207,10 +207,13 @@ describe('root-motion', () => {
     expect(a.horizontalMotion).toHaveLength(1);
     const motion = at(a.horizontalMotion, 0);
     expect(motion.nodeName).toBe('Hips');
+    // 新口径（F1）：模型空间，各关键帧相对首帧的最大水平距离
+    expect(motion.interpolation).toBe('LINEAR');
     const d = value(motion.displacement);
-    expect(d.distance).toBeCloseTo(2, 5);
-    expect(d.from).toEqual([0, 0]);
-    expect(d.to[1]).toBeCloseTo(2, 5);
+    expect(d.maxDistance).toBeCloseTo(2, 5);
+    expect(d.atKeyframe).toBe(2);
+    expect(d.keyframes).toBe(3);
+    expect(d.first).toEqual([0, 0]);
     expect(r.skins.count).toBe(1);
   });
 });
@@ -225,7 +228,7 @@ describe('node-animation', () => {
     expect(value(anim(r, 0).duration.actual)).toBeCloseTo(2, 5);
     expect(value(anim(r, 1).duration.actual)).toBeCloseTo(1, 5);
     // 竖直往返的位移按 XZ 计算确实是 0（已计算），和“未计算”不同。
-    expect(value(at(anim(r, 1).horizontalMotion, 0).displacement).distance).toBe(0);
+    expect(value(at(anim(r, 1).horizontalMotion, 0).displacement).maxDistance).toBe(0);
   });
 });
 

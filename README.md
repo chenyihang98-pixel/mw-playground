@@ -149,7 +149,7 @@ npm run inspect-asset -- path/to/character.glb --json   # JSON 报告
 - **[网格]** 网格数、图元数、三角面数。三角面数按图元的 `indices`（没有则 `POSITION`）的 `count` 和 `mode` 计算；点和线图元的三角面数是 0。
 - **[贴图]** 贴图数、图片数；每张图片的来源（bufferView / data URI / 外部 uri）、声明的 mimeType、识别出的格式，以及能从内嵌 PNG/JPEG 文件头读出的尺寸。
 - **[蒙皮]** skins 数和每个 skin 的关节数。
-- **[动画]** 每个片段：序号；原始名字（没有名字或名字为空字符串时写“无名；GLTFLoader 加载后为 animation_<序号>”）；通道数；时长；`extras`；`extras.loop`；重名标记；`translation` 通道首末关键帧的水平（XZ）位移。
+- **[动画]** 每个片段：序号；原始名字（没有名字或名字为空字符串时写“无名；GLTFLoader 加载后为 animation_<序号>”）；通道数；时长；`extras`；`extras.loop`；重名标记；`translation` 通道的水平位移（模型空间，XZ 平面，各关键帧相对首帧的最大水平距离：父链按文件里的静态变换换到模型空间，父链在同一个动画里有 rotation 或 scale 通道时写“坐标系不确定”、不给数字；关键帧之间不插值）。
   - `extras.loop（原始）` 是 GLB 原始 JSON 里 `animation.extras.loop` 的值，分四种：`true`、`false`、缺失（写明是没有 extras、extras 不是对象，还是 extras 里没有 loop）、其他类型（列出类型和原值）。它不是加载后的值；加载后对应 `clip.userData.loop`（three r187 GLTFLoader：只有 extras 是对象时才合并进 `clip.userData`）。这个对应关系由单元测试固定在锁定的 three 0.187.0 上。
   - 重名按加载后的名字判断，同名的片段都会标出。
 - **[包围盒]** 按 `POSITION` 访问器和节点静态变换计算，不含蒙皮姿态（骨骼动画造成的形变）。

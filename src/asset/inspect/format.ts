@@ -108,12 +108,16 @@ function animationLines(a: AnimationReport): string[] {
   lines.push(`     extras.loop（原始）：${describeLoop(a.loop)}`);
   for (const m of a.horizontalMotion) {
     const node = `nodes[${m.node}]${m.nodeName !== null ? ` ${quote(m.nodeName)}` : ''}`;
+    const cubic = m.interpolation === 'CUBICSPLINE' ? '；CUBICSPLINE 只看关键帧的值' : '';
     lines.push(
-      `     水平位移（translation，XZ 平面，首末关键帧，从 BIN 读出）：${node} ${metric(
+      `     水平位移（translation；模型空间，XZ 平面，各关键帧相对首帧的最大水平距离）：${node} ${metric(
         m.displacement,
-        (d) => `从 ${vec(d.from)} 到 ${vec(d.to)}，${formatNumber(d.distance)} m`,
-      )}`,
+        (d) => `${formatNumber(d.maxDistance)} m（第 ${d.atKeyframe} 个关键帧，共 ${d.keyframes} 个；首帧 ${vec(d.first)}）`,
+      )}${cubic}`,
     );
+  }
+  if (a.horizontalMotion.length > 0) {
+    lines.push('       （父链按文件里的静态变换换到模型空间，父链上其他节点的 translation 动画不计入；关键帧之间不插值）');
   }
   return lines;
 }

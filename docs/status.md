@@ -296,7 +296,7 @@ Codex 第 5 轮审查（候选 b2fd939）提出 1 项阻塞问题，已修正：
 
 ### 已知问题和后续项
 
-- P1 的 inspect 报告里 translation 通道的“水平位移”是在节点的父空间（本地坐标）里按首末关键帧算的，没有考虑父链的变换。armored-soldier 的 Hip 的父节点 BoneRoot 有较大的静态旋转，所以本地 XZ 不是水平面：P1 报告“移动类片段里 Hip 的水平位移几乎为 0”，而 P3 按模型空间计算，X Bot@Rifle Run 实际带约 2.0 m 的水平位移。建议后续把 P1 的报告改为模型空间，或注明是本地坐标。
+- P1 的 inspect 报告里 translation 通道的“水平位移”是在节点的父空间（本地坐标）里按首末关键帧算的，没有考虑父链的变换。armored-soldier 的 Hip 的父节点 BoneRoot 有较大的静态旋转，所以本地 XZ 不是水平面：P1 报告“移动类片段里 Hip 的水平位移几乎为 0”，而 P3 按模型空间计算，X Bot@Rifle Run 实际带约 2.0 m 的水平位移。建议后续把 P1 的报告改为模型空间，或注明是本地坐标。已在 F1 修正。
 - STL / PLY 常见 Z 轴向上，本版只支持绕 Y 轴转 90°，没有转换上轴。
 - 导入的设置（身高、旋转、用途、播放方式、锁定）只在内存里，刷新后丢失（任务要求如此）；以后需要持久化时按“SHA-256 + 序号”保存。
 - GLTFLoader 解析和贴图解码在主线程，大文件会让页面短暂卡顿（承诺范围之外）。
@@ -545,3 +545,92 @@ Codex 第 2 轮审查（候选 3b4beef）提出 1 项阻塞问题，已修正：
 - 同伴直接朝目标点走，没有寻路：被障碍挡住时沿墙滑动，走不过去就停在墙边，持续离主角太远时靠传送解决。
 - 名册恢复是逐个进行的。大文件多时，页面加载后要等一会儿才全部出场；恢复期间可以照常游玩，恢复完的人物随时换上。
 - P3 已知问题里“导入的设置只在内存里，刷新后丢失”：加入名册的人物现在会保存；只导入、没加入名册的仍然只在内存里。
+
+## F1：后续项修正（M1 minimatch 漏洞、M2 inspect 水平位移口径）
+
+### M1：minimatch 漏洞（Dependabot 警报 #1）
+
+结果：已修正。
+
+- 问题：minimatch 10.2.6 有中等级别的漏洞 GHSA-g3hv-75wg-m249（globparts 放大导致拒绝服务，影响 >=7.0.0 <11.0.1，11.0.1 修复，10.x 没有修复版）。
+  - 它是开发依赖间接引入的：eslint 10.14.0 自己和 @eslint/config-array 0.23.5、typescript-eslint 8.72.1 的 @typescript-eslint/typescript-estree。
+  - 这些包的最新版本仍然要求 minimatch ^10，升级上游解决不了。
+- 做法：
+  - `package.json` 增加 `"overrides": { "minimatch": "11.0.5" }`（确切版本），其他依赖的版本不变。
+  - 锁文件用 `npm install` 更新，没有手改；再用 `npm ci` 重装。
+- 重装后 `npm ls minimatch`：
+
+  ```
+  mw-playground@0.1.0
+  +-- eslint@10.14.0
+  | +-- @eslint/config-array@0.23.5
+  | | `-- minimatch@11.0.5 deduped
+  | `-- minimatch@11.0.5 overridden
+  `-- typescript-eslint@8.72.1
+    `-- @typescript-eslint/typescript-estree@8.72.1
+      `-- minimatch@11.0.5 deduped
+  ```
+- 锁文件摘要：`docs/deps/F1-lock-summary.md`。在锁文件提交（500e309）之后用 `npm run -s lock-summary -- bac6687 HEAD` 生成，只有 minimatch 本身的变化：
+  - minimatch 10.2.6 → 11.0.5；
+  - 新增 minimatch 11 自己的依赖 @isaacs/nonrecursive-glob-match 1.1.0；
+  - 它的另一个依赖 brace-expansion 原来就是 5.0.12，没有变化。
+  - 没有删除的包，来源都是 https://registry.npmjs.org，没有缺 integrity 的包。
+- 换版本之后 lint 仍然真正检查文件：
+  - 在 `src/roster/config.ts` 里故意加一行 `const deliberateLintError: any = 1;`，`npm run lint` 报出两个错误（no-unused-vars、no-explicit-any），退出码 1；删掉后退出码 0。
+  - 另外两项检查也做了，做完都删掉，工作区没有留下改动：
+    - 在 `src/asset/` 的文件里故意 import three，按目录生效的 no-restricted-imports 规则照常报错，说明配置里的 `files` 匹配正常；
+    - 在被忽略的 `.local/` 里放一个有错误的文件，lint 照常跳过，说明 `globalIgnores` 的匹配正常。
+
+### M2：inspect 报告里 translation 通道的水平位移改为模型空间
+
+新口径（`src/asset/inspect/inspect.ts`，报告里写作“模型空间，XZ 平面，各关键帧相对首帧的最大水平距离”）：
+
+- 取这个节点的父链（到场景根为止），用文件里的静态变换（`transform.ts` 的 `localMatrix` / `multiply`）把每个关键帧的位置换到模型空间。
+- 取各关键帧相对第一个关键帧的水平（XZ）距离的最大值。报告还给出距离最大的是第几个关键帧、关键帧总数、首帧在模型空间里的 XZ。
+- 关键帧之间不插值；CUBICSPLINE 只看关键帧的值（不看切线），报告里注明。
+- 只算这个通道自身带来的位移：父链用文件里的静态变换，父链上其他节点的 translation 动画不计入，报告里注明。节点自己的 rotation / scale 不影响它的平移（平移在父节点的坐标系里）。
+- 以下情况写“未计算”和原因，不填数字（不会把算不出的值填成 0）：
+  - 父链在同一个动画里有 rotation 或 scale 通道，写“坐标系不确定”；
+  - 节点有多个父节点或节点树成环（父链不确定）；
+  - 数据读不出、有 NaN / Infinity、换算后溢出。
+- 只有一个关键帧时位移为 0（已计算）。没有 bufferView 的访问器（按规范全为 0）只读不同的元素，不按声明的 count 逐个遍历。
+- 和 P3 导入时的带位移识别（P3“规则”里“带位移的识别”）口径一致：都在模型空间，都相对第一个关键帧。不同之处只有一点：inspect 不在关键帧之间插值（P3 用轨道自己的插值器，CUBICSPLINE 在每个区间里再取样）。
+- 报告的数据结构从 `{ from, to, distance }` 改为 `{ maxDistance, atKeyframe, keyframes, first }`，并增加 `interpolation`。
+
+### 运行过的检查和结果
+
+环境：Windows 11、Node v24.18.0、Chromium 158.0.8127.18（Playwright 1.65.0，无头）。
+
+- `npm run typecheck`、`npm run lint`：通过（minimatch 11.0.5 下；lint 能报出故意放的错误，见上）。
+- `npm test`：20 个测试文件、391 个测试全部通过，包括 lock-summary 的单元测试。
+  - 新增 `tests/unit/inspect-motion.test.ts`（14 个，GLB 用 P1 的夹具写入器在内存里生成）：
+    - 父节点绕 Y 轴转 90°、子节点本地 Z 移动 1 m 报告 1 m（本地坐标算法也是 1 m）；首帧在模型空间里带上了父节点的平移。
+    - 父节点绕 X 轴转 90°、子节点本地 Y 移动 1 m 报告 1 m（旧算法是 0）。
+    - 父节点缩放 2 报告 2 m；祖父节点的静态缩放也计入。
+    - 走出去又回来取最大值（旧算法的首末距离是 0）；只有一个关键帧时为 0。
+    - 父节点的 translation 动画不计入；CUBICSPLINE 只看关键帧的值。
+    - 父节点或更高的节点在同一个动画里有 rotation / scale 通道时写“坐标系不确定”、不填数字；在另一个动画里时照常计算。
+    - 节点自己的 rotation 不影响结果；多个父节点时坐标系不确定。
+    - 文字报告的口径说明。
+  - 按新口径改写的原有断言（只有这两处）：
+    - `inspect-fixtures.test.ts` 的 root-motion：原来断言 `distance ≈ 2`、`from = [0, 0]`、`to[1] ≈ 2`；改为 `maxDistance ≈ 2`、`atKeyframe = 2`、`keyframes = 3`、`first = [0, 0]`、`interpolation = LINEAR`。
+    - node-animation 的 bob：原来断言 `distance = 0`，改为 `maxDistance = 0`。
+  - `inspect-robustness.test.ts` 的其余断言没有改，包括 NaN 时水平位移写“未计算”。改写过程中第一版逐个读关键帧，在“没有 bufferView、count = 2**50”的用例上卡住；改为只读不同的元素后通过。
+- `npm run e2e`：21 个通过，1 个跳过（真实资产组，没设 MW_ASSET_DIR）。
+- 用改过的 inspect 检查真实资产 armored-soldier（`MW_ASSET_DIR` 指向的项目外目录，只读）：
+  - #11 X Bot@Rifle Run 的 Hip 报告 2.00365 m（P1 原来报告几乎为 0；P3 导入时按模型空间算出约 2.004 m，两者一致）。
+  - 其余片段和 P3 的数值一致：Idle 0.0104、Run 0.0283、Walk 0.0558、Rifle Jump 0.0495、Rifle Idle 0.0757 m 等。
+- 真实资产组（`MW_ASSET_DIR`）在任务内运行过，3 个都通过。
+- `npm run build`：通过，不含测试钩子。测试跑完后 `git status` 干净；`git diff --stat bac6687..HEAD` 与加 `--ignore-cr-at-eol` 的结果一致。除 minimatch 外没有改依赖。
+
+### 未运行或未验证
+
+- 没有在 CI 或别的机器上验证 overrides 的效果，也没有确认 GitHub 上的 Dependabot 警报 #1 已关闭（要推送之后才能看到）；由操作者推送后确认。
+- `npm ci` 输出了 npm 的 allow-scripts 提示（esbuild 0.28.2 的安装脚本没有列入 allowScripts）。esbuild 的版本没有变，本任务没有改它；tsx、Vite、Vitest、Playwright 都照常工作。
+- 联网约束：任务只允许为 `npm install` 和 `npm ci` 联网。查 minimatch 11.0.5 的依赖时我还运行过一次 `npm view minimatch@11.0.5 dependencies`（只读，连 npm 官方源），超出了这条约束；它没有改动任何文件，结果和锁文件里记录的一致。
+
+### 已知问题和后续项
+
+- inspect 报告不在关键帧之间插值：CUBICSPLINE 的切线让关键帧之间走得更远时，报告的值会偏小（P3 导入时的识别会在区间里取样）。
+- 父链在同一个动画里有 rotation 或 scale 通道时，inspect 只写“坐标系不确定”。需要具体数字时，要按时间把整条父链的动画一起求值，本任务没有做。
+- 等 eslint 和 typescript-eslint 把 minimatch 的依赖范围升到 11 以后，可以去掉 overrides。

@@ -126,8 +126,22 @@ export interface HorizontalMotionReport {
   readonly channel: number;
   readonly node: number;
   readonly nodeName: string | null;
-  /** 首个关键帧到最后一个关键帧的 XZ 平面位移（从 BIN 读出）。 */
-  readonly displacement: Metric<{ readonly from: [number, number]; readonly to: [number, number]; readonly distance: number }>;
+  /** 采样器的插值方式（没写时为 LINEAR）。CUBICSPLINE 只看关键帧的值，不含关键帧之间的插值。 */
+  readonly interpolation: string;
+  /**
+   * 模型空间，XZ 平面，各关键帧相对首帧的最大水平距离（从 BIN 读出，关键帧之间不插值）。
+   * 节点的父链（到场景根为止）用文件里的静态变换换到模型空间；父链上其他节点的 translation 动画不计入。
+   * 父链在同一个动画里有 rotation 或 scale 通道时坐标系不确定，写“未计算”和原因，不填数字。
+   */
+  readonly displacement: Metric<{
+    /** 各关键帧相对首帧的最大水平距离（模型空间）。 */
+    readonly maxDistance: number;
+    /** 距离最大的关键帧序号（从 0 开始；只有一个关键帧或一直不动时为 0）。 */
+    readonly atKeyframe: number;
+    readonly keyframes: number;
+    /** 首帧在模型空间里的 XZ。 */
+    readonly first: [number, number];
+  }>;
 }
 
 export interface AnimationReport {
