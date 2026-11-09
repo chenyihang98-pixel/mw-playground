@@ -42,6 +42,21 @@ export interface LevelSelectSnapshot {
 }
 export type OverlayKind = 'start' | 'pause' | 'won' | 'lost';
 
+/** 关卡工坊的界面状态（P8）。 */
+export interface WorkshopSnapshot {
+  readonly health: { readonly kind: 'checking' | 'ok' | 'unreachable'; readonly provider: string | null; readonly model: string | null; readonly available: boolean; readonly reason: string | null };
+  readonly view: 'idle' | 'running' | 'preview' | 'fallback' | 'cancelled' | 'saved' | 'message';
+  readonly generationId: string | null;
+  readonly previewHash: string | null;
+  readonly outcome: string | null;
+  readonly repairs: number | null;
+  readonly fallbackId: string | null;
+  readonly message: string | null;
+  /** 工坊写进“已保存”的次数（按生成标识只写一次）。 */
+  readonly saves: number;
+}
+
+
 /** 屏幕上的矩形（CSS 像素，左上角为原点）。 */
 export interface ScreenRect {
   readonly x: number;
@@ -119,6 +134,8 @@ export interface GameAppSnapshot {
     readonly loading: boolean;
     readonly storage: { readonly ok: boolean; readonly problem: string | null };
     readonly notices: readonly string[];
+    /** 关卡工坊（P8）。 */
+    readonly workshop: WorkshopSnapshot;
   };
   /** 视觉预设在场景里的效果（P5）。 */
   readonly environment: EnvironmentSnapshot;

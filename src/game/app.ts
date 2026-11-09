@@ -29,6 +29,7 @@ import {
 import { Hud, type LevelIntro } from './ui/hud';
 import { estimateDifficulty, sourceBadge } from './ui/levelInfo';
 import { LevelSelectPanel } from './ui/levelSelect';
+import { WorkshopPanel } from './ui/workshopPanel';
 import type { SceneApp } from '../scene/createScene';
 import { InstanceRegistry, type ImportedAsset } from '../import/asset';
 import { ImportPanel, type HostResult } from '../import/ui/importPanel';
@@ -303,7 +304,32 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
     syncLayout();
   };
 
+  // ---------- 关卡工坊（P8）：模型填说明书，程序生成并检查；确认后用 P5 的保存模块写进浏览器 ----------
+  const workshop = new WorkshopPanel({
+    people: () => roster.members().filter((m) => m.available).map((m) => ({ id: m.id, name: m.name })),
+    applyLevel: (pkg) => {
+      const result = savedLevels.save(pkg);
+      const saved = result.ok ? savedLevels.get(result.id) : null;
+      loadLevel(saved ?? pkg);
+      panels.close('levels');
+    },
+    applyFallback: () => {
+      const pkg = fallbackPackage();
+      loadLevel(pkg);
+      return pkg;
+    },
+    startRandom: () => {
+      levelSelect.startRandom();
+    },
+  });
+
   const levelSelect = new LevelSelectPanel(uiRoot, {
+    workshop: {
+      root: workshop.root,
+      onShown: () => {
+        workshop.refresh();
+      },
+    },
     current: () => current,
     builtins: () => builtinEntries(),
     builtinPackage: (id) => builtinPackage(id),
@@ -522,6 +548,7 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
         loading: savedLevels.loading,
         storage: { ok: savedLevels.storageProblem === null, problem: savedLevels.storageProblem },
         notices: [...savedLevels.notices],
+        workshop: workshop.snapshot(),
       },
       environment: environment.snapshot(),
       ui: {

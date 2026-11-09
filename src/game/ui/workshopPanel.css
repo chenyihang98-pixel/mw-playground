@@ -1,0 +1,174 @@
+/* 关卡工坊（P8）：选关界面右栏的上半部分。变量见 src/ui/theme.css，预览沿用 levelSelect.css 里随机一关的样式 */
+
+#level-workshop {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mw-space-3);
+  font-size: var(--mw-text-s);
+}
+
+.ws-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--mw-space-1);
+}
+
+.ws-unavailable {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mw-space-3);
+}
+
+.ws-unavailable[hidden],
+.ws-form[hidden] {
+  display: none;
+}
+
+.ws-random {
+  align-self: flex-start;
+}
+
+.ws-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mw-space-3);
+  padding: var(--mw-space-4);
+  border-radius: var(--mw-radius-m);
+  background: linear-gradient(135deg, rgba(176, 132, 255, 0.12), rgba(61, 139, 255, 0.08));
+  border: 1px solid var(--mw-border);
+}
+
+.ws-label {
+  color: var(--mw-text-muted);
+  font-size: var(--mw-text-xs);
+  font-weight: 600;
+}
+
+.ws-text-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mw-space-1);
+}
+
+.ws-text {
+  height: auto;
+  min-height: 64px;
+  padding: var(--mw-space-2);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.ws-counter {
+  align-self: flex-end;
+  font-variant-numeric: tabular-nums;
+}
+
+.ws-counter.is-over {
+  color: var(--mw-danger);
+}
+
+.ws-people {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mw-space-1);
+}
+
+.ws-empty {
+  margin: 0;
+}
+
+.ws-person {
+  display: flex;
+  align-items: center;
+  gap: var(--mw-space-2);
+}
+
+.ws-person-name {
+  display: flex;
+  align-items: center;
+  gap: var(--mw-space-2);
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.ws-person .mw-select {
+  flex: none;
+  height: 28px;
+}
+
+.ws-generate {
+  align-self: flex-start;
+}
+
+.ws-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mw-space-3);
+}
+
+.ws-result:empty {
+  display: none;
+}
+
+.ws-running {
+  display: flex;
+  align-items: center;
+  gap: var(--mw-space-2);
+  color: var(--mw-text-muted);
+}
+
+.ws-spinner {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-top-color: var(--mw-primary-hover);
+  animation: ws-spin 0.9s linear infinite;
+}
+
+@keyframes ws-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ws-note {
+  margin: 0;
+}
+
+.ws-preview-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mw-space-2);
+}
+
+.ws-title {
+  font-size: var(--mw-text-l);
+}
+
+.ws-line {
+  margin: 0;
+  color: #d8e6f5;
+  line-height: 1.6;
+}
+
+.ws-history {
+  color: var(--mw-text-muted);
+  font-size: var(--mw-text-xs);
+}
+
+.ws-history summary {
+  width: fit-content;
+  cursor: pointer;
+  font-weight: 600;
+  border-radius: var(--mw-radius-s);
+}
+
+.ws-history ol {
+  margin: var(--mw-space-2) 0 0;
+  padding-left: var(--mw-space-5);
+  line-height: 1.6;
+}

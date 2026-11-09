@@ -16,9 +16,17 @@
     "test": "vitest run",
     "e2e": "playwright test",
     "inspect-asset": "tsx scripts/inspect-asset.ts",
-    "lock-summary": "tsx scripts/lock-summary.ts"
+    "lock-summary": "tsx scripts/lock-summary.ts",
+    "dev:workshop": "tsx scripts/dev-workshop.ts",
+    "workshop-server": "node --env-file-if-exists=.env --import tsx server/main.ts",
+    "workshop-stats": "tsx scripts/workshop-stats.ts",
+    "workshop-acceptance": "node --env-file-if-exists=.env --import tsx scripts/workshop-acceptance.ts"
   },
   "dependencies": {
+    "@langchain/core": "1.3.0",
+    "@langchain/langgraph": "1.5.3",
+    "@langchain/ollama": "1.3.0",
+    "@langchain/openai": "1.7.0",
     "three": "0.187.0",
     "zod": "4.6.7"
   },

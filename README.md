@@ -2,7 +2,7 @@
 
 本机运行的浏览器 3D 小游戏：导入“模匠”导出的角色文件，替换主角，或加入为同伴、守卫。
 
-当前进度：P6（界面和视觉）。在限时内收集宝石、避开巡逻的守卫；可以导入模匠导出的角色当主角、守卫或同伴；关卡有内置、随机生成和已保存的。另有 GLB 结构检查工具和锁文件摘要工具。
+当前进度：P8（关卡工坊）。在限时内收集宝石、避开巡逻的守卫；可以导入模匠导出的角色当主角、守卫或同伴；关卡有内置、随机生成、关卡工坊（用一句话让本机模型填写说明书）和已保存的。另有 GLB 结构检查工具和锁文件摘要工具。
 
 - 各任务的进度见 [docs/status.md](docs/status.md)。
 - 项目约定见 [docs/conventions.md](docs/conventions.md)（后续任务开始前都要先读）。
@@ -114,7 +114,7 @@
   - 生成中可以“取消生成”。取消或放弃就结束这次生成，什么都不加载。
   - 试了几份说明书都没有成功时，加载内置的回退关卡（晨光草地）。
   - 出场人物从名册里现有的人物中选，可以没有。
-- 已保存的关卡：确认过的随机关卡保存在浏览器本地（IndexedDB），刷新后还在，可以加载或删除。重玩时直接用保存的布局和规则（时间限制、目标数、扣时、冷却），不重新生成，也不重算时间。
+- 已保存的关卡：确认过的随机关卡和工坊关卡保存在浏览器本地（IndexedDB），刷新后还在，可以加载或删除。重玩时直接用保存的布局和规则（时间限制、目标数、扣时、冷却），不重新生成，也不重算时间。
 
 检查通过只表示“空间与规则检查通过，难度为估计”：所有收集点都能从出生点走到（保守的判定），巡逻路线不穿墙，出生点离守卫足够远。时间限制是按路线估计的，不保证任何玩家都能在限时内通关。
 
@@ -159,6 +159,70 @@ MW_ASSET_DIR=<项目外放真实资产的目录> npm run e2e -- tests/e2e/real-a
 
 测试钩子 `window.__MW_TEST__` 也只在这两种模式下存在：游戏页只能读状态（`getState`、`listLevels`），选关卡靠上面的网址参数；夹具预览页只能读状态和选夹具。
 
+## 关卡工坊（P8）
+
+关卡选择的右栏上方是关卡工坊：用一句话描述想玩的关卡，本机的模型填写 P5 的关卡说明书（不摆坐标），程序生成布局并做硬检查。游戏本身不依赖模型。
+
+- 可以勾选出场人物，并选每个人可以当同伴还是守卫。浏览器只发人物 ID、显示名和允许的分工，不发模型文件。模型只能分配这些人物。
+- 生成中可以“停止生成”：结束这次请求，模型调用一起中止；不算失败，也不换关卡。
+- 预览显示：
+  - 来源（模型生成）、提供方和模型名；
+  - 是一次通过、修复了几次，还是程序调整过（调整的原因和主要变化）；
+  - 开场白和台词。
+- 预览之后可以“确认”“改一句话重来”或“放弃”。确认后关卡写进“已保存的关卡”（来源：模型生成）并加载；连续点确认只保存一次。
+- 模型写说明书最多 3 次（首次 1 次 + 修复 2 次）：
+  - 说明书错误：把具体原因交回模型；
+  - 放不下或太远：先走 P5 的有限次尝试和一次程序调整，还不行再把原因交回模型；
+  - 程序缺陷：记为错误，不交给模型。
+- 最终失败或超时：加载内置的回退关卡（晨光草地），并说明来源、原因和与请求的主要差别。
+- 服务没启动、提供方是 off、模型连不上时：工坊说明原因，并提供“随机一关”作为替代；游戏的其他部分照常。
+
+### 运行
+
+| 命令 | 作用 |
+|---|---|
+| `npm run dev:workshop` | 同时起 Vite（http://127.0.0.1:5173）和工坊的本机服务（http://127.0.0.1:8790）。Vite 把 `/api` 代理到服务。 |
+| `npm run dev` | 只起 Vite（和以前一样）。工坊按“服务不可用”显示，游戏照常。 |
+| `npm run workshop-server` | 只起工坊的本机服务。 |
+| `npm run workshop-stats [-- <统计文件>]` | 只读地汇总统计，按六类最终结果输出计数（默认读 `.local/workshop-stats.jsonl`）。 |
+| `MW_WORKSHOP_ACCEPTANCE=1 npm run workshop-acceptance` | 本机模型验收：用本机 Ollama 跑 `tests/data/workshop-requests.json` 里的 10 条固定请求，按六类统计，输出每条的耗时。不设环境变量时跳过。 |
+
+服务用 `node:http`，由 `tsx` 运行，只监听 127.0.0.1。正式构建里没有代理，工坊按“服务不可用”显示。
+
+### 配置（环境变量，可以写在项目根目录的 `.env` 里；`.env` 不进仓库）
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `MW_LLM_PROVIDER` | `ollama` | `ollama`、`openai` 或 `off`（`fake` 只给测试用） |
+| `MW_OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Ollama 的地址 |
+| `MW_OLLAMA_MODEL` | `qwen3.5:9b-q4_K_M` | Ollama 的模型名（服务不会自动拉取模型） |
+| `MW_OLLAMA_NUM_CTX` | `8192` | 上下文长度（随请求传，不改 Ollama 的配置） |
+| `MW_OPENAI_BASE_URL`、`MW_OPENAI_MODEL`、`MW_OPENAI_API_KEY` | 无 | OpenAI 兼容接口（可选，见下） |
+| `MW_WORKSHOP_PORT` | `8790` | 服务的端口（Vite 的代理也读它） |
+| `MW_WORKSHOP_MAX_REQUEST_CHARS` | `200` | 一句话最多几个字 |
+| `MW_WORKSHOP_MAX_BODY_BYTES` | `32768` | 请求体上限 |
+| `MW_WORKSHOP_CALL_TIMEOUT_MS` | `60000` | 单次模型调用的超时 |
+| `MW_WORKSHOP_REQUEST_TIMEOUT_MS` | `180000` | 整个生成请求的超时 |
+| `MW_WORKSHOP_STATS` | `.local/workshop-stats.jsonl` | 统计文件（每个请求一行，不进仓库） |
+
+密钥只在服务进程里使用：不写日志，不进错误信息，不返回给浏览器，不进统计。健康检查只告诉浏览器提供方和模型名。
+
+OpenAI 兼容接口（可选）：
+
+- 只用 Chat Completions（`POST {MW_OPENAI_BASE_URL}/chat/completions`）；
+- 用到的能力：普通对话、工具调用（function calling），以及结构化输出（`response_format` 的 `json_schema`）；
+- 不用流式和 Responses API；
+- **未验证**：只用测试里的假服务验证过适配逻辑；
+- 本机模型失败时不会自动切换到外部接口。
+
+统计：
+
+- 每个请求只记一条。最终结果分六类：模型首次通过、模型修复后通过、程序调整后通过、回退内置关卡、用户取消、服务错误或超时；原因另存。
+- 另记提供方、模型名、修复次数和各阶段耗时。
+- 不记密钥，不记玩家的一句话原文和人物信息（只记长度和人数）。
+
+本机实测记录见 [docs/workshop-notes.md](docs/workshop-notes.md)。
+
 ## 安装
 
 ```sh
@@ -178,7 +242,8 @@ npx playwright install chromium
 | `npm run typecheck` | TypeScript 严格模式类型检查（`tsconfig.app.json` 管页面代码，`tsconfig.node.json` 管脚本、测试和配置）。 |
 | `npm run lint` | ESLint（typescript-eslint 的 strict + stylistic 类型检查规则）。 |
 | `npm test` | Vitest 单元测试，只在 Node 里跑，不需要浏览器。 |
-| `npm run e2e` | Playwright 端到端测试（Chromium）。Playwright 自己启动和关闭 Vite 服务器：固定端口 4317、`--strictPort`、不复用已有服务。截图等输出在 `test-results/`（不提交）。 |
+| `npm run e2e` | Playwright 端到端测试（Chromium）。Playwright 自己启动和关闭 Vite 服务器（端口 4317）和关卡工坊的本机服务（端口 4318，假模型模式）：固定端口、`--strictPort`、不复用已有服务。截图等输出在 `test-results/`（不提交）。 |
+| `npm run dev:workshop`、`npm run workshop-server`、`npm run workshop-stats`、`npm run workshop-acceptance` | 关卡工坊，见上文“关卡工坊”一节。 |
 | `npm run inspect-asset -- <文件路径> [--json]` | GLB 结构检查，见下文。 |
 | `npm run lock-summary -- <起点引用> <终点引用>` | 比较两个提交里的 `package-lock.json`，输出 Markdown 摘要到标准输出。 |
 

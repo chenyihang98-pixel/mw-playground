@@ -1,5 +1,6 @@
 // 关卡选择（P5）：内置关卡（含 P2 的三张）、随机一关（先预览，再确认、重来或放弃）、已保存的关卡（可以删除）。
 // P6：居中的主面板（由 PanelManager 管显示，打开时关卡开始面板让位，M7）；每一关标出来源和难度估计，带俯视小地图。
+// P8：右栏上方是关卡工坊（workshopPanel.ts），下方是随机一关。
 
 import './levelSelect.css';
 import type { BuiltinEntry } from '../levels/catalog';
@@ -25,6 +26,8 @@ export interface LevelSelectHost {
   /** 关掉关卡选择面板。 */
   close(): void;
   readonly saved: SavedLevels;
+  /** 关卡工坊（P8）：放在右栏上方；面板显示时调用 onShown。 */
+  readonly workshop?: { readonly root: HTMLElement; onShown(): void };
 }
 
 const TIER_LABEL: Readonly<Record<string, string>> = { small: '小', medium: '中', large: '大' };
@@ -96,7 +99,10 @@ export class LevelSelectPanel {
     savedTitle.append(this.savedCount);
     left.append(el('h3', { className: 'mw-section-title', text: '内置关卡' }), this.builtinList, savedTitle, this.savedList);
     const right = el('div', { className: 'level-col level-col--random mw-scroll' });
-    right.append(el('h3', { className: 'mw-section-title', text: '随机一关' }), this.randomArea);
+    if (host.workshop) right.append(el('h3', { className: 'mw-section-title', text: '关卡工坊' }), host.workshop.root);
+    const randomTitle = el('h3', { className: 'mw-section-title', text: '随机一关' });
+    if (host.workshop) randomTitle.classList.add('level-section-gap');
+    right.append(randomTitle, this.randomArea);
     const body = el('div', { className: 'mw-panel-body level-body' });
     body.append(this.storage, left, right);
     this.panel.append(header, body);
@@ -110,7 +116,10 @@ export class LevelSelectPanel {
   setShown(shown: boolean): void {
     this.shown = shown;
     this.panel.hidden = !shown;
-    if (shown) this.refresh();
+    if (shown) {
+      this.refresh();
+      this.host.workshop?.onShown();
+    }
   }
 
   focusFirst(): void {
@@ -298,7 +307,8 @@ export class LevelSelectPanel {
     );
   }
 
-  private startRandom(): void {
+  /** 开始随机一关（工坊不可用时，工坊里的“改用随机一关”也走这里）。 */
+  startRandom(): void {
     this.job?.cancel();
     this.fallbackKey = null;
     this.job = this.host.startRandom((state) => {
