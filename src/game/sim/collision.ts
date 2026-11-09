@@ -3,19 +3,34 @@
 // 规则：脚底高度为 y 时，实体里顶面高于 y + allowance 的部分是“墙”（站在地面上 allowance = 迈步高度，
 // 在空中为 0）。胶囊在 XZ 平面上是半径 SPEC.capsule.radius 的圆，不能与墙重叠；被推出时只去掉
 // 法向分量，所以能沿墙滑动。
+//
+// 坡道例外：坡道的顶面是斜坡、低端高度为 0、高端贴着高台，只有两个侧面是墙。所以圆心在坡道的横向范围内
+// （在坡道上方，或正对着坡道的低端 / 高端）时，坡道不挡；圆心从坡道上越过高端时，所贴的高台也不挡。
+// 判断用每一小段移动开始时的圆心：从侧面靠近时，圆心进入横向范围之前就已经被侧面挡住。
 
-import { circleOverlapsRect, regionAbove, type Rect } from '../level/geometry';
+import { circleOverlapsRect, inRampLateralSpan, rectContains, regionAbove, type Rect, type Solid } from '../level/geometry';
 import { SPEC } from '../spec';
 import type { World } from './world';
 
 const PUSH_EPSILON = 1e-7;
 const RESOLVE_ITERATIONS = 6;
 
-/** 脚底高度 feetY、迈步余量 allowance 时会挡住胶囊的区域。 */
-export function blockingRects(world: World, feetY: number, allowance: number): Rect[] {
+/** 圆心在 (x, z) 时，这个实体能不能挡住胶囊（与高度无关的部分）。 */
+function canBlock(world: World, solid: Solid, x: number, z: number): boolean {
+  if (solid.kind === 'ramp') return !inRampLateralSpan(solid, x, z);
+  if (solid.kind === 'platform') {
+    // 从贴着它的坡道上走（或跳）过去时，高台在坡道高端那一侧不是墙
+    return !world.solids.some((s) => s.kind === 'ramp' && s.platform === solid.id && rectContains(s.rect, x, z));
+  }
+  return true;
+}
+
+/** 脚底高度 feetY、迈步余量 allowance、圆心在 (fromX, fromZ) 时会挡住胶囊的区域。 */
+export function blockingRects(world: World, feetY: number, allowance: number, fromX: number, fromZ: number): Rect[] {
   const level = feetY + allowance;
   const rects: Rect[] = [];
   for (const solid of world.solids) {
+    if (!canBlock(world, solid, fromX, fromZ)) continue;
     const region = regionAbove(solid, level);
     if (region) rects.push(region);
   }
@@ -92,12 +107,12 @@ export function moveCapsule(
   allowance: number,
 ): { x: number; z: number } {
   const r = SPEC.capsule.radius;
-  const rects = blockingRects(world, feetY, allowance);
   const distance = Math.hypot(dx, dz);
   const segments = Math.max(1, Math.ceil(distance / (r * 0.5)));
   let px = x;
   let pz = z;
   for (let i = 0; i < segments; i++) {
+    const rects = blockingRects(world, feetY, allowance, px, pz);
     const next = resolve(px + dx / segments, pz + dz / segments, r, rects, world);
     if (penetrates(next.x, next.z, r, rects)) break;
     px = next.x;

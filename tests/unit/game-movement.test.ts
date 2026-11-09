@@ -1,7 +1,8 @@
 // 移动、碰撞、高台：直接驱动模拟，不需要浏览器。
 
 import { describe, expect, it } from 'vitest';
-import { moveDirection } from '../../src/game/sim';
+import { loadBuiltinLevel } from '../../src/game/level/builtin';
+import { groundAt, moveDirection, stepGame, type GameState, type InputFrame } from '../../src/game/sim';
 import { SPEC } from '../../src/game/spec';
 import { STEP, input, layout, play, run, trace } from '../helpers/game';
 
@@ -158,6 +159,123 @@ describe('高台和坡道', () => {
     expect(peak).toBeLessThanOrEqual(SPEC.jump.maxHeight);
     expect(s.player.position.z).toBeLessThanOrEqual(4 - r + 1e-6);
     expect(s.player.position.y).toBeLessThan(H);
+  });
+
+  /** 沿 +Z 走到坡道上 z ≥ target 的位置，再站稳几步。 */
+  function standOnRampAt(target: number): GameState {
+    let s = play(plateau);
+    while (s.player.position.z < target) s = stepGame(s, input({ forward: 1 }));
+    return run(s, input(), 0.1);
+  }
+
+  /** 起跳（边沿输入）后保持 frame 输入，记录到落地后再多 0.3 秒。 */
+  function jumpTrace(from: GameState, frame: InputFrame): GameState[] {
+    const states = [stepGame(from, { ...frame, jump: true })];
+    for (let i = 0; i < 180; i++) {
+      const next = stepGame(states.at(-1) ?? from, frame);
+      states.push(next);
+      if (next.player.grounded && i > 5) break;
+    }
+    return [...states, ...trace(states.at(-1) ?? from, frame, 0.3)];
+  }
+
+  function rampHeight(z: number): number {
+    return H * Math.min(1, Math.max(0, (z - 1.6) / 2.4));
+  }
+
+  it('坡道中部原地起跳：空中不被坡面推开，落回坡面原处', () => {
+    const start = standOnRampAt(2.8);
+    expect(start.player.grounded).toBe(true);
+    expect(start.player.position.y).toBeCloseTo(rampHeight(start.player.position.z), 9);
+    const states = jumpTrace(start, input());
+    expect(states.some((s) => !s.player.grounded)).toBe(true);
+    for (const s of states) {
+      expect(s.player.position.z).toBe(start.player.position.z);
+      expect(s.player.position.x).toBe(start.player.position.x);
+    }
+    const end = states.at(-1);
+    expect(end?.player.grounded).toBe(true);
+    expect(end?.player.position.y).toBeCloseTo(start.player.position.y, 9);
+  });
+
+  it('坡道高端附近原地起跳：贴着的高台不把人推回坡道', () => {
+    // 离高台边约 0.3 m（小于胶囊半径）；起跳后第一步脚底仍低于高台顶面，圆与高台的矩形重叠
+    const start = standOnRampAt(3.7);
+    expect(4 - start.player.position.z).toBeLessThan(r);
+    expect(start.player.position.y + (SPEC.jump.speed - SPEC.jump.gravity * STEP) * STEP).toBeLessThan(H);
+    const states = jumpTrace(start, input());
+    for (const s of states) expect(s.player.position.z).toBe(start.player.position.z);
+    expect(states.at(-1)?.player.position.y).toBeCloseTo(start.player.position.y, 9);
+  });
+
+  it('坡道上向上坡行进跳跃：一路向前，不后退，落在坡面或高台顶面', () => {
+    const start = standOnRampAt(2.4);
+    const states = jumpTrace(start, input({ forward: 1 }));
+    for (let i = 1; i < states.length; i++) {
+      expect(states[i]?.player.position.z ?? 0).toBeGreaterThanOrEqual(states[i - 1]?.player.position.z ?? 0);
+    }
+    const end = states.at(-1);
+    if (!end) throw new Error('没有状态');
+    expect(end.player.grounded).toBe(true);
+    expect(end.player.position.z).toBeGreaterThan(start.player.position.z + 1);
+    expect(end.player.position.y).toBeCloseTo(groundAt(end.world, end.player.position.x, end.player.position.z), 9);
+  });
+
+  it('坡道上向下坡行进跳跃：一路向后，不被推回，落地后高度等于地面', () => {
+    const start = standOnRampAt(3.6);
+    const states = jumpTrace(start, input({ forward: -1 }));
+    for (let i = 1; i < states.length; i++) {
+      expect(states[i]?.player.position.z ?? 0).toBeLessThanOrEqual(states[i - 1]?.player.position.z ?? 0);
+    }
+    const end = states.at(-1);
+    if (!end) throw new Error('没有状态');
+    expect(end.player.grounded).toBe(true);
+    expect(end.player.position.z).toBeLessThan(start.player.position.z - 1);
+    expect(end.player.position.y).toBeCloseTo(groundAt(end.world, end.player.position.x, end.player.position.z), 9);
+  });
+
+  it('固定地图的坡道中部 (9, 3.7) 原地起跳，落回原处（审查复现用例）', () => {
+    const meadow = loadBuiltinLevel('meadow');
+    if (!meadow) throw new Error('没有 meadow');
+    let s = play(meadow);
+    while (s.player.position.x < 9) s = stepGame(s, input({ right: -1 }));
+    while (s.player.position.z < 3.7) s = stepGame(s, input({ forward: 1 }));
+    s = run(s, input(), 0.1);
+    const before = s.player.position;
+    expect(before.y).toBeGreaterThan(0.5);
+    const states = jumpTrace(s, input());
+    const end = states.at(-1);
+    expect(end?.player.position.z).toBe(before.z);
+    expect(end?.player.position.y).toBeCloseTo(before.y, 9);
+    expect(end?.player.grounded).toBe(true);
+  });
+
+  it('坡道侧面高过跳跃高度的地方，从地面起跳也上不去', () => {
+    // 东侧 z = 3 处坡面高 0.7 m，超过实际跳跃高度
+    expect(rampHeight(3)).toBeGreaterThan(SPEC.jump.maxHeight);
+    const level = layout({
+      spawn: { x: 2, z: 3, yaw: 0 },
+      platforms: [{ id: 'p', center: { x: 0, z: 6 }, size: { x: 4, z: 4 } }],
+      ramps: [{ id: 'ramp', platform: 'p', side: '-z', length: 2.4, width: 2 }],
+    });
+    const states = jumpTrace(run(play(level), input({ right: 1 }), 0.5), input({ right: 1 })); // D 朝 -X
+    for (const s of states) expect(s.player.position.x).toBeGreaterThanOrEqual(1 + r - 1e-6);
+    expect(states.at(-1)?.player.position.y).toBe(0);
+  });
+
+  it('坡道侧面低于迈步高度的地方，可以从侧面走上坡道', () => {
+    const level = layout({
+      spawn: { x: 2, z: 2, yaw: 0 },
+      platforms: [{ id: 'p', center: { x: 0, z: 6 }, size: { x: 4, z: 4 } }],
+      ramps: [{ id: 'ramp', platform: 'p', side: '-z', length: 2.4, width: 2 }],
+    });
+    const s = run(play(level), input({ right: 1 }), 0.8); // 2.2 m/s × 0.8 s：停在 2 m 宽的坡道上
+    expect(s.player.position.x).toBeLessThan(1);
+    expect(s.player.position.x).toBeGreaterThan(-1);
+    // 胶囊半径范围内 z ≥ 2.2 的侧面高过迈步高度，所以会沿侧面的拐角滑到 z = 2.2 − 半径 后再迈上去
+    expect(s.player.position.z).toBeCloseTo(1.6 + (SPEC.move.stepHeight / H) * 2.4 - r, 5);
+    expect(s.player.position.y).toBeCloseTo(rampHeight(s.player.position.z), 9);
+    expect(s.player.grounded).toBe(true);
   });
 
   it('从坡道侧面高处走不上去（侧面高过迈步高度的部分是墙）', () => {

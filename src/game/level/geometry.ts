@@ -23,6 +23,8 @@ export interface Solid {
   readonly height: number;
   /** 只有坡道有：顶面升高的方向。 */
   readonly rise?: Rise;
+  /** 只有坡道有：所贴的高台 id。 */
+  readonly platform?: string;
 }
 
 export interface Point2 {
@@ -80,6 +82,15 @@ function riseFraction(rect: Rect, rise: Rise, x: number, z: number): number {
       break;
   }
   return Math.min(1, Math.max(0, t));
+}
+
+/**
+ * 点是否在坡道的横向范围内（垂直于升高方向的那一维）。
+ * 坡道只有两个侧面是墙：顶面是斜坡，低端高度为 0，高端贴着高台。
+ */
+export function inRampLateralSpan(ramp: Solid, x: number, z: number): boolean {
+  if (ramp.rise === '+x' || ramp.rise === '-x') return z >= ramp.rect.minZ && z <= ramp.rect.maxZ;
+  return x >= ramp.rect.minX && x <= ramp.rect.maxX;
 }
 
 /** 实体在 (x, z) 处的顶面高度。调用方保证点在实体的矩形内。 */
@@ -157,7 +168,7 @@ export function layoutSolids(layout: GeometryInput): Solid[] {
     const platform = platformRects.get(ramp.platform);
     if (!platform) continue;
     const { rect, rise } = rampGeometry(platform, ramp);
-    solids.push({ kind: 'ramp', id: ramp.id, rect, height: SPEC.terrain.platformHeight, rise });
+    solids.push({ kind: 'ramp', id: ramp.id, rect, height: SPEC.terrain.platformHeight, rise, platform: ramp.platform });
   }
   return solids;
 }
