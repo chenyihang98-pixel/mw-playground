@@ -1,6 +1,8 @@
 // “随机一关”的一次生成（P5）：最多尝试 GEN_CONFIG.random.briefs 份随机说明书，每份最多 attempts 次布局尝试和一次程序调整。
 // 成功就给出预览（由界面确认、重来或放弃）；全部失败就交给调用方加载内置的回退关卡；中途取消就结束这次生成，
 // 不加载回退关卡。生成在主线程上运行；每份说明书之间让出一次（schedule），取消在两份之间生效。
+// 检查器拒绝了生成器做出的布局（rejected）是程序缺陷：立即停止，不再换说明书继续生成，把缺陷和具体原因报出来
+// （状态 defect，并在控制台记一条错误）；调用方随后加载回退关卡，保证有一关可玩，但不把缺陷当作普通失败。
 // 不依赖界面，测试里用同步的 schedule 驱动。
 
 import { GEN_CONFIG } from '../level/gen/config';
@@ -13,6 +15,8 @@ export type RandomJobState =
   | { readonly kind: 'running'; readonly tried: number; readonly total: number }
   | { readonly kind: 'preview'; readonly pkg: LevelPackage; readonly tried: number; readonly notes: readonly string[] }
   | { readonly kind: 'failed'; readonly tried: number; readonly reasons: readonly string[] }
+  /** 程序缺陷：检查器拒绝了生成器做出的布局。立即停止，不再尝试别的说明书。 */
+  | { readonly kind: 'defect'; readonly tried: number; readonly problems: readonly string[] }
   | { readonly kind: 'cancelled'; readonly tried: number };
 
 export interface RandomJobDeps {
@@ -90,6 +94,13 @@ export class RandomLevelJob {
       if (result.level.adjustment) notes.push(`程序调整过一次：${result.level.adjustment.change}（原因：${result.level.adjustment.message}）`);
       if (this.reasons.length > 0) notes.push(`前 ${String(this.reasons.length)} 份说明书没有成功：${this.reasons.join('；')}`);
       this.set({ kind: 'preview', pkg: packageOfProduced(result.level), tried, notes });
+      return;
+    }
+    if (result.kind === 'rejected') {
+      // 程序缺陷不靠重试掩盖：不换下一份说明书，直接停止并报出来
+      const problems = result.problems.map((p) => p.message);
+      console.error(`随机关卡生成发现程序缺陷（检查器拒绝了生成器做出的布局），已停止生成：${problems.join('；')}`);
+      this.set({ kind: 'defect', tried, problems });
       return;
     }
     this.reasons.push(describeFailure(result));

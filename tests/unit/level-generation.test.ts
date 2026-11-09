@@ -252,6 +252,33 @@ describe('随机一关', () => {
     expect(checkLevel(fallback.layout, { brief: fallback.brief ?? undefined }).ok).toBe(true);
   });
 
+  it('检查器拒绝（程序缺陷）：立即停止，不再换说明书继续生成，状态为 defect 并带上具体原因（第 1 轮审查）', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let calls = 0;
+    try {
+      const states = runJob('defect', (input, seed, options) => {
+        calls++;
+        if (calls === 1) {
+          return {
+            ok: false,
+            kind: 'rejected',
+            problems: [{ category: 'layout', code: 'patrol', message: '守卫 guard-1 的第 0 段路线穿过 box-3（不在地面上）' }],
+            attempts: 1,
+            adjustment: null,
+          };
+        }
+        return produceLevel(input, seed, options);
+      });
+      expect(calls).toBe(1);
+      expect(states.at(-1)).toEqual({ kind: 'defect', tried: 1, problems: ['守卫 guard-1 的第 0 段路线穿过 box-3（不在地面上）'] });
+      expect(states.some((s) => s.kind === 'preview')).toBe(false);
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(String(error.mock.calls[0]?.[0])).toContain('程序缺陷');
+    } finally {
+      error.mockRestore();
+    }
+  });
+
   it('取消：结束这次生成，不再继续，也不进入“全部失败”（不加载回退关卡）', () => {
     const states: RandomJobState[] = [];
     const queue: (() => void)[] = [];

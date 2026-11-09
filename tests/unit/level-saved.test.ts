@@ -219,6 +219,23 @@ describe('视觉预设', () => {
     expect(env.snapshot().fog).toEqual({ near: 6, far: 34 });
     env.apply({ theme: 'grass', time: 'day', weather: 'rain' });
     expect(env.snapshot()).toMatchObject({ rain: true, fog: { near: 14, far: 70 } });
+    // 雨滴真的在动：渲染用的坐标随时间变化（第 1 轮审查）
+    const before = Float32Array.from(env.rainPositions());
+    env.update(0.1, { x: 0, y: 0, z: 0 });
+    const after = env.rainPositions();
+    let moved = 0;
+    for (let i = 1; i < after.length; i += 3) if (Math.abs((after[i] ?? 0) - (before[i] ?? 0)) > 1e-6) moved++;
+    expect(moved).toBe(after.length / 3);
+    // 只有 y 变了（下落），x、z 不变
+    for (let i = 0; i < after.length; i += 3) {
+      expect(after[i]).toBe(before[i]);
+      expect(after[i + 2]).toBe(before[i + 2]);
+    }
+    // 不下雨时不动
+    env.apply({ theme: 'grass', time: 'day', weather: 'clear' });
+    const still = Float32Array.from(env.rainPositions());
+    env.update(0.1, { x: 0, y: 0, z: 0 });
+    expect(Array.from(env.rainPositions())).toEqual(Array.from(still));
     const grounds = (['grass', 'sand', 'snow'] as const).map((theme) => {
       const view = new LevelView(new Scene(), createInitialState(loadBuiltinLevel('test-a') ?? (null as never)), theme);
       const ground = view.group.getObjectByName('ground') as Mesh;

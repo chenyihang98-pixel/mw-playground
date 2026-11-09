@@ -171,13 +171,19 @@ export class LevelSelectPanel {
   private renderRandom(): void {
     const state = this.jobState;
     const parts: HTMLElement[] = [];
-    if (!state || state.kind === 'cancelled' || state.kind === 'failed') {
+    if (!state || state.kind === 'cancelled' || state.kind === 'failed' || state.kind === 'defect') {
       parts.push(
         button('随机一关', () => {
           this.startRandom();
         }),
       );
       if (state?.kind === 'cancelled') parts.push(el('div', { className: 'muted', text: '已取消这次生成。' }));
+      if (state?.kind === 'defect') {
+        parts.push(el('div', { className: 'warn', text: '随机生成发现程序缺陷（检查器拒绝了生成器做出的布局），已停止生成，并加载了内置的回退关卡。' }));
+        const problems = el('ul');
+        for (const p of state.problems) problems.append(el('li', { text: p }));
+        parts.push(problems);
+      }
       if (state?.kind === 'failed') {
         parts.push(el('div', { className: 'warn', text: `随机生成试了 ${String(state.tried)} 份说明书都没有成功，已加载内置的回退关卡。` }));
         const reasons = el('ul');
@@ -263,7 +269,7 @@ export class LevelSelectPanel {
     this.fallbackKey = null;
     this.job = this.host.startRandom((state) => {
       this.jobState = state;
-      if (state.kind === 'failed') this.fallbackKey = this.host.loadFallback().key;
+      if (state.kind === 'failed' || state.kind === 'defect') this.fallbackKey = this.host.loadFallback().key;
       this.refresh();
     });
   }
@@ -300,7 +306,7 @@ export class LevelSelectPanel {
         previewTimeLimit: preview?.rules.timeLimit ?? null,
         previewCast: (preview?.brief?.cast ?? []).map((c) => ({ personId: c.personId, role: c.role })),
         notes: state?.kind === 'preview' ? [...state.notes] : [],
-        reasons: state?.kind === 'failed' ? [...state.reasons] : [],
+        reasons: state?.kind === 'failed' ? [...state.reasons] : state?.kind === 'defect' ? [...state.problems] : [],
         fallbackKey: this.fallbackKey,
       },
     };

@@ -5,10 +5,10 @@
 // 不做水面（地图边界照旧）。
 
 import {
+  BufferAttribute,
   BufferGeometry,
   Color,
   DirectionalLight,
-  Float32BufferAttribute,
   Fog,
   HemisphereLight,
   Points,
@@ -70,7 +70,8 @@ export class Environment {
       this.drops[i * 3 + 2] = ((i * 1299709) % 1000) / 1000 * RAIN_BOX.width - RAIN_BOX.width / 2;
     }
     const geometry = new BufferGeometry();
-    geometry.setAttribute('position', new Float32BufferAttribute(this.drops, 3));
+    // BufferAttribute 直接用这个数组（Float32BufferAttribute 会复制一份，改 drops 就传不到渲染里）
+    geometry.setAttribute('position', new BufferAttribute(this.drops, 3));
     this.rain = new Points(geometry, new PointsMaterial({ color: 0xaac4e8, size: 0.07, transparent: true, opacity: 0.75 }));
     this.rain.name = 'rain';
     this.rain.visible = false;
@@ -107,6 +108,11 @@ export class Environment {
       this.drops[i * 3 + 1] = y;
     }
     position.needsUpdate = true;
+  }
+
+  /** 雨滴的当前位置（局部坐标，测试用）。 */
+  rainPositions(): Float32Array {
+    return this.rain.geometry.getAttribute('position').array as Float32Array;
   }
 
   snapshot(): EnvironmentSnapshot {
