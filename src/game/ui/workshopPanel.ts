@@ -30,6 +30,10 @@ export interface WorkshopPanelHost {
 
 type RoleChoice = 'both' | PersonRole;
 
+/** 出场人物区的标题和说明（F3：工坊生成的关卡，没勾选的人不出场）。 */
+const CAST_TITLE = '出场人物（没勾选的人不出场）';
+const CAST_HINT = '一个都不勾选时，这一关没有同伴，守卫用默认小人；主角仍按名册。';
+
 const ROLE_CHOICES: readonly [RoleChoice, string][] = [
   ['both', '同伴或守卫'],
   ['companion', '只当同伴'],
@@ -137,11 +141,14 @@ export class WorkshopPanel {
     const key = people.map((p) => `${p.id}:${p.name}`).join('|');
     if (key === this.peopleKey && this.people.childElementCount > 0) return;
     this.peopleKey = key;
-    const title = el('div', { className: 'ws-label', text: '出场人物（可以不选）' });
     if (people.length === 0) {
-      this.people.replaceChildren(title, el('p', { className: 'mw-subtle ws-empty', text: '名册里还没有可以出场的人物。' }));
+      // 名册里没有可以出场的人物：显示和以前一样
+      const emptyTitle = el('div', { className: 'ws-label', text: '出场人物（可以不选）' });
+      this.people.replaceChildren(emptyTitle, el('p', { className: 'mw-subtle ws-empty', text: '名册里还没有可以出场的人物。' }));
       return;
     }
+    const title = el('div', { className: 'ws-label', text: CAST_TITLE });
+    const hint = el('p', { className: 'mw-subtle ws-note', text: CAST_HINT });
     const rows = people.map((p) => {
       const choice = this.choices.get(p.id) ?? { checked: false, roles: 'both' as RoleChoice };
       this.choices.set(p.id, choice);
@@ -168,7 +175,7 @@ export class WorkshopPanel {
       row.append(name, select);
       return row;
     });
-    this.people.replaceChildren(title, ...rows);
+    this.people.replaceChildren(title, hint, ...rows);
   }
 
   private render(): void {

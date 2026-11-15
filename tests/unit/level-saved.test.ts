@@ -192,6 +192,48 @@ describe('关卡的出场人物', () => {
     expect(assignLevelCast(members, [], 1, 12)).toMatchObject({ player: 'p', guards: ['a'], companions: ['c'] });
   });
 
+  describe('F3：出场人物以说明书为准（castIsExplicit，工坊生成的关卡）', () => {
+    const roster = [member('p', 'player'), member('c', 'companion'), member('g', 'guard')];
+
+    it('说明书没列出场人物：主角是名册的主角，没有同伴，守卫全部是默认小人', () => {
+      const cast = assignLevelCast(roster, [], 2, 12, { castIsExplicit: true });
+      expect(cast).toEqual({ player: 'p', guards: [null, null], companions: [], notices: [], standIns: [] });
+    });
+
+    it('同样的名册，castIsExplicit 为 false（或不传）：和以前一样按名册的分工', () => {
+      const expected = { player: 'p', guards: ['g', null], companions: ['c'] };
+      expect(assignLevelCast(roster, [], 2, 12, { castIsExplicit: false })).toMatchObject(expected);
+      expect(assignLevelCast(roster, [], 2, 12)).toMatchObject(expected);
+      expect(assignLevelCast(roster, [], 2, 12, { castIsExplicit: false })).toEqual(assignLevelCast(roster, [], 2, 12));
+    });
+
+    it('名册里有“主角兼守卫”的人：这一关只当主角，守卫全部是默认小人', () => {
+      const members = [member('pg', 'playerGuard'), member('c', 'companion')];
+      const cast = assignLevelCast(members, [], 1, 12, { castIsExplicit: true });
+      expect(cast).toMatchObject({ player: 'pg', guards: [null], companions: [] });
+      // 对比：不以说明书为准时，他同时当主角和守卫
+      expect(assignLevelCast(members, [], 1, 12)).toMatchObject({ player: 'pg', guards: ['pg'], companions: ['c'] });
+    });
+
+    it('说明书列了出场人物：结果和 castIsExplicit 为 false 时完全相同（含默认替身、守卫和同屏上限的提示）', () => {
+      const members = [member('p', 'player'), member('a', 'guard'), member('b', 'none'), member('c', 'companion'), member('d', 'none', false)];
+      const cases: { levelCast: { personId: string; role: 'companion' | 'guard' }[]; guards: number; capacity: number }[] = [
+        { levelCast: [{ personId: 'b', role: 'guard' }, { personId: 'a', role: 'companion' }], guards: 2, capacity: 12 },
+        { levelCast: [{ personId: 'gone', role: 'guard' }, { personId: 'd', role: 'companion' }], guards: 1, capacity: 12 },
+        { levelCast: [{ personId: 'a', role: 'guard' }, { personId: 'b', role: 'guard' }], guards: 1, capacity: 12 },
+        { levelCast: [{ personId: 'a', role: 'guard' }, { personId: 'c', role: 'companion' }], guards: 1, capacity: 2 },
+      ];
+      for (const c of cases) {
+        expect(assignLevelCast(members, c.levelCast, c.guards, c.capacity, { castIsExplicit: true })).toEqual(assignLevelCast(members, c.levelCast, c.guards, c.capacity, { castIsExplicit: false }));
+      }
+    });
+
+    it('同屏实例上限照常：主角占了唯一的名额', () => {
+      expect(assignLevelCast(roster, [], 2, 1, { castIsExplicit: true })).toMatchObject({ player: 'p', guards: [null, null], companions: [] });
+      expect(assignLevelCast(roster, [], 2, 0, { castIsExplicit: true })).toMatchObject({ player: null, notices: ['同屏的导入实例最多 0 个：“p” 不出场'] });
+    });
+  });
+
   it('列出的人物已被删除：用默认替身代替，并给出提示', () => {
     const cast = assignLevelCast([member('p', 'player')], [{ personId: 'gone-guard', role: 'guard' }, { personId: 'gone-friend', role: 'companion' }], 1, 12);
     expect(cast.guards).toEqual([null]);

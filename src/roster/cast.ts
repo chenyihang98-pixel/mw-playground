@@ -34,6 +34,15 @@ export interface LevelCastEntry {
   readonly role: 'companion' | 'guard';
 }
 
+/** 关卡分配的选项（F3）。 */
+export interface LevelCastOptions {
+  /**
+   * 出场人物以说明书为准，空也算（工坊生成的关卡）。为 true 时说明书没列出场人物就没有同伴、守卫全部用默认小人，
+   * 不再按名册里同伴、守卫的分工；主角仍按名册。
+   */
+  readonly castIsExplicit: boolean;
+}
+
 /** 默认替身的 id 前缀（不会和名册里的 SHA-256 冲突）。 */
 export const STAND_IN_PREFIX = 'stand-in:';
 
@@ -104,9 +113,17 @@ export function assignCast(members: readonly CastMember[], guardCount: number, c
  * （同伴最多 maxCompanions 个，守卫按列出的顺序分给关卡里的守卫，规则同 P4），名册里的同伴、守卫分工这一关不用；
  * 列出的人物已不在名册里（或没有恢复）时用默认替身：守卫用默认小人，同伴用默认替身，并给出提示。
  * 没列出场人物时按名册的分工（assignCast）。
+ * F3：options.castIsExplicit 为 true（工坊生成的关卡）时，出场人物以说明书为准，空也算：
+ * 没列出场人物就没有同伴、守卫全部用默认小人，和列了人物时走同一条路（主角按名册，主角兼守卫的人这一关只当主角）。
  */
-export function assignLevelCast(members: readonly CastMember[], levelCast: readonly LevelCastEntry[], guardCount: number, capacity: number): Cast {
-  if (levelCast.length === 0) return assignCast(members, guardCount, capacity);
+export function assignLevelCast(
+  members: readonly CastMember[],
+  levelCast: readonly LevelCastEntry[],
+  guardCount: number,
+  capacity: number,
+  options: LevelCastOptions = { castIsExplicit: false },
+): Cast {
+  if (levelCast.length === 0 && !options.castIsExplicit) return assignCast(members, guardCount, capacity);
   const notices: string[] = [];
   const byId = new Map(members.map((m) => [m.id, m]));
   const usable = (id: string) => byId.get(id)?.available === true;

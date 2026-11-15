@@ -4,18 +4,21 @@
 // - 提供方是 off：界面说明原因，并提供随机一关（测试里另起一个 off 的服务，把 /api/workshop 转过去）；
 // - 连不上服务（只起了 Vite）：工坊按“服务不可用”显示，游戏照常；
 // - 服务重启后确认：提示“工坊服务重启过，未确认的预览已失效”；
-// - 工坊生成的关卡保存后刷新再重玩：不再请求工坊服务，假模型不再被调用（F2）。
+// - 工坊生成的关卡保存后刷新再重玩：不再请求工坊服务，假模型不再被调用（F2）；
+// - 出场人物（F3）：工坊里一个都不勾选时没有同伴、守卫用默认小人，主角仍按名册；内置关卡照旧按名册的分工；
+//   只勾选同伴时只有他出场。名册里的人物用夹具生成（写到系统临时目录，由测试删除），不用真实文件。
 // 在测试里起的服务由测试关闭；统计写到系统临时目录，由测试删除。只读测试钩子，不改状态。
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
+import { buildFixture, type FixtureId } from '../../src/asset/fixtures';
 import type { MwGameTestHooks } from '../../src/dev/gameTestHooks';
 import type { GameAppSnapshot } from '../../src/game/appTypes';
 import { loadConfig } from '../../server/config';
 import { Redactor } from '../../server/errors';
-import { FakeProvider } from '../../server/fakeProvider';
+import { FakeProvider, type FakeScript } from '../../server/fakeProvider';
 import { createWorkshopServer, listen } from '../../server/http';
 import { createLogger } from '../../server/log';
 import { createProvider } from '../../server/providers';
@@ -25,9 +28,21 @@ import { Workshop } from '../../server/workshop';
 type Hooks = MwGameTestHooks<GameAppSnapshot>;
 
 let dir: string;
+/** 名册用的夹具（F3）：主角、同伴、守卫各一个，内容不同（SHA-256 不同）。 */
+const fixtureFiles: Record<string, string> = {};
 
 test.beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), 'mw-playground-workshop-e2e-'));
+  const fixtures: [string, FixtureId][] = [
+    ['hero.glb', 'skinned-humanoid'],
+    ['friend.glb', 'node-animation'],
+    ['guard.glb', 'static-mesh'],
+  ];
+  for (const [name, id] of fixtures) {
+    const path = join(dir, name);
+    writeFileSync(path, buildFixture(id));
+    fixtureFiles[name] = path;
+  }
 });
 
 test.afterAll(() => {
@@ -58,11 +73,11 @@ async function openWorkshop(page: Page) {
 }
 
 /** 在测试里起一个工坊服务（只监听 127.0.0.1 的随机端口），由测试关闭。fake 模式时一并返回假模型（读调用次数用）。 */
-async function startService(provider: 'off' | 'fake', delayMs = 0) {
+async function startService(provider: 'off' | 'fake', delayMs = 0, script: FakeScript = {}) {
   const loaded = loadConfig({ MW_LLM_PROVIDER: provider, MW_WORKSHOP_PORT: '0', MW_WORKSHOP_STATS: join(dir, `stats-${provider}.jsonl`), MW_FAKE_DELAY_MS: String(delayMs) });
   if (!loaded.ok) throw new Error(loaded.problems.join('；'));
   const config = loaded.config;
-  const fake = provider === 'fake' ? new FakeProvider({ delayMs }) : null;
+  const fake = provider === 'fake' ? new FakeProvider({ delayMs, ...script }) : null;
   const workshop = new Workshop({
     config,
     provider: fake ?? createProvider(config),
@@ -291,6 +306,156 @@ test('工坊生成的关卡：保存后刷新页面再重玩，不再请求工�
     expect(workshopCalls.every((p) => p === '/api/workshop/health')).toBe(true);
     // 假模型的调用次数在刷新前后不变
     expect({ ...fake.calls, prepare: fake.prepareCalls }).toEqual(callsBefore);
+  } finally {
+    await service.close();
+  }
+});
+
+// ---------- F3：工坊生成的关卡，没勾选的人不出场 ----------
+
+/** 工坊面板出场人物区的说明（第 4 条）。 */
+const CAST_HINT = '一个都不勾选时，这一关没有同伴，守卫用默认小人；主角仍按名册。';
+
+/** 假模型写的说明书：中地图、2 个守卫；cast 由测试给（人物用代号 r1…，服务换回 ID）。 */
+function scriptedBrief(cast: { personId: string; role: 'companion' | 'guard'; line: string }[]) {
+  return {
+    schemaVersion: 1,
+    tier: 'medium',
+    density: 'low',
+    platforms: 1,
+    collectibles: 3,
+    distribution: 'scattered',
+    guards: 2,
+    patrol: 'loop',
+    intent: 'normal',
+    visual: { theme: 'grass', time: 'day', weather: 'clear' },
+    title: '出场人物测试',
+    opening: '看看谁出场。',
+    cast,
+  };
+}
+
+async function chooseFixture(page: Page, name: string) {
+  const chooser = page.waitForEvent('filechooser');
+  await page.getByRole('button', { name: '导入角色' }).click();
+  await (await chooser).setFiles(fixtureFiles[name] ?? '');
+  await expect.poll(async () => (await read(page)).import.busy).toBe(false);
+  expect((await read(page)).import.error).toBeNull();
+}
+
+/** 名册：hero 是主角，friend 是同伴，guard 是守卫（都是夹具）。返回三人的 key。 */
+async function setupRoster(page: Page) {
+  await chooseFixture(page, 'hero.glb');
+  await page.getByRole('button', { name: '设为主角' }).click();
+  await expect.poll(async () => (await read(page)).player.model).toBe('imported');
+  await chooseFixture(page, 'friend.glb');
+  await page.getByRole('button', { name: '加入为新人物' }).click();
+  await expect.poll(async () => (await read(page)).roster.entries.length).toBe(2);
+  await chooseFixture(page, 'guard.glb');
+  await page.getByRole('button', { name: '加入为新人物' }).click();
+  await expect.poll(async () => (await read(page)).roster.entries.length).toBe(3);
+  await page.getByRole('button', { name: '名册', exact: true }).click();
+  await page.getByRole('combobox', { name: 'friend.glb 的分工' }).selectOption('companion');
+  await page.getByRole('combobox', { name: 'guard.glb 的分工' }).selectOption('guard');
+  await expect
+    .poll(async () => {
+      const s = await read(page);
+      return s.roster.saving ? null : s.roster.entries.map((e) => [e.fileName, e.role, e.status]);
+    })
+    .toEqual([
+      ['hero.glb', 'player', 'ready'],
+      ['friend.glb', 'companion', 'ready'],
+      ['guard.glb', 'guard', 'ready'],
+    ]);
+  const entries = (await read(page)).roster.entries;
+  const keyOf = (name: string) => entries.find((e) => e.fileName === name)?.key ?? '';
+  return { hero: keyOf('hero.glb'), friend: keyOf('friend.glb'), guard: keyOf('guard.glb') };
+}
+
+/** 在工坊里生成、确认（加载这一关），再点“开始”。 */
+async function generateConfirmStart(page: Page, text: string) {
+  await page.getByRole('textbox', { name: '一句话描述想玩的关卡' }).fill(text);
+  await page.getByRole('button', { name: '生成关卡' }).click();
+  await expect.poll(async () => (await read(page)).levels.workshop.view, { timeout: 15_000 }).toBe('preview');
+  const hash = (await read(page)).levels.workshop.previewHash;
+  await page.getByRole('button', { name: '确认工坊关卡' }).click();
+  await expect.poll(async () => (await read(page)).level.key).toBe(`saved:${String(hash)}`);
+  await page.getByRole('button', { name: '开始', exact: true }).click();
+  await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
+  return read(page);
+}
+
+test('出场人物（F3）：工坊里一个都不勾选——没有同伴，守卫用默认小人，主角按名册；换成内置关卡时照旧按名册的分工', async ({ page }, testInfo) => {
+  const service = await startService('fake', 0, { briefs: [{ kind: 'json', value: scriptedBrief([]) }] });
+  try {
+    await routeTo(page, service.port);
+    await open(page, '/?level=test-a');
+    const keys = await setupRoster(page);
+    await openWorkshop(page);
+    // 出场人物区的标题和说明（第 4 条）；一个都不勾选
+    await expect(page.locator('#level-workshop')).toContainText('出场人物（没勾选的人不出场）');
+    await expect(page.locator('#level-workshop').getByText(CAST_HINT)).toBeVisible();
+    for (const name of ['hero.glb', 'friend.glb', 'guard.glb']) {
+      await expect(page.getByRole('checkbox', { name: `让 ${name} 出场` })).not.toBeChecked();
+    }
+    await page.screenshot({ path: testInfo.outputPath('workshop-cast-hint.png') });
+
+    const s = await generateConfirmStart(page, '中等大小的草地，两个守卫绕圈巡逻');
+    expect(s.level.source).toBe('model');
+    expect(s.level.brief?.cast).toEqual([]);
+    expect(s.game.guards).toHaveLength(2);
+    expect(s.cast.player).toEqual({ personId: keys.hero, model: 'imported' });
+    expect(s.player).toMatchObject({ model: 'imported', personId: keys.hero });
+    expect(s.cast.companions).toEqual([]);
+    expect(s.game.companions).toEqual([]);
+    expect(s.cast.guards.map((g) => g.personId)).toEqual([null, null]);
+    expect(s.cast.guards.every((g) => g.model === 'default')).toBe(true);
+    // 名册里的分工没有被改
+    expect(s.roster.entries.map((e) => e.role)).toEqual(['player', 'companion', 'guard']);
+    expect(s.instances).toBe(1);
+
+    // 同一个名册，换成内置关卡（晨光草地：说明书没有出场人物）：同伴和守卫照旧按名册的分工出场
+    await open(page, '/?level=gen-1');
+    await expect.poll(async () => (await read(page)).cast.guards[0]?.personId).toBe(keys.guard);
+    await page.getByRole('button', { name: '开始', exact: true }).click();
+    await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
+    const builtin = await read(page);
+    expect(builtin.level.source).toBe('builtin');
+    expect(builtin.level.brief?.cast).toEqual([]);
+    expect(builtin.cast.player.personId).toBe(keys.hero);
+    expect(builtin.cast.companions).toEqual([{ personId: keys.friend, model: 'imported' }]);
+    expect(builtin.game.companions.map((c) => c.id)).toEqual([keys.friend]);
+    expect(builtin.cast.guards.map((g) => g.personId)).toEqual([keys.guard]);
+  } finally {
+    await service.close();
+  }
+});
+
+test('出场人物（F3）：工坊里只勾选同伴（只当同伴）——只有他作为同伴出场，名册里的守卫不出场', async ({ page }) => {
+  const service = await startService('fake', 0, { briefs: [{ kind: 'json', value: scriptedBrief([{ personId: 'r1', role: 'companion', line: '我跟着你。' }]) }] });
+  const fake = service.fake;
+  if (!fake) throw new Error('应该有假模型');
+  try {
+    await routeTo(page, service.port);
+    await open(page, '/?level=test-a');
+    const keys = await setupRoster(page);
+    await openWorkshop(page);
+    await page.getByRole('checkbox', { name: '让 friend.glb 出场' }).check();
+    await page.getByRole('combobox', { name: 'friend.glb 可以当' }).selectOption('companion');
+
+    const s = await generateConfirmStart(page, '中等大小的草地，让朋友跟着我');
+    // 发给服务的名册快照里只有勾选的人
+    const prompt = fake.prompts.join('\n');
+    expect(prompt).toContain('friend.glb');
+    expect(prompt).not.toContain('hero.glb');
+    expect(prompt).not.toContain('guard.glb');
+    expect(s.level.source).toBe('model');
+    expect(s.level.brief?.cast).toEqual([expect.objectContaining({ personId: keys.friend, role: 'companion' })]);
+    expect(s.cast.player).toEqual({ personId: keys.hero, model: 'imported' });
+    expect(s.cast.companions).toEqual([{ personId: keys.friend, model: 'imported' }]);
+    expect(s.game.companions.map((c) => c.id)).toEqual([keys.friend]);
+    expect(s.cast.guards.map((g) => g.personId)).toEqual([null, null]);
+    expect(s.instances).toBe(2);
   } finally {
     await service.close();
   }

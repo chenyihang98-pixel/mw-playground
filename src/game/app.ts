@@ -254,10 +254,11 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
   /**
    * 名册或关卡变了：重新分配出场的人物，换模型，同步模拟里的同伴。主角按名册；关卡说明书列了出场人物时，
    * 同伴和守卫按说明书，人物已不在名册里就用默认替身并提示（名册还在恢复时先不提示）。
+   * F3：工坊生成的关卡（来源 model）出场人物以说明书为准，没列人物就没有同伴、守卫用默认小人（没勾选的人不出场）。
    */
   const recast = () => {
     const levelCast = (current.brief?.cast ?? []).map((c) => ({ personId: c.personId, role: c.role }));
-    const cast = assignLevelCast(roster.members(), levelCast, state.guards.length, registry.max);
+    const cast = assignLevelCast(roster.members(), levelCast, state.guards.length, registry.max, { castIsExplicit: current.source === 'model' });
     const shown = roster.restoring ? { ...cast, notices: cast.notices.filter((n) => !n.includes('默认替身')) } : cast;
     const companions = director.apply(shown, (id) => (id.startsWith(STAND_IN_PREFIX) ? null : roster.assetOf(id)));
     setState(setCompanions(state, companions));
