@@ -142,6 +142,12 @@ MW_ASSET_DIR=<项目外放真实资产的目录> npm run e2e -- tests/e2e/real-a
 - 刷新页面后，检查两者都恢复、分工和尺寸朝向不变、测试小关 B 的守卫换成了后者；
 - 在 1280×720 和 1920×1080 下各截一张名册（两人的卡片和缩略图）和一张前者当主角的游戏画面。
 
+目录里有 `mw-character-g-armored-soldier.glb` 时，还会做这些（F2）：
+
+- 把它设为主角，在测试小关 A 只用键盘走到收集点并获胜，走的时候播放的是它的走路片段；
+- 在测试小关 B 把它设为主角兼守卫：同一个文件同时出两个实例，两个实例的骨骼互不共享，开始后主角待机、守卫巡逻，两边的动画各自在走；
+- 它当主角时导入一个坏文件（它的前 64 KB，在测试里从内存截取，不写到磁盘）：提示导入失败，主角、名册和实例数都不变。
+
 只读这个目录，不把文件复制进项目。没设 `MW_ASSET_DIR` 时整组跳过，输出“跳过：未提供真实资产目录”。
 
 ### 开发用的网址参数（只在开发和测试模式下有效）
@@ -164,6 +170,7 @@ MW_ASSET_DIR=<项目外放真实资产的目录> npm run e2e -- tests/e2e/real-a
 关卡选择的右栏上方是关卡工坊：用一句话描述想玩的关卡，本机的模型填写 P5 的关卡说明书（不摆坐标），程序生成布局并做硬检查。游戏本身不依赖模型。
 
 - 可以勾选出场人物，并选每个人可以当同伴还是守卫。浏览器只发人物 ID、显示名和允许的分工，不发模型文件。模型只能分配这些人物。
+- 第一次生成前会先加载模型（F2），长时间没用之后可能要等几十秒。加载有自己的超时（`MW_WORKSHOP_PREPARE_TIMEOUT_MS`），算在整个请求里，不算在单次模型调用的超时里。只打开工坊面板时只查模型在不在，不加载模型。
 - 生成中可以“停止生成”：结束这次请求，模型调用一起中止；不算失败，也不换关卡。
 - 预览显示：
   - 来源（模型生成）、提供方和模型名；
@@ -187,7 +194,7 @@ MW_ASSET_DIR=<项目外放真实资产的目录> npm run e2e -- tests/e2e/real-a
 | `npm run dev` | 只起 Vite（和以前一样）。工坊按“服务不可用”显示，游戏照常。 |
 | `npm run workshop-server` | 只起工坊的本机服务。 |
 | `npm run workshop-stats [-- <统计文件>]` | 只读地汇总统计，按六类最终结果输出计数（默认读 `.local/workshop-stats.jsonl`）。 |
-| `MW_WORKSHOP_ACCEPTANCE=1 npm run workshop-acceptance` | 本机模型验收：用本机 Ollama 跑 `tests/data/workshop-requests.json` 里的 10 条固定请求，按六类统计，输出每条的耗时。不设环境变量时跳过。 |
+| `MW_WORKSHOP_ACCEPTANCE=1 npm run workshop-acceptance` | 本机模型验收：用本机 Ollama 跑 `tests/data/workshop-requests.json` 里的 10 条固定请求，按六类统计，输出每条的耗时和加载模型用的时间。不设环境变量时跳过。 |
 
 服务用 `node:http`，由 `tsx` 运行，只监听 127.0.0.1。正式构建里没有代理，工坊按“服务不可用”显示。
 
@@ -203,8 +210,9 @@ MW_ASSET_DIR=<项目外放真实资产的目录> npm run e2e -- tests/e2e/real-a
 | `MW_WORKSHOP_PORT` | `8790` | 服务的端口。Vite 的代理用同样的规则读它：环境变量优先，其次 `.env` |
 | `MW_WORKSHOP_MAX_REQUEST_CHARS` | `200` | 一句话最多几个字 |
 | `MW_WORKSHOP_MAX_BODY_BYTES` | `32768` | 请求体上限 |
-| `MW_WORKSHOP_CALL_TIMEOUT_MS` | `60000` | 单次模型调用的超时 |
-| `MW_WORKSHOP_REQUEST_TIMEOUT_MS` | `180000` | 整个生成请求的超时 |
+| `MW_WORKSHOP_CALL_TIMEOUT_MS` | `60000` | 单次模型调用的超时（不含生成前加载模型的时间） |
+| `MW_WORKSHOP_REQUEST_TIMEOUT_MS` | `180000` | 整个生成请求的超时（含加载模型的时间） |
+| `MW_WORKSHOP_PREPARE_TIMEOUT_MS` | `150000` | 生成前加载模型的超时（F2）。必须是不小于 1000 的整数，并且不大于 `MW_WORKSHOP_REQUEST_TIMEOUT_MS`，否则服务报配置错误；把整个请求的超时调到 150000 以下时，这一项要一起调小 |
 | `MW_WORKSHOP_STATS` | `.local/workshop-stats.jsonl` | 统计文件（每个请求一行，不进仓库） |
 
 密钥只在服务进程里使用：不写日志，不进错误信息，不返回给浏览器，不进统计。健康检查只告诉浏览器提供方和模型名。
@@ -223,7 +231,7 @@ OpenAI 兼容接口（可选）：
 统计：
 
 - 每个请求只记一条。最终结果分六类：模型首次通过、模型修复后通过、程序调整后通过、回退内置关卡、用户取消、服务错误或超时；原因另存。
-- 另记提供方、模型名、修复次数和各阶段耗时。
+- 另记提供方、模型名、修复次数和各阶段耗时（F2 起含加载模型的耗时 `prepare`；加载开始前就结束的请求没有这一项）。
 - 不记密钥，不记玩家的一句话原文和人物信息（只记长度和人数）。
 
 本机实测记录见 [docs/workshop-notes.md](docs/workshop-notes.md)。

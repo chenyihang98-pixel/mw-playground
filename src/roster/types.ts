@@ -1,5 +1,6 @@
 // 名册和分工对外的只读快照类型（测试钩子返回它）。只放类型。
 
+import type { AnimatorSnapshot } from '../import/animator';
 import type { Slots } from '../import/clipRules';
 import type { Role } from './config';
 
@@ -47,6 +48,19 @@ export interface CastSlotSnapshot {
   /** 人物在名册里的键；默认小人为 null。 */
   readonly personId: string | null;
   readonly model: 'default' | 'imported';
+}
+
+/** 场景里的一个导入实例（F2：测试快照用，只读）。 */
+export interface ImportedInstanceSnapshot {
+  readonly slot: 'player' | 'guard' | 'companion';
+  /** 守卫是关卡里的守卫 id，同伴是人物 id，主角是 null。 */
+  readonly slotId: string | null;
+  readonly personId: string;
+  /** 实例克隆出来的模型根节点的 uuid。 */
+  readonly rootUuid: string;
+  /** 实例里所有骨骼节点的 uuid，按遍历顺序；没有骨骼时为空数组。 */
+  readonly boneUuids: readonly string[];
+  readonly animator: AnimatorSnapshot | null;
 }
 
 export interface CastSnapshot {

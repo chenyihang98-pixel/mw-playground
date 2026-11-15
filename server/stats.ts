@@ -23,7 +23,10 @@ export const statsRecordSchema = z.strictObject({
   briefAttempts: z.number().int().min(0),
   /** 这次生成调用模型的总次数（含理解请求）。 */
   modelCalls: z.number().int().min(0),
-  /** 各阶段耗时（毫秒）：understand、brief、validate、produce、total。 */
+  /**
+   * 各阶段耗时（毫秒）：understand、brief、validate、produce、total；F2 起还有 prepare（加载模型，
+   * 加载开始前就结束的请求没有这一项）。F2 之前的记录没有 prepare，照常汇总。
+   */
   timingsMs: z.record(z.string(), z.number().nonnegative()),
   /** 玩家的一句话有多少个字符（不记原文）。 */
   textChars: z.number().int().min(0),

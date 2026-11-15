@@ -77,6 +77,12 @@ function ollamaStream(res: ServerResponse, message: Record<string, unknown>): vo
   res.end(`${JSON.stringify({ model: 'test-model', created_at: '2026-01-01T00:00:00Z', message: { role: 'assistant', content: '' }, done: true, done_reason: 'stop', prompt_eval_count: 10, eval_count: 5 })}\n`);
 }
 
+/** Ollama 加载模型的回复（F2：POST /api/generate 不带 prompt 时只加载模型）。 */
+function ollamaLoaded(res: ServerResponse): void {
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ model: 'test-model', created_at: '2026-01-01T00:00:00Z', response: '', done: true, done_reason: 'load' }));
+}
+
 function openAiCompletion(res: ServerResponse, message: Record<string, unknown>): void {
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(
@@ -161,6 +167,11 @@ describe('Ollama（默认）', () => {
         res.end(JSON.stringify({ models: [{ name: 'test-model' }] }));
         return;
       }
+      // F2：生成前先加载模型
+      if (req.path === '/api/generate') {
+        ollamaLoaded(res);
+        return;
+      }
       // 不回复，等客户端中断
       res.writeHead(200, { 'content-type': 'application/x-ndjson' });
     });
@@ -180,6 +191,10 @@ describe('Ollama（默认）', () => {
       if (req.path === '/api/tags') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ models: [{ name: 'test-model' }] }));
+        return;
+      }
+      if (req.path === '/api/generate') {
+        ollamaLoaded(res);
         return;
       }
       res.writeHead(200, { 'content-type': 'application/x-ndjson' });
@@ -358,7 +373,7 @@ describe('OpenAI 兼容接口（可选）', () => {
         return true;
       },
     });
-    const { workshop, stats } = openAiWorkshop(fake.url, end === 'timeout' ? { MW_WORKSHOP_REQUEST_TIMEOUT_MS: '1500' } : {});
+    const { workshop, stats } = openAiWorkshop(fake.url, end === 'timeout' ? { MW_WORKSHOP_REQUEST_TIMEOUT_MS: '1500', MW_WORKSHOP_PREPARE_TIMEOUT_MS: '1000' } : {});
     expect((await workshop.generate({ generationId: 'probe-0001', text: '雨夜', roster: [] })).status).toBe('fallback');
     const pending = workshop.generate({ generationId: 'probe-0002', text: '雨夜', roster: [] });
     await expect.poll(() => chats).toBe(2);

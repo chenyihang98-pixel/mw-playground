@@ -34,6 +34,8 @@ export interface WorkshopConfig {
     readonly callTimeoutMs: number;
     /** 整个生成请求的超时（毫秒）。 */
     readonly requestTimeoutMs: number;
+    /** 加载模型的超时（毫秒，F2）：不小于 1000，不大于整个生成请求的超时。 */
+    readonly prepareTimeoutMs: number;
   };
   /** 统计文件（JSONL，每个请求一行）。 */
   readonly statsPath: string;
@@ -43,7 +45,7 @@ export interface WorkshopConfig {
 
 const int = (min: number, max: number) => z.coerce.number().int().min(min).max(max);
 
-const envSchema = z.object({
+const envObject = z.object({
   MW_LLM_PROVIDER: z.enum(PROVIDER_NAMES).default('ollama'),
   MW_OLLAMA_BASE_URL: z.url().default('http://127.0.0.1:11434'),
   MW_OLLAMA_MODEL: z.string().min(1).default('qwen3.5:9b-q4_K_M'),
@@ -56,8 +58,16 @@ const envSchema = z.object({
   MW_WORKSHOP_MAX_BODY_BYTES: int(1024, 1_000_000).default(32 * 1024),
   MW_WORKSHOP_CALL_TIMEOUT_MS: int(100, 600_000).default(60_000),
   MW_WORKSHOP_REQUEST_TIMEOUT_MS: int(200, 1_800_000).default(180_000),
+  MW_WORKSHOP_PREPARE_TIMEOUT_MS: int(1000, 1_800_000).default(150_000),
   MW_WORKSHOP_STATS: z.string().min(1).default('.local/workshop-stats.jsonl'),
   MW_FAKE_DELAY_MS: int(0, 600_000).default(0),
+});
+
+// 加载模型算在整个生成请求里，所以它的超时不能比整个请求的超时还长
+const envSchema = envObject.superRefine((e, ctx) => {
+  if (e.MW_WORKSHOP_PREPARE_TIMEOUT_MS > e.MW_WORKSHOP_REQUEST_TIMEOUT_MS) {
+    ctx.addIssue({ code: 'custom', path: ['MW_WORKSHOP_PREPARE_TIMEOUT_MS'], message: '不能大于 MW_WORKSHOP_REQUEST_TIMEOUT_MS' });
+  }
 });
 
 export type ConfigResult = { readonly ok: true; readonly config: WorkshopConfig } | { readonly ok: false; readonly problems: readonly string[] };
@@ -65,13 +75,17 @@ export type ConfigResult = { readonly ok: true; readonly config: WorkshopConfig 
 /** 从环境变量读配置。出错时只说哪个变量不对，不回显变量的值（避免把密钥写进错误信息）。 */
 export function loadConfig(env: Readonly<Record<string, string | undefined>>): ConfigResult {
   const cleaned: Record<string, string> = {};
-  for (const key of Object.keys(envSchema.shape)) {
+  for (const key of Object.keys(envObject.shape)) {
     const value = env[key];
     if (value !== undefined && value.trim() !== '') cleaned[key] = value.trim();
   }
   const parsed = envSchema.safeParse(cleaned);
   if (!parsed.success) {
-    return { ok: false, problems: parsed.error.issues.map((issue) => `环境变量 ${issue.path.map(String).join('.')} 不对：${issue.code}`) };
+    // 自定义规则的说明是固定的文字（不含变量的值），其他问题只给出类别
+    return {
+      ok: false,
+      problems: parsed.error.issues.map((issue) => `环境变量 ${issue.path.map(String).join('.')} 不对：${issue.code === 'custom' ? issue.message : issue.code}`),
+    };
   }
   const e = parsed.data;
   return {
@@ -86,6 +100,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
         maxBodyBytes: e.MW_WORKSHOP_MAX_BODY_BYTES,
         callTimeoutMs: e.MW_WORKSHOP_CALL_TIMEOUT_MS,
         requestTimeoutMs: e.MW_WORKSHOP_REQUEST_TIMEOUT_MS,
+        prepareTimeoutMs: e.MW_WORKSHOP_PREPARE_TIMEOUT_MS,
       },
       statsPath: e.MW_WORKSHOP_STATS,
       fakeDelayMs: e.MW_FAKE_DELAY_MS,

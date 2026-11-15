@@ -1,6 +1,7 @@
 // 关卡工坊的请求管理（P8）：同一时间最多处理一个生成；取消、超时；预览会话；按生成标识只定稿一次；每个请求只记一条统计。
 //
-// - 生成：跑 LangGraph 流程到预览（interrupt）、回退或出错为止。生成和检查都在预览之前完成。
+// - 生成：先检查模型能不能用，再把模型加载好（F2），然后跑 LangGraph 流程到预览（interrupt）、回退或出错为止。
+//   生成和检查都在预览之前完成。加载模型有自己的超时，算在整个请求里，不算在单次模型调用的超时里。
 // - 取消：中止这次生成（模型调用一起中止）。取消不算失败，不回退。
 // - 超时：单次模型调用和整个请求都有超时。超时算服务错误，回退到内置关卡。
 // - 确认：从预览节点恢复，进入保存节点，返回当前预览的那一份关卡（不重新抽种子，不再调用模型）。
@@ -24,7 +25,7 @@ import {
   type Preview,
 } from '../src/workshop/protocol';
 import type { WorkshopConfig } from './config';
-import { CallTimeout, CancelledByUser, WorkshopError } from './errors';
+import { CallTimeout, CancelledByUser, PrepareError, WorkshopError } from './errors';
 import { MAX_BRIEF_ATTEMPTS, ModelCallError, buildWorkshopGraph, historyLine, type AttemptLog, type GraphDeps, type WorkshopGraph, type WorkshopStateType } from './graph';
 import type { Logger } from './log';
 import type { Availability, LlmProvider } from './providers';
@@ -167,6 +168,9 @@ export class Workshop {
         this.seen.delete(id);
         throw new WorkshopError(ERROR_CODES.unavailable, availability.reason ?? '模型不可用');
       }
+      // F2：第一次调用模型之前先把模型加载好（健康检查不加载，只有真的要生成时才加载）
+      const unprepared = await this.prepare(request, controller.signal, start);
+      if (unprepared) return unprepared;
       log.info('开始生成', { generationId: id, textChars: request.text.length, rosterSize: request.roster.length });
       let failure: unknown = null;
       try {
@@ -196,6 +200,43 @@ export class Workshop {
       this.running = null;
       this.progress.delete(id);
     }
+  }
+
+  /**
+   * 加载模型（F2）。signal 是这次请求的 signal 和加载超时的合并：
+   * - 成功：返回 null，接着跑流程；
+   * - 这次请求被取消或整个请求超时（先于加载超时）：和其他阶段一样，取消不回退，整个请求超时算服务错误；
+   * - 加载超时：服务错误，原因是“加载模型超时（N 秒）”，回退；
+   * - 加载失败：服务错误，原因说明是哪一类（不含请求体和提供方的原文），回退。
+   * 加载用了多少时间记进统计的 timingsMs.prepare。每种情况都只记一条统计。
+   */
+  private async prepare(request: GenerateRequest, requestSignal: AbortSignal, start: number): Promise<GenerateResponse | null> {
+    const { config, provider, log } = this.deps;
+    const id = request.generationId;
+    const limitMs = config.limits.prepareTimeoutMs;
+    const signal = AbortSignal.any([requestSignal, AbortSignal.timeout(limitMs)]);
+    const begin = this.now();
+    let failure: unknown = null;
+    try {
+      await provider.prepare(signal);
+    } catch (error) {
+      failure = error;
+    }
+    const progress = this.progress.get(id);
+    if (progress) progress.timings.prepare = this.now() - begin;
+    if (failure === null) {
+      log.info('模型已加载', { generationId: id, ms: Math.round(this.now() - begin) });
+      return null;
+    }
+    const total = this.now() - start;
+    // 合并的 signal 的原因是先中止的那一个：先看是不是这次请求本身被取消或超时
+    if (requestSignal.aborted && signal.reason === requestSignal.reason) {
+      return this.finishFailure(request, EMPTY_STATE, failure, requestSignal.reason, total);
+    }
+    if (signal.aborted) return this.finishFailure(request, EMPTY_STATE, failure, new CallTimeout('加载模型', limitMs), total);
+    const reason = failure instanceof PrepareError ? failure.message : '加载模型失败';
+    log.warn('加载模型失败，回退到内置关卡', { generationId: id, reason, kind: failure instanceof PrepareError ? failure.kind : 'unknown' });
+    return this.fallback(request, EMPTY_STATE, 'error', reason, total);
   }
 
   /** 读这次生成的状态。还没有检查点（刚受理就被取消、出错）时用空的状态。 */

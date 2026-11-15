@@ -2,6 +2,8 @@
 
 每个任务一节。“运行过的检查和结果”与“未运行或未验证”分开写。
 
+2026-11-16 改写过提交说明（只去掉署名行），F2 之前各节里的提交号是改写前的，对照见 [commit-ids.md](commit-ids.md)。
+
 ## P1：工程骨架
 
 ### 内容
@@ -1605,3 +1607,156 @@ Codex 第 3 轮审查（候选 e301046）提出 1 项阻塞问题（要求 5、7
 - 工坊只在开发和测试模式下能用：正式构建没有代理，按“服务不可用”显示。
 - 统计在出预览时就记一条，玩家之后确认还是放弃没有统计。
 - 预览会话只在服务进程里，最多保留 16 个；更早的预览确认时会提示失效。
+
+## F2：真实资产补测、工坊关卡的重玩测试、调用模型前先加载模型
+
+### 内容
+
+本任务不加新玩法，不处理 M8（工坊里一个人物都不勾选时的出场规则，要用户决定）。
+
+第一部分（只加测试）：
+
+- `tests/e2e/real-assets.spec.ts` 新增三项。目录里有 soldier（`mw-character-g-armored-soldier.glb`）时运行；没设 `MW_ASSET_DIR` 时和原来的真实资产组一样整组跳过。
+  - soldier 赢下测试小关 A：
+    - 经文件选择框导入，点“设为主角”“开始”，只按住 W 走到收集点；
+    - 断言胜负、收集数、走过的水平距离、结束时的模型和 assetId、走动中播放过 #4（走），以及控制台没有错误；
+    - 截图存到 Playwright 的输出目录。
+  - 同一个文件同时出两个实例：
+    - 在测试小关 B 把 soldier 设为主角，再在名册里改成“主角兼守卫”；
+    - 断言分配结果和实例数，两个实例的根节点 uuid 不同、骨骼 uuid 没有重复；
+    - 开始后不按键，隔 0.6 秒读两次：两个实例的 mixerTime 都增加，主角是 #1（待机），守卫在巡逻、不是 #1。
+  - soldier 当主角时导入坏文件：
+    - 用 `setInputFiles` 的 buffer 方式导入 `broken-soldier.glb`，内容是 soldier 的前 65,536 个字节（在测试里从 `MW_ASSET_DIR` 读进内存再截取，不写到磁盘）；
+    - 断言有导入错误、界面显示“导入失败”，主角、名册条目（key、分工、状态）和实例数都不变，没有 pageerror。
+- 测试快照 `GameAppSnapshot` 新增只读字段 `importedInstances`：场景里每个导入实例的位置（主角、守卫、同伴）、位置 id、人物、根节点 uuid、骨骼 uuid（按遍历顺序）、动画状态。
+  - 由 `CastDirector.importedInstances()` 在 `snapshot()` 里计算，只读，不改玩法、渲染和实例的创建方式。
+  - 根节点是实例克隆出来的模型根节点（`ModelInstance.object`）。
+- `tests/e2e/workshop.spec.ts`（假模型，每次都跑）新增一项：工坊生成的关卡保存后，刷新页面再从“已保存”里加载、开始。
+  - 用测试文件自己起的服务（`startService` 现在把假模型也返回），读得到假模型的调用次数。
+  - 断言：来源是模型生成；布局哈希和规则和保存时完全相同；刷新之后没有发往 generate、confirm、cancel、discard 的请求（只有 health）；假模型的调用次数（含 prepare）不变。
+
+第二部分（调用模型前先加载模型）：
+
+- `LlmProvider` 新增 `prepare(signal)`：
+  - `OllamaProvider`：`POST {baseUrl}/api/generate`，请求体只有 `{ model, stream: false, options: { num_ctx } }`，不带 prompt 和 keep_alive。
+    - num_ctx 取自 ChatOllama 用的同一份配置。
+    - HTTP 200 并且回复的 JSON 里 `done === true` 才算成功。
+    - 其他情况抛 `PrepareError`，类别分为 network（连不上）、http（带状态码）、response（不是 JSON 或没有 `done: true`）。错误信息是固定说法，不带请求体和 Ollama 返回的原文。
+    - 用构造函数传进来的 fetch 和传进来的 signal；signal 被中止时抛中止的错误，不当成加载失败。
+  - `OpenAiCompatibleProvider`：什么都不发，直接完成。
+  - `OffProvider`：直接完成（不会走到这一步：可用性检查已经报了不可用）。
+  - `FakeProvider`：默认直接完成。
+    - `FakeScript.prepare` 可以设延迟、出错（按类别）、一直不返回直到被中止；
+    - `FakeScript.availabilityDelayMs` 设可用性检查的延迟；
+    - 记下 `prepareCalls` 和调用的先后（`sequence`）。原来的 `calls` 不变。
+- `Workshop.generate`：可用性检查通过之后、跑流程之前，调用一次 `provider.prepare`。
+  - signal 是这次请求的 `controller.signal` 和 `AbortSignal.timeout(prepareTimeoutMs)` 的合并。
+  - 按合并 signal 的原因（先中止的那个）区分：
+    - 这次请求被取消：记为 cancelled，不回退；
+    - 整个请求超时：记为 error，原因是整个请求超时；
+    - 加载超时：记为 error，原因“加载模型超时（N 秒）”，回退到内置关卡；
+    - 加载失败：记为 error，原因是 `PrepareError` 的说法（例如“加载模型失败：Ollama 返回错误（HTTP 500）”），回退。
+  - 每种情况都只记一条统计。
+  - 加载期间 `running` 已经设上，同时来的请求照常返回 409。
+  - 整个请求的计时从受理开始，加载算在里面；单次模型调用的超时只在流程里每次调用模型时开始计时，不包括加载。
+- 新配置 `MW_WORKSHOP_PREPARE_TIMEOUT_MS`：默认 150000，必须是不小于 1000 的整数，并且不大于 `MW_WORKSHOP_REQUEST_TIMEOUT_MS`，否则 `loadConfig` 报配置错误。
+  - 只说哪个变量不对，不回显值；自定义规则的说明是固定文字。
+  - 这条规则按要求严格执行：只把整个请求的超时调到 150000 以下、不设这一项时，也会报配置错误（默认的 150000 大于整个请求的超时）。
+- 统计：`timingsMs` 新增 `prepare`（加载用了多少毫秒；加载开始前就结束的请求没有这一项）。记录的 schema 本来就允许任意阶段名，旧记录照常读、照常汇总。
+- `Workshop.health` 和 `OllamaProvider.availability` 不变：只请求 `/api/tags`，不加载模型。
+- `scripts/workshop-acceptance.ts`：每一行输出加上“加载模型 N ms”，JSON 里每一行加 `prepareMs`。
+
+另外：
+
+- 新建 [docs/commit-ids.md](commit-ids.md)：说明 2026-11-16 改写过提交说明，列出旧 → 新提交号的对照表。本文开头加了一句指向它。`docs/status.md` 和 `docs/deps/` 里原有的提交号没有改。
+- `docs/conventions.md` 的“关卡工坊的本机服务”加了一条：健康检查和可用性检查不加载模型，生成前用 `prepare` 加载。
+- README：配置表加 `MW_WORKSHOP_PREPARE_TIMEOUT_MS`；“关卡工坊”一节写明第一次生成前会先加载模型；真实资产的可选测试加了 F2 的三项。
+- `docs/workshop-notes.md` 新增“冷启动（F2）”一节。
+
+对已有文件的改动（没有改名或移动；没有改依赖和锁文件）：
+
+- `server/`：`providers.ts`、`fakeProvider.ts`、`workshop.ts`、`config.ts`、`errors.ts`（新增 `PrepareError`）、`stats.ts`（只改注释）。
+- `scripts/workshop-acceptance.ts`。
+- `src/roster/director.ts`、`src/roster/types.ts`、`src/game/app.ts`、`src/game/appTypes.ts`：只加快照字段。
+- `tests/e2e/real-assets.spec.ts`、`tests/e2e/workshop.spec.ts`：新增测试；`startService` 多返回假模型。
+- 原有的单元测试，只为新的配置规则和新的加载请求做了这些改动：
+  - `tests/unit/workshop-graph.test.ts`：
+    - 公用配置加 `MW_WORKSHOP_PREPARE_TIMEOUT_MS: '10000'`（原来整个请求的超时是 20000，默认的 150000 已不合法）；
+    - 把整个请求超时设成 300 ms 的两项改为 1000 ms，加载超时也设 1000 ms。加载超时最小 1000 ms 且不能大于整个请求的超时，300 ms 已不是合法配置。其中一项断言里的原因随之从“整个生成请求超时（0 秒）”改为“（1 秒）”；
+    - 手写的提供方对象加上 `prepare`。
+  - `tests/unit/workshop-providers.test.ts`：
+    - 两个经 `Workshop` 用 Ollama 的测试，假服务原来只回答 `/api/tags`，现在也回答 `/api/generate`（返回 `done: true, done_reason: "load"`），否则加载请求会一直挂着；
+    - 并发探测超时的那一项加 `MW_WORKSHOP_PREPARE_TIMEOUT_MS: '1000'`（整个请求的超时是 1500）。
+  - 断言的含义都没有变。
+
+### 运行过的检查和结果
+
+环境：Windows 11、Node v24.18.0、Chromium（Playwright 1.65.0，无头）；本机模型验收用 Ollama 0.40.16。
+
+- `npm run typecheck`、`npm run lint`：通过。
+- `npm test`：35 个测试文件、555 个测试全部通过。新增 2 个文件：
+  - `workshop-prepare.test.ts`（18 个）：
+    - `OllamaProvider.prepare`（假的 fetch）：
+      - 只发一次请求：地址 `/api/generate`，方法 POST，请求体正好是 `{ model, stream: false, options: { num_ctx } }`，没有 prompt 和 keep_alive；
+      - 加载请求和之后 ChatOllama 对话请求的 num_ctx 相同；
+      - HTTP 500 / 503、连不上、`{ done: false }`、不是 JSON 都抛 `PrepareError`，类别分得清，原因里不带返回的原文；
+      - signal 中止时 fetch 收到中止，抛的不是 `PrepareError`。
+    - `OpenAiCompatibleProvider.prepare` 不发请求。
+    - `Workshop`（假模型，短超时）：
+      - prepare 在第一次模型调用之前、每个请求一次；
+      - 单次调用超时 200 ms、加载延迟 400 ms、加载超时 1000 ms 时照常出预览（本任务要修的问题），统计里 prepare ≥ 350 ms；
+      - 加载一直不返回：1 秒时“加载模型超时（1 秒）”，回退，没有调用模型，统计一条；
+      - 三类加载失败：回退，原因说明类别；
+      - 加载期间取消：cancelled，不回退；
+      - 加载期间整个请求超时：可用性检查先用掉 600 ms，原因是“整个生成请求超时（1 秒）”；
+      - 加载期间来第二个请求：409；
+      - 刚受理就取消：统计里没有 prepare；
+      - health 只请求 `/api/tags`（用 Ollama 的提供方和假的 fetch），假模型的 prepare 也没有被调用；
+      - 经 `Workshop` 用 Ollama 时请求的顺序是 `/api/tags`、`/api/generate`、`/api/chat`、`/api/chat`，num_ctx 都是配置的 4096。
+    - 配置：
+      - 默认值 150000；等于整个请求的超时可以；
+      - 小于 1000、不是整数、不是数字、大于整个请求的超时（含默认值大于调小了的整个请求超时）都报配置错误，错误里不出现变量的值。
+    - 统计：新记录有 `timingsMs.prepare`，和没有这一项的旧记录一起汇总，计数正确。
+  - `roster-instances.test.ts`（2 个）：
+    - 主角兼守卫时 `importedInstances` 有两项，根节点不同，boneUuids 互不相交，数量等于实例登记里的数量，读两次结果相同；
+    - 主角、守卫、同伴各一项，静态模型的 boneUuids 是空数组，默认小人不算。
+- 我故意改坏代码，确认新测试能发现问题（看过之后都改回来了）：
+  - 加载超时改用单次模型调用的超时：“加载慢于单次调用超时”和“加载超时”两项失败；
+  - 不按合并 signal 的原因区分、一律当加载超时：“加载期间取消”“加载期间整个请求超时”“加载期间第二个请求 409”三项失败。
+- `npm run e2e`：
+  - 不设 `MW_ASSET_DIR`：44 个通过，1 个跳过（真实资产组）。新增的工坊重玩测试通过。
+  - 设了 `MW_ASSET_DIR`（操作者提供的项目外目录，只读）：50 个全部通过，含真实资产组的 6 个。新增三项的输出：
+    - soldier 赢下测试小关 A：走了 3.23 m，播放过的片段是 #4（走）和 #1（待机，获胜后）；
+    - 主角兼守卫：同一个人物两个实例，各 78 个骨骼节点，没有相同的 uuid。间隔 0.6 秒的两次读取（输出里的数字是单独重跑这一项时的）：
+      - 主角实例两次都是 #1，mixerTime 从 1.82 增加到 2.45；
+      - 守卫实例两次都是 #4（走），mixerTime 从 1.02 增加到 1.65。
+      - 截图核对过：主角站着，守卫走过；
+    - 导入 broken-soldier.glb：“文件损坏或不是合法的 GLB：文件被截断：头部声明长度 3567284 字节，实际只有 65536 字节”。主角、名册、实例数都不变。
+  - 截图在 Playwright 的输出目录（不提交）。真实文件没有复制进项目；坏文件只在内存里。
+- 本机模型验收（2026-11-16，本机实测，不是假模型）：见 [docs/workshop-notes.md](workshop-notes.md) 的“冷启动（F2）”。
+  - 运行前没有加载中的模型；10 条里 8 条首次通过、2 条修复后通过；
+  - 加载模型第 1 条 3,623 ms，之后 5–14 ms；
+  - 运行后 `/api/ps` 的 context_length 是 8192。
+- `npm run build`：通过。构建产物里没有测试钩子和 LangChain。
+- 测试跑完后 `git status` 干净；`git diff --stat db90eba..HEAD` 与加 `--ignore-cr-at-eol` 的结果一致。没有改依赖和锁文件。
+- 提交号对照表：本机对象库里还留着改写前的提交，逐对核对过表里的 27 对：
+  - 文件内容（tree）、作者、作者时间、提交时间都相同；
+  - 旧提交都不在任何分支上。
+
+### 未运行或未验证
+
+- 操作者遇到的“长时间没用之后，第一次加载要几十秒”没有复现。这次本机的冷加载是 3.6 秒，原因仍然没有查实。
+  - 加载超过单次模型调用的超时（60 秒）、但在加载超时（150 秒）以内的情况，只用假模型验证过。
+  - 加载超过 150 秒时仍然会超时回退。
+- 真实 Ollama 在加载请求被中断（取消或超时）后，会不会停止加载：没有测。只用假的 fetch 验证过请求确实被中止。
+- prepare 不带 keep_alive，用 Ollama 的默认值。模型在默认时间后被卸载，之后的第一次生成会再加载一次：这是预期行为，没有专门测它的时间。
+- OpenAI 兼容接口仍然**未验证**（只用假服务验证过适配逻辑）。它的 prepare 什么都不发，只有单元测试。
+- 真实资产的新增三项只用 soldier；xingxuan 没有参与这三项。
+- 只在无头 Chromium 里运行过，没有人工确认观感。最终以操作者的独立验证为准。
+
+### 已知问题和后续项
+
+- 加载模型期间界面仍显示“正在生成”，没有单独的“正在加载模型”提示（界面这次没有改）。冷加载慢的时候，玩家看不出在等什么。
+- 加载超时的规则严格按要求执行：把 `MW_WORKSHOP_REQUEST_TIMEOUT_MS` 调到 150000 以下时，必须同时设 `MW_WORKSHOP_PREPARE_TIMEOUT_MS`，否则服务启动时报配置错误。README 的配置表写明了这一点。
+- `npm run workshop-stats` 只汇总六类计数，不汇总各阶段耗时（包括 prepare），要看耗时得读统计文件或验收的输出。
+- M8（工坊里一个人物都不勾选时的出场规则）没有处理，等用户决定。

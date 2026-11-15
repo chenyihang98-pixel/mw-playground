@@ -127,3 +127,43 @@
 ## 本机模型验收
 
 验收命令（默认跳过）是 `MW_WORKSHOP_ACCEPTANCE=1 npm run workshop-acceptance`，10 条固定请求在 `tests/data/workshop-requests.json`。结果见 [docs/status.md](status.md) 的 P8 一节。
+
+## 冷启动（F2）
+
+### 操作者测的事实（2026-11-16，操作者在本机测，不是本任务里测的）
+
+- Ollama 已从 0.34.0 升级到 0.40.16，模型还是 `qwen3.5:9b-q4_K_M`。
+- 跑 `npm run workshop-acceptance` 时，第 1 条请求用了 56.9 秒（两次模型调用，第一次包含加载模型）；2026-11-10 的两遍各约 10–11 秒。之后 9 条是 2.1–4.2 秒。
+- 随后卸载模型再冷加载，两次都是 3.3 秒。所以慢的是长时间没用之后的第一次加载，原因没有查实。
+- 当时单次模型调用的超时（`MW_WORKSHOP_CALL_TIMEOUT_MS`，默认 60 秒）把加载时间也算在里面。超时后走 `server/workshop.ts` 的 `finishFailure`：结果记为 error，回退到内置关卡。
+- Ollama 0.40.16 的加载接口：
+  - `POST {baseUrl}/api/generate`，请求体 `{"model": <模型>, "stream": false, "options": {"num_ctx": 8192}}`，不带 prompt：Ollama 只加载模型，返回 `{"done": true, "done_reason": "load", ...}`。
+  - 冷加载 3.4 秒，模型已经加载时 94 毫秒。
+  - 加载之后 `/api/ps` 显示 context_length 8192；接着用同样 num_ctx 的对话请求，load_duration 是 0.002 秒。
+  - 对话请求换成 num_ctx 4096 时会重新加载（4.1 秒）。所以加载请求的 num_ctx 必须和 ChatOllama 用的 numCtx 相同。
+
+### 据此的做法
+
+- 生成时，检查模型可用之后、跑流程之前，先调用一次提供方的 `prepare`：
+  - Ollama 发上面那个加载请求。请求体只有 `{ model, stream: false, options: { num_ctx } }`，num_ctx 和 ChatOllama 用同一份配置（`MW_OLLAMA_NUM_CTX`），不带 keep_alive；
+  - OpenAI 兼容接口什么都不发。
+- 加载有自己的超时 `MW_WORKSHOP_PREPARE_TIMEOUT_MS`（默认 150 秒，不能大于整个请求的超时）。加载的时间算在整个请求里，不算在单次模型调用的超时里。
+- 健康检查不加载模型：只请求 `/api/tags`。只打开工坊面板、不生成关卡的人，不会被占掉约 6 GB 显存。
+- 统计的 `timingsMs.prepare` 记加载用了多少毫秒；`npm run workshop-acceptance` 每一行输出加载模型的毫秒数。
+
+### 本任务里跑过的（2026-11-16，本机实测）
+
+- 只连 127.0.0.1 上的 Ollama 0.40.16，没有拉取模型，没有改 Ollama 的配置，也没有手动卸载模型。
+- 运行前 `/api/ps` 里没有加载中的模型（所以第 1 条是冷加载）。
+- 命令：`MW_WORKSHOP_ACCEPTANCE=1 npm run workshop-acceptance`，10 条固定请求。
+- 结果：
+  - 8 条首次通过，2 条修复后通过；其他四类都是 0。
+  - 加载模型：
+    - 第 1 条 3,623 ms（冷加载）；
+    - 之后 9 条 5–14 ms（模型已经加载，加载请求马上返回）。
+  - 第 1 条：
+    - 合计 6.3 秒，其中理解请求 841 ms、写说明书 1,715 ms；
+    - 第一次模型调用里没有再包含加载时间。
+  - 之后 9 条合计 2.0–5.7 秒。
+  - 运行后 `/api/ps`：context_length 8192，size_vram 等于 size（全部在显存里）。
+- 操作者遇到的“长时间没用之后第一次加载要几十秒”这次没有复现（这次的冷加载 3.6 秒），原因仍然没有查实。

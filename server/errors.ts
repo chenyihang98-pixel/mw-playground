@@ -44,6 +44,22 @@ export class CallTimeout extends Error {
   }
 }
 
+/** 加载模型失败的类别（F2）：连不上、HTTP 状态码不对、返回的内容不对。 */
+export type PrepareFailureKind = 'network' | 'http' | 'response';
+
+/** 加载模型失败（F2）。消息是固定的说法，不含请求体和提供方返回的原文。 */
+export class PrepareError extends Error {
+  constructor(
+    readonly kind: PrepareFailureKind,
+    message: string,
+    /** HTTP 状态码（kind 为 http 时）。 */
+    readonly status: number | null = null,
+  ) {
+    super(message);
+    this.name = 'PrepareError';
+  }
+}
+
 export type CallErrorKind = 'cancelled' | 'timeout' | 'http' | 'network' | 'other';
 
 export interface CallErrorInfo {

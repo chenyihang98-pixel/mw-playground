@@ -1,7 +1,7 @@
 // 游戏页对外的只读快照类型（测试钩子返回它）。只放类型，不引入渲染或界面代码。
 
 import type { ImportPanelSnapshot, PlayerModelSnapshot } from '../import/ui/types';
-import type { CastSnapshot, RosterSnapshot } from '../roster/types';
+import type { CastSnapshot, ImportedInstanceSnapshot, RosterSnapshot } from '../roster/types';
 import type { Brief, VisualPreset } from './level/gen/brief';
 import type { LevelRules, LevelSource } from './levels/package';
 import type { SavedLevelEntry } from './levels/saved';
@@ -106,6 +106,8 @@ export interface GameAppSnapshot {
   readonly player: PlayerModelSnapshot;
   /** 游戏场景里导入实例的数量（上限 IMPORT_LIMITS.instancesMax）。 */
   readonly instances: number;
+  /** 游戏场景里的每个导入实例（F2）：位置、人物、根节点和骨骼的 uuid、动画状态。只在快照里计算。 */
+  readonly importedInstances: readonly ImportedInstanceSnapshot[];
   /** 名册（P4）。 */
   readonly roster: RosterSnapshot;
   /** 分工的分配结果（P4）：主角、关卡里每个守卫、同伴各用哪个人物。 */

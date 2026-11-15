@@ -525,6 +525,7 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
       import: importPanel.snapshot(),
       player: director.playerSnapshot(),
       instances: registry.count,
+      importedInstances: director.importedInstances(),
       roster: roster.snapshot(),
       cast: director.snapshot(),
       level: {

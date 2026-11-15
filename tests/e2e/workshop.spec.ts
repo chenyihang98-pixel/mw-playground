@@ -3,7 +3,8 @@
 // - 取消：不回退，不换关卡；
 // - 提供方是 off：界面说明原因，并提供随机一关（测试里另起一个 off 的服务，把 /api/workshop 转过去）；
 // - 连不上服务（只起了 Vite）：工坊按“服务不可用”显示，游戏照常；
-// - 服务重启后确认：提示“工坊服务重启过，未确认的预览已失效”。
+// - 服务重启后确认：提示“工坊服务重启过，未确认的预览已失效”；
+// - 工坊生成的关卡保存后刷新再重玩：不再请求工坊服务，假模型不再被调用（F2）。
 // 在测试里起的服务由测试关闭；统计写到系统临时目录，由测试删除。只读测试钩子，不改状态。
 
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -56,14 +57,15 @@ async function openWorkshop(page: Page) {
   await expect.poll(async () => (await read(page)).levels.workshop.health.kind, { timeout: 10_000 }).not.toBe('checking');
 }
 
-/** 在测试里起一个工坊服务（只监听 127.0.0.1 的随机端口），由测试关闭。 */
+/** 在测试里起一个工坊服务（只监听 127.0.0.1 的随机端口），由测试关闭。fake 模式时一并返回假模型（读调用次数用）。 */
 async function startService(provider: 'off' | 'fake', delayMs = 0) {
   const loaded = loadConfig({ MW_LLM_PROVIDER: provider, MW_WORKSHOP_PORT: '0', MW_WORKSHOP_STATS: join(dir, `stats-${provider}.jsonl`), MW_FAKE_DELAY_MS: String(delayMs) });
   if (!loaded.ok) throw new Error(loaded.problems.join('；'));
   const config = loaded.config;
+  const fake = provider === 'fake' ? new FakeProvider({ delayMs }) : null;
   const workshop = new Workshop({
     config,
-    provider: provider === 'fake' ? new FakeProvider({ delayMs }) : createProvider(config),
+    provider: fake ?? createProvider(config),
     stats: new JsonlStats(config.statsPath),
     log: createLogger(new Redactor([]), () => undefined),
   });
@@ -71,6 +73,7 @@ async function startService(provider: 'off' | 'fake', delayMs = 0) {
   const port = await listen(server, 0);
   return {
     port,
+    fake,
     close: () =>
       new Promise<void>((resolve) => {
         server.closeAllConnections();
@@ -238,5 +241,57 @@ test('服务重启过：确认时提示“工坊服务重启过，未确认的�
   } finally {
     await first.close().catch(() => undefined);
     await second.close();
+  }
+});
+
+test('工坊生成的关卡：保存后刷新页面再重玩，不再请求工坊服务，也不再调用模型', async ({ page }, testInfo) => {
+  const service = await startService('fake');
+  const fake = service.fake;
+  if (!fake) throw new Error('应该有假模型');
+  try {
+    await routeTo(page, service.port);
+    await open(page, '/?level=test-a');
+    await openWorkshop(page);
+    await page.getByRole('textbox', { name: '一句话描述想玩的关卡' }).fill('沙漠的白天，宝石集中在一起，一个守卫');
+    await page.getByRole('button', { name: '生成关卡' }).click();
+    await expect.poll(async () => (await read(page)).levels.workshop.view, { timeout: 15_000 }).toBe('preview');
+    const hash = (await read(page)).levels.workshop.previewHash;
+    expect(hash).toMatch(/^[0-9a-f]{16}$/);
+    await page.getByRole('button', { name: '确认工坊关卡' }).click();
+    await expect.poll(async () => (await read(page)).level.key).toBe(`saved:${String(hash)}`);
+    const saved = await read(page);
+    expect(saved.levels.saved).toEqual([expect.objectContaining({ id: hash, source: 'model', status: 'ready' })]);
+    expect(saved.level.source).toBe('model');
+    expect(saved.level.layoutHash).toBe(hash);
+    const rules = saved.level.rules;
+    const title = saved.level.title;
+    const callsBefore = { ...fake.calls, prepare: fake.prepareCalls };
+    expect(callsBefore.structured).toBeGreaterThan(0);
+
+    // 刷新页面：从这时起记录页面发出的所有请求
+    const requests: string[] = [];
+    page.on('request', (r) => requests.push(r.url()));
+    await open(page, '/?level=test-a');
+    await page.getByRole('button', { name: '选择关卡' }).click();
+    await page.getByRole('button', { name: `加载已保存的关卡 ${title}` }).click();
+    await expect.poll(async () => (await read(page)).level.key).toBe(`saved:${String(hash)}`);
+    await page.getByRole('button', { name: '开始', exact: true }).click();
+    await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
+    const replay = await read(page);
+    expect(replay.level.source).toBe('model');
+    expect(replay.level.layoutHash).toBe(hash);
+    expect(replay.level.rules).toEqual(rules);
+    expect(replay.game.timeLimit).toBe(rules.timeLimit);
+    await page.screenshot({ path: testInfo.outputPath('workshop-replay.png') });
+
+    const workshopCalls = requests.map((u) => new URL(u).pathname).filter((p) => p.startsWith('/api/workshop/'));
+    // 只允许健康检查（打开选关界面时工坊查一次服务状态；看得到它，说明请求确实记下来了）
+    expect(workshopCalls).toContain('/api/workshop/health');
+    expect(workshopCalls.filter((p) => /\/api\/workshop\/(generate|confirm|cancel|discard)$/.test(p))).toEqual([]);
+    expect(workshopCalls.every((p) => p === '/api/workshop/health')).toBe(true);
+    // 假模型的调用次数在刷新前后不变
+    expect({ ...fake.calls, prepare: fake.prepareCalls }).toEqual(callsBefore);
+  } finally {
+    await service.close();
   }
 });

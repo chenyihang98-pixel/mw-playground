@@ -3,7 +3,7 @@
 // 每个位置一个独立的实例（ModelInstance：自己的骨骼和 AnimationMixer），主角兼守卫在两个位置上各有一个。
 // 换下来的实例立即释放（计入同屏实例上限的名额也随之释放）。先释放再创建，避免中途超过上限。
 
-import type { Object3D } from 'three';
+import type { Bone, Object3D } from 'three';
 import { CharacterView, HumanoidModel } from '../game/render/characterView';
 import { GUARD_PALETTE, PLAYER_PALETTE, STAND_IN_PALETTE } from '../game/render/humanoid';
 import type { CompanionState } from '../game/sim';
@@ -11,7 +11,7 @@ import { ImportedCharacterModel } from '../import/animator';
 import { InstanceLimitError, type ImportedAsset, type InstanceRegistry } from '../import/asset';
 import type { PlayerModelSnapshot } from '../import/ui/types';
 import type { Cast } from './cast';
-import type { CastSnapshot } from './types';
+import type { CastSnapshot, ImportedInstanceSnapshot } from './types';
 
 interface Slot {
   readonly id: string;
@@ -199,6 +199,32 @@ export class CastDirector {
       fileName: slot?.asset.fileName ?? null,
       animator: slot?.model.snapshot() ?? null,
     };
+  }
+
+  /**
+   * 场景里每个导入实例（F2，测试快照用）：按主角 → 守卫 → 同伴的顺序。只读，不改实例。
+   * 骨骼按 three 的遍历顺序（先序）列出。
+   */
+  importedInstances(): ImportedInstanceSnapshot[] {
+    const describe = (slot: ImportedInstanceSnapshot['slot'], slotId: string | null, personId: string, model: ImportedCharacterModel): ImportedInstanceSnapshot => {
+      const root = model.instance.object;
+      const boneUuids: string[] = [];
+      root.traverse((obj) => {
+        if ((obj as Partial<Bone>).isBone === true) boneUuids.push(obj.uuid);
+      });
+      return { slot, slotId, personId, rootUuid: root.uuid, boneUuids, animator: model.snapshot() };
+    };
+    const out: ImportedInstanceSnapshot[] = [];
+    if (this.playerSlot) out.push(describe('player', null, this.playerSlot.id, this.playerSlot.model));
+    this.guardSlots.forEach((slot, i) => {
+      if (slot) out.push(describe('guard', this.views.guardIds[i] ?? null, slot.id, slot.model));
+    });
+    for (const id of this.companionOrder) {
+      const companion = this.companions.get(id);
+      const model = companion?.view.currentModel;
+      if (companion?.slot.asset && model instanceof ImportedCharacterModel) out.push(describe('companion', id, id, model));
+    }
+    return out;
   }
 
   snapshot(): CastSnapshot {

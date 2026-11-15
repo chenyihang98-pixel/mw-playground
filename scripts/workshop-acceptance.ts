@@ -1,5 +1,5 @@
 // 关卡工坊的本机模型验收（P8）：用本机 Ollama 跑一组固定的 10 条请求（tests/data/workshop-requests.json），
-// 按六类最终结果统计，并记下每条的耗时。出预览的请求接着确认一次（定稿）。
+// 按六类最终结果统计，并记下每条的耗时和加载模型用的时间（F2，看得出冷加载）。出预览的请求接着确认一次（定稿）。
 // 默认跳过：要设 MW_WORKSHOP_ACCEPTANCE=1 才会运行。只连 127.0.0.1 上的 Ollama，不连任何外部服务。
 //
 // 用法：MW_WORKSHOP_ACCEPTANCE=1 npm run workshop-acceptance
@@ -56,6 +56,8 @@ interface Row {
   readonly repairs: number;
   readonly modelCalls: number;
   readonly totalMs: number;
+  /** 加载模型用了多少毫秒（F2；加载开始前就结束时为 null）。 */
+  readonly prepareMs: number | null;
   readonly confirmMs: number | null;
   readonly title: string | null;
   readonly hashMatches: boolean | null;
@@ -90,12 +92,18 @@ for (const [i, req] of data.requests.entries()) {
     repairs: record?.repairs ?? 0,
     modelCalls: record?.modelCalls ?? 0,
     totalMs,
+    prepareMs: record?.timingsMs.prepare ?? null,
     confirmMs,
     title,
     hashMatches,
     history,
   });
-  console.log(`${String(i + 1)}. ${OUTCOME_LABELS[rows.at(-1)?.outcome ?? 'error']}，修复 ${String(rows.at(-1)?.repairs ?? 0)} 次，耗时 ${String(totalMs)} ms：${req.text}`);
+  const row = rows.at(-1);
+  const prepare = row?.prepareMs ?? null;
+  console.log(
+    `${String(i + 1)}. ${OUTCOME_LABELS[row?.outcome ?? 'error']}，修复 ${String(row?.repairs ?? 0)} 次，` +
+      `加载模型 ${prepare === null ? '—' : `${String(prepare)} ms`}，耗时 ${String(totalMs)} ms：${req.text}`,
+  );
 }
 
 const counts = Object.fromEntries(OUTCOMES.map((o) => [o, rows.filter((r) => r.outcome === o).length]));

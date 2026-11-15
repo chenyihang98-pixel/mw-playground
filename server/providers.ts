@@ -3,6 +3,7 @@
 // - chat：带工具的普通对话（“理解请求”这一步，可以调用“查名册快照”工具）；
 // - structured：结构化输出，把说明书的 JSON Schema 交给模型，返回模型输出的文本，之后由调用方 JSON.parse 再用 zod 校验。
 // 每次调用都新建一个模型对象，fetch 绑定这次调用的 AbortSignal：取消或超时时真正中断 HTTP 请求，模型那边随之停止生成。
+// F2：第一次调用模型之前先单独把模型加载好（prepare），加载的时间不算在单次模型调用的超时里。
 // 本机失败时不会自动切换到外部接口：提供方只由配置决定。
 
 import type { BaseMessage } from '@langchain/core/messages';
@@ -12,7 +13,7 @@ import { ChatOllama } from '@langchain/ollama';
 import { ChatOpenAICompletions } from '@langchain/openai';
 import type { ProviderName } from '../src/workshop/protocol';
 import { modelNameOf, type WorkshopConfig } from './config';
-import { describeCallError } from './errors';
+import { PrepareError, describeCallError } from './errors';
 
 export interface Availability {
   readonly available: boolean;
@@ -27,8 +28,13 @@ export interface LlmProvider {
   chat(messages: readonly BaseMessage[], tools: readonly StructuredToolInterface[], signal: AbortSignal): Promise<AIMessage>;
   /** 结构化输出：schema 是 JSON Schema。返回模型输出的文本。 */
   structured(messages: readonly BaseMessage[], schema: Record<string, unknown>, signal: AbortSignal): Promise<string>;
-  /** 模型能不能用。 */
+  /** 模型能不能用。不加载模型。 */
   availability(signal: AbortSignal): Promise<Availability>;
+  /**
+   * 在第一次调用模型之前把模型加载好（F2）。失败时抛 PrepareError（能分清连不上、HTTP 状态码、返回的内容不对）；
+   * signal 被中止时抛中止的错误（由调用方按 signal 的原因区分取消和超时）。
+   */
+  prepare(signal: AbortSignal): Promise<void>;
 }
 
 /** 调用参数（采样温度、输出长度上限）。 */
@@ -91,6 +97,7 @@ export class OllamaProvider implements LlmProvider {
     return textOf(reply);
   }
 
+  /** 只请求 /api/tags，不加载模型（打开工坊面板时会调用，不能占用显存）。 */
   async availability(signal: AbortSignal): Promise<Availability> {
     try {
       const res = await this.fetchImpl(`${this.config.baseUrl}/api/tags`, { signal });
@@ -101,6 +108,38 @@ export class OllamaProvider implements LlmProvider {
       return { available: true, reason: null };
     } catch {
       return { available: false, reason: `连不上 Ollama（${this.config.baseUrl}）` };
+    }
+  }
+
+  /**
+   * 加载模型（F2）：POST /api/generate，不带 prompt，Ollama 只加载模型并返回 { done: true, done_reason: "load" }。
+   * num_ctx 和 ChatOllama 用的 numCtx 相同（同一份配置），否则第一次对话会按另一个上下文长度重新加载。
+   * 不带 keep_alive：用 Ollama 自己的默认值。
+   */
+  async prepare(signal: AbortSignal): Promise<void> {
+    const body = { model: this.config.model, stream: false, options: { num_ctx: this.config.numCtx } };
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.config.baseUrl}/api/generate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw new PrepareError('network', `加载模型失败：连不上 Ollama（${this.config.baseUrl}）`);
+    }
+    if (res.status !== 200) throw new PrepareError('http', `加载模型失败：Ollama 返回错误（HTTP ${String(res.status)}）`, res.status);
+    let reply: unknown;
+    try {
+      reply = await res.json();
+    } catch (error) {
+      if (signal.aborted) throw error;
+      throw new PrepareError('response', '加载模型失败：Ollama 返回的内容不是 JSON');
+    }
+    if (typeof reply !== 'object' || reply === null || (reply as { done?: unknown }).done !== true) {
+      throw new PrepareError('response', '加载模型失败：Ollama 的回复里没有 done: true');
     }
   }
 }
@@ -187,6 +226,11 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     );
   }
 
+  /** 外部接口不需要先加载模型：什么都不发，直接完成。 */
+  prepare(): Promise<void> {
+    return Promise.resolve();
+  }
+
   /** 模型能不能用。不抛错：出了意外也只报不可用。 */
   async availability(signal: AbortSignal): Promise<Availability> {
     try {
@@ -245,6 +289,11 @@ export class OffProvider implements LlmProvider {
 
   availability(): Promise<Availability> {
     return Promise.resolve({ available: false, reason: '工坊没有启用模型（MW_LLM_PROVIDER=off）' });
+  }
+
+  /** 没有模型可以加载（检查可用性时已经报了不可用，不会走到这一步）。 */
+  prepare(): Promise<void> {
+    return Promise.resolve();
   }
 }
 

@@ -28,7 +28,8 @@ const roster: RosterPersonSnapshot[] = [
 ];
 
 function config(overrides: Record<string, string> = {}): WorkshopConfig {
-  const loaded = loadConfig({ MW_LLM_PROVIDER: 'fake', MW_WORKSHOP_CALL_TIMEOUT_MS: '2000', MW_WORKSHOP_REQUEST_TIMEOUT_MS: '20000', ...overrides });
+  // F2：加载模型的超时不能大于整个请求的超时（默认 150 秒），这里跟着调短
+  const loaded = loadConfig({ MW_LLM_PROVIDER: 'fake', MW_WORKSHOP_CALL_TIMEOUT_MS: '2000', MW_WORKSHOP_REQUEST_TIMEOUT_MS: '20000', MW_WORKSHOP_PREPARE_TIMEOUT_MS: '10000', ...overrides });
   if (!loaded.ok) throw new Error(loaded.problems.join('；'));
   return loaded.config;
 }
@@ -238,7 +239,7 @@ describe('超时、取消、忙', () => {
   });
 
   it('整个请求超时：算作服务错误，回退', async () => {
-    const h = harness({ briefs: [{ kind: 'hang' }] }, { config: config({ MW_WORKSHOP_CALL_TIMEOUT_MS: '5000', MW_WORKSHOP_REQUEST_TIMEOUT_MS: '300' }) });
+    const h = harness({ briefs: [{ kind: 'hang' }] }, { config: config({ MW_WORKSHOP_CALL_TIMEOUT_MS: '5000', MW_WORKSHOP_REQUEST_TIMEOUT_MS: '1000', MW_WORKSHOP_PREPARE_TIMEOUT_MS: '1000' }) });
     const res = await h.workshop.generate(request());
     if (res.status !== 'fallback') throw new Error('应该回退');
     expect(res.fallback.reason).toContain('整个生成请求超时');
@@ -303,6 +304,7 @@ describe('第 1 轮审查：异常路径也只记一条、记全', () => {
       model: fake.model,
       chat: (m, t, s) => fake.chat(m, t, s),
       structured: (m, schema, s) => fake.structured(m, schema, s),
+      prepare: (s) => fake.prepare(s),
       availability: (signal) =>
         new Promise((resolve) => {
           signal.addEventListener('abort', () => {
@@ -331,10 +333,10 @@ describe('第 1 轮审查：异常路径也只记一条、记全', () => {
   });
 
   it('生成前检查模型可用时整个请求超时：服务错误并回退（不是“不可用”）', async () => {
-    const h = slowHarness({ MW_WORKSHOP_REQUEST_TIMEOUT_MS: '300' });
+    const h = slowHarness({ MW_WORKSHOP_REQUEST_TIMEOUT_MS: '1000', MW_WORKSHOP_PREPARE_TIMEOUT_MS: '1000' });
     const res = await h.workshop.generate(request());
     if (res.status !== 'fallback') throw new Error(`应该回退：${JSON.stringify(res)}`);
-    expect(res.fallback).toMatchObject({ outcome: 'error', reason: '整个生成请求超时（0 秒）' });
+    expect(res.fallback).toMatchObject({ outcome: 'error', reason: '整个生成请求超时（1 秒）' });
     expect(res.fallback.differences[0]).toContain('不是按你的描述做的');
     expect(h.stats.records.map((r) => r.outcome)).toEqual(['error']);
   });

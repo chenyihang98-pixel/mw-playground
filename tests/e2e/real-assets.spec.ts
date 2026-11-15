@@ -1,5 +1,7 @@
 // 可选的真实资产测试组：读取环境变量 MW_ASSET_DIR 指向的目录（项目外，只读），经文件选择框逐个导入。
 // 没设 MW_ASSET_DIR 时整组跳过。真实文件不复制进项目；截图存到 Playwright 的输出目录（不提交）。
+// F2 补的三项（目录里有 soldier 时）：soldier 当主角只用键盘赢下测试小关 A；同一个文件同时出两个实例（主角兼守卫）；
+// soldier 当主角时导入一个坏文件（soldier 的前 64 KB，只在内存里截取）。
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { extname, join } from 'node:path';
@@ -248,6 +250,170 @@ if (!assetDir) {
           await page.screenshot({ path: testInfo.outputPath(`p6-real-${tag}-soldier.png`) });
         }
         expect(consoleErrors).toEqual([]);
+      });
+    }
+
+    // F2：soldier 真的赢下一关；同一个真实文件同时出两个实例；soldier 当主角时导入失败
+    if (files.includes(SOLDIER)) {
+      /** 控制台错误和页面异常分开记。 */
+      const watch = (page: Page) => {
+        const log = { consoleErrors: [] as string[], pageErrors: [] as string[] };
+        page.on('console', (message) => {
+          if (message.type() === 'error') log.consoleErrors.push(message.text());
+        });
+        page.on('pageerror', (error) => log.pageErrors.push(error.message));
+        return log;
+      };
+      const ready = async (page: Page) => {
+        await page.waitForFunction(() => (window.__MW_TEST__ as Hooks | undefined)?.kind === 'game');
+        await expect.poll(async () => (await read(page)).roster.restoring, { timeout: 60_000 }).toBe(false);
+      };
+      /** 经文件选择框导入 soldier，并设为主角，等名册保存完。返回它的人物 key。 */
+      const soldierAsPlayer = async (page: Page): Promise<string> => {
+        const chooser = page.waitForEvent('filechooser');
+        await page.getByRole('button', { name: '导入角色' }).click();
+        await (await chooser).setFiles(join(assetDir, SOLDIER));
+        await expect.poll(async () => (await read(page)).import.busy, { timeout: 60_000 }).toBe(false);
+        expect((await read(page)).import.error).toBeNull();
+        await page.getByRole('button', { name: '设为主角' }).click();
+        await expect.poll(async () => (await read(page)).player.model).toBe('imported');
+        await expect.poll(async () => (await read(page)).roster.saving, { timeout: 30_000 }).toBe(false);
+        const key = (await read(page)).player.personId;
+        if (!key) throw new Error('主角应该是名册里的 soldier');
+        return key;
+      };
+
+      test('真实资产：soldier 当主角，只用键盘赢下测试小关 A', async ({ page }, testInfo) => {
+        const log = watch(page);
+        await page.goto('/?level=test-a');
+        await ready(page);
+        const key = await soldierAsPlayer(page);
+        const before = await read(page);
+        const assetId = before.player.assetId;
+        expect(assetId).not.toBeNull();
+        const spawn = { x: before.game.player.x, z: before.game.player.z };
+
+        await page.getByRole('button', { name: '开始', exact: true }).click();
+        await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
+        // 按住 W 一直走到收集点；走的过程中记下主角播放过的片段
+        const clips = new Set<number | null>();
+        await page.keyboard.down('KeyW');
+        try {
+          await expect
+            .poll(
+              async () => {
+                const s = await read(page);
+                clips.add(s.player.animator?.clipIndex ?? null);
+                return s.game.phase;
+              },
+              { timeout: 20_000, intervals: [50] },
+            )
+            .toBe('won');
+        } finally {
+          await page.keyboard.up('KeyW');
+        }
+        const end = await read(page);
+        expect(end.game.phase).toBe('won');
+        expect(end.game.result).toMatchObject({ outcome: 'won', reason: 'collected' });
+        expect(end.game.collectedCount).toBe(end.game.target);
+        const moved = Math.hypot(end.game.player.x - spawn.x, end.game.player.z - spawn.z);
+        expect(moved).toBeGreaterThan(0.5);
+        expect(end.player).toMatchObject({ model: 'imported', personId: key, assetId });
+        // P3 的自动建议：走是 #4
+        expect([...clips]).toContain(4);
+        console.log(`soldier 赢下测试小关 A：走了 ${moved.toFixed(2)} m，播放过的片段 ${[...clips].map(String).join('、')}`);
+        await page.screenshot({ path: testInfo.outputPath('real-soldier-won.png') });
+        expect(log.consoleErrors).toEqual([]);
+        expect(log.pageErrors).toEqual([]);
+      });
+
+      test('真实资产：同一个文件同时出两个实例（soldier 主角兼守卫），骨骼和动画各自独立', async ({ page }, testInfo) => {
+        const log = watch(page);
+        // 测试小关 B 有 1 个守卫
+        await page.goto('/?level=test-b');
+        await ready(page);
+        const key = await soldierAsPlayer(page);
+        await page.getByRole('button', { name: '名册', exact: true }).click();
+        await page.getByRole('combobox', { name: `${SOLDIER} 的分工` }).selectOption('playerGuard');
+        await expect
+          .poll(
+            async () => {
+              const s = await read(page);
+              return !s.roster.saving && s.roster.entries[0]?.role === 'playerGuard' && s.cast.guards[0]?.personId === key;
+            },
+            { timeout: 30_000 },
+          )
+          .toBe(true);
+
+        const s = await read(page);
+        expect(s.cast.player.personId).toBe(key);
+        expect(s.cast.guards[0]?.personId).toBe(key);
+        expect(s.instances).toBe(2);
+        expect(s.importedInstances.map((i) => [i.slot, i.slotId, i.personId])).toEqual([
+          ['player', null, key],
+          ['guard', 'guard-b', key],
+        ]);
+        const [player, guard] = s.importedInstances;
+        if (!player || !guard) throw new Error('应该有两个实例');
+        expect(player.rootUuid).not.toBe(guard.rootUuid);
+        expect(player.boneUuids.length).toBeGreaterThan(0);
+        expect(guard.boneUuids).toHaveLength(player.boneUuids.length);
+        expect(player.boneUuids.filter((uuid) => guard.boneUuids.includes(uuid))).toEqual([]);
+
+        // 开始后不按任何键：主角待机，守卫在巡逻；两个实例的动画各自在走
+        await page.getByRole('button', { name: '开始', exact: true }).click();
+        await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
+        // 等守卫从待机淡入到走路
+        await page.waitForTimeout(400);
+        const first = await read(page);
+        const t0 = Date.now();
+        await page.waitForTimeout(600);
+        const second = await read(page);
+        expect(Date.now() - t0).toBeGreaterThanOrEqual(500);
+        const bySlot = (snap: GameAppSnapshot, slot: 'player' | 'guard') => snap.importedInstances.find((i) => i.slot === slot)?.animator;
+        const [p1, p2, g1, g2] = [bySlot(first, 'player'), bySlot(second, 'player'), bySlot(first, 'guard'), bySlot(second, 'guard')];
+        console.log(
+          `两个实例各 ${String(player.boneUuids.length)} 个骨骼节点，没有相同的 uuid；` +
+            `主角实例：片段 ${String(p1?.clipIndex)} → ${String(p2?.clipIndex)}，mixerTime ${String(p1?.mixerTime)} → ${String(p2?.mixerTime)}；` +
+            `守卫实例：片段 ${String(g1?.clipIndex)} → ${String(g2?.clipIndex)}，mixerTime ${String(g1?.mixerTime)} → ${String(g2?.mixerTime)}`,
+        );
+        expect(p2?.mixerTime ?? 0).toBeGreaterThan(p1?.mixerTime ?? Infinity);
+        expect(g2?.mixerTime ?? 0).toBeGreaterThan(g1?.mixerTime ?? Infinity);
+        expect(p1?.clipIndex).toBe(1);
+        expect(p2?.clipIndex).toBe(1);
+        expect(g1?.clipIndex).not.toBe(1);
+        expect(g2?.clipIndex).not.toBe(1);
+        expect(g2?.clipIndex).not.toBeNull();
+        // 守卫确实在巡逻路线上移动
+        const [ga, gb] = [first.game.guards[0], second.game.guards[0]];
+        expect(Math.hypot((gb?.x ?? 0) - (ga?.x ?? 0), (gb?.z ?? 0) - (ga?.z ?? 0))).toBeGreaterThan(0.1);
+        await page.screenshot({ path: testInfo.outputPath('real-soldier-two-instances.png') });
+        expect(log.consoleErrors).toEqual([]);
+        expect(log.pageErrors).toEqual([]);
+      });
+
+      test('真实资产：soldier 当主角时导入一个坏文件，主角、名册和实例都不变', async ({ page }) => {
+        const log = watch(page);
+        await page.goto('/?level=test-a');
+        await ready(page);
+        const key = await soldierAsPlayer(page);
+        const before = await read(page);
+        const entries = (snap: GameAppSnapshot) => snap.roster.entries.map((e) => ({ key: e.key, role: e.role, status: e.status }));
+        expect(entries(before)).toEqual([{ key, role: 'player', status: 'ready' }]);
+
+        // soldier 文件的前 65,536 个字节：只在内存里截取，不写到磁盘
+        const truncated = readFileSync(join(assetDir, SOLDIER)).subarray(0, 65_536);
+        await page.locator('#import-file').setInputFiles({ name: 'broken-soldier.glb', mimeType: 'model/gltf-binary', buffer: Buffer.from(truncated) });
+        await expect.poll(async () => (await read(page)).import.error, { timeout: 30_000 }).not.toBeNull();
+        await expect.poll(async () => (await read(page)).import.busy).toBe(false);
+        const after = await read(page);
+        console.log(`导入 broken-soldier.glb：${String(after.import.error)}`);
+        await expect(page.getByRole('alert').filter({ hasText: '导入失败' })).toBeVisible();
+        expect(after.player).toMatchObject({ model: 'imported', personId: key });
+        expect(after.player.assetId).toBe(before.player.assetId);
+        expect(entries(after)).toEqual(entries(before));
+        expect(after.instances).toBe(before.instances);
+        expect(log.pageErrors).toEqual([]);
       });
     }
   });
