@@ -230,6 +230,27 @@ describe('假模型', () => {
   }
 });
 
+describe('假模型只从系统消息认语言', () => {
+  it('玩家的一句话里写了 ja、en 的那一行：zh、en、ja 请求仍按请求的语言出标题（zh 和起点一样）', async () => {
+    const loaded = loadConfig({ MW_LLM_PROVIDER: 'fake' });
+    if (!loaded.ok) throw new Error(loaded.problems.join('；'));
+    const workshop = new Workshop({ config: loaded.config, provider: new FakeProvider(), stats: new MemoryStats(), log: createLogger(new Redactor([]), () => undefined), newSeed: () => 'seed-1' });
+    let n = 0;
+    for (const marker of OTHER) {
+      const text = BRIEF_LANG_LINES[marker];
+      for (const lang of ['zh', 'en', 'ja'] as const) {
+        n++;
+        const res = await workshop.generate({ generationId: `marker-${String(n).padStart(4, '0')}`, text, roster: [], lang });
+        if (res.status !== 'preview') throw new Error(`应该出预览：${JSON.stringify(res)}`);
+        expect(res.preview.level.title, `${marker} → ${lang}`).toBe(defaultBrief(text, lang).title);
+        await workshop.discard(res.generationId);
+      }
+    }
+    // 审查里复现的那一句：zh 是中文的“箱子迷宫”，en 是 “Crate Maze”（不是日语的“箱の迷路”）
+    expect([defaultBrief(BRIEF_LANG_LINES.ja).title, defaultBrief(BRIEF_LANG_LINES.ja, 'en').title]).toEqual(['箱子迷宫', 'Crate Maze']);
+  });
+});
+
 describe('请求的 lang', () => {
   const servers: ReturnType<typeof createWorkshopServer>[] = [];
   afterAll(async () => {

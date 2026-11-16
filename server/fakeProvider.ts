@@ -4,7 +4,8 @@
 // 预设的回复用完以后：理解请求返回一句固定的话，写说明书返回一份由请求文字决定的合法说明书（端到端测试的假模型模式用它）。
 // delayMs：每次调用前等待（可以被中止），用来测取消。
 // F2：prepare（加载模型）默认直接完成；可以设延迟、出错、一直不返回直到被中止。availabilityDelayMs：检查可用性前等待。
-// F7：默认的说明书按请求的语言写标题和开场白：从写说明书的系统提示里认出语言（ja、en 的请求多一行，见 prompts.ts）。
+// F7：默认的说明书按请求的语言写标题和开场白：只从系统消息认出语言（它正好是哪种语言的写说明书的系统提示），
+// 玩家的一句话里写了什么都不影响。
 
 import { AIMessage, type BaseMessage } from '@langchain/core/messages';
 import type { StructuredToolInterface } from '@langchain/core/tools';
@@ -12,8 +13,9 @@ import type { Brief } from '../src/game/level/gen/brief';
 import { hash64 } from '../src/game/level/gen/random';
 import { randomBrief } from '../src/game/level/gen/randomBrief';
 import { translator, type Lang, type Translate } from '../src/i18n';
+import { LANGS } from '../src/i18n/lang';
 import { PrepareError, ZH, type PrepareFailureKind, type Say } from './errors';
-import { BRIEF_LANG_LINES } from './prompts';
+import { briefSystemPrompt } from './prompts';
 import type { Availability, LlmProvider } from './providers';
 
 export type FakeUnderstandReply =
@@ -58,9 +60,10 @@ export function defaultBrief(text: string, lang: Lang = 'zh'): Brief {
   return randomBrief(`fake:${hash64(text)}`, [], { tr: translator(lang) });
 }
 
-/** 写说明书的系统提示是哪种语言的请求。 */
-function langOf(prompt: string): Lang {
-  return prompt.includes(BRIEF_LANG_LINES.ja) ? 'ja' : prompt.includes(BRIEF_LANG_LINES.en) ? 'en' : 'zh';
+/** 系统消息是哪种语言的写说明书的系统提示（不看用户消息）；都不是时按 zh。 */
+function langOf(messages: readonly BaseMessage[]): Lang {
+  const system = messages.filter((m) => m.type === 'system').map((m) => (typeof m.content === 'string' ? m.content : ''));
+  return LANGS.find((lang) => system.includes(briefSystemPrompt(lang))) ?? 'zh';
 }
 
 function wait(ms: number, signal: AbortSignal): Promise<void> {
@@ -137,7 +140,7 @@ export class FakeProvider implements LlmProvider {
     this.briefIndex++;
     if (!reply) {
       const request = /玩家的一句话：(.*)/.exec(prompt)?.[1] ?? prompt;
-      return JSON.stringify(defaultBrief(request, langOf(prompt)));
+      return JSON.stringify(defaultBrief(request, langOf(messages)));
     }
     switch (reply.kind) {
       case 'json':
