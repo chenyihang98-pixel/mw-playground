@@ -11,6 +11,7 @@
 <p align="center"><b>一文で、遊べる 3D ステージを。</b></p>
 
 <p align="center">
+  <a href="https://youtu.be/nlM76iN8KgE">デモ動画</a> ·
   <a href="docs/how-it-works.md">レベル工房のしくみ</a> ·
   <a href="docs/guide.md">遊び方と設定</a>
 </p>
@@ -22,6 +23,10 @@
 すべて自分の PC の中で動きます。ゲームは three.js、工房のサービスは LangGraph、モデルは Ollama の qwen3.5 9B です。
 
 ## デモ
+
+[![紹介動画（日本語字幕）](docs/media/video-ja.jpg)](https://youtu.be/nlM76iN8KgE)
+
+1 分ほどの紹介動画です。キャラクターの読み込み、一文での依頼、プレビュー、確定、プレイまでを通しています。
 
 | | |
 |---|---|

@@ -11,6 +11,7 @@
 <p align="center"><b>写一句话，生成一关能玩的 3D 关卡。</b></p>
 
 <p align="center">
+  <a href="https://youtu.be/nlM76iN8KgE">演示视频</a> ·
   <a href="docs/how-it-works.zh.md">关卡工坊怎么做的</a> ·
   <a href="docs/guide.zh.md">玩法和设置</a>
 </p>
@@ -22,6 +23,10 @@
 全部在自己电脑上跑：游戏用 three.js 写，工坊的服务用 LangGraph，模型是 Ollama 里的 qwen3.5 9B。
 
 ## 演示
+
+[![介绍视频（日语字幕）](docs/media/video-ja.jpg)](https://youtu.be/nlM76iN8KgE)
+
+一分钟左右的介绍视频（日语字幕）：导入角色、写一句话、看预览、确认、玩完一关。
 
 | | |
 |---|---|

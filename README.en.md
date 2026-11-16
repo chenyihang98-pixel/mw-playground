@@ -11,6 +11,7 @@
 <p align="center"><b>Write one sentence, get a 3D level you can play.</b></p>
 
 <p align="center">
+  <a href="https://youtu.be/nlM76iN8KgE">Demo video</a> ·
   <a href="docs/how-it-works.en.md">How the Level Workshop works</a> ·
   <a href="docs/guide.en.md">Playing and settings</a>
 </p>
@@ -22,6 +23,10 @@ I didn't want to lay out every level by hand either, so there is a Level Worksho
 Everything runs on your own machine. The game is three.js, the workshop service is LangGraph, and the model is qwen3.5 9B through Ollama.
 
 ## Demo
+
+[![Intro video (Japanese captions)](docs/media/video-ja.jpg)](https://youtu.be/nlM76iN8KgE)
+
+A one-minute intro video with Japanese captions: import a character, write a sentence, look at the preview, confirm, play the level.
 
 | | |
 |---|---|
