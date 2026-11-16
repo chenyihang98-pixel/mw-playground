@@ -11,6 +11,7 @@ import type { LevelPackage } from './levels/package';
 import { RandomLevelJob } from './levels/randomJob';
 import { SAVED_LEVELS_DB, SavedLevels } from './levels/saved';
 import { builtinTitle, displayOpening, displayTitle } from './levels/titles';
+import { setBeforeLangSwitch } from '../i18n/browser';
 import { CameraRig } from './render/cameraRig';
 import { CharacterView } from './render/characterView';
 import { Environment } from './render/environment';
@@ -275,6 +276,8 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
 
   // ---------- 关卡（P5）----------
   const savedLevels = new SavedLevels(new IndexedDbRosterStore(SAVED_LEVELS_DB));
+  // 切换语言会刷新页面：先等名册和已保存关卡排队的写入都做完（F6 第 1 轮审查后加上）
+  setBeforeLangSwitch(() => Promise.all([roster.whenIdle(), savedLevels.whenIdle()]));
 
   const builtinKindOf = (pkg: LevelPackage) => builtinEntries().find((e) => pkg.key === `builtin:${e.id}`)?.kind;
 

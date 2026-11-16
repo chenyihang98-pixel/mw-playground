@@ -67,3 +67,34 @@ export function storeLang(storage: () => Pick<Storage, 'setItem'>, lang: Lang): 
     return false;
   }
 }
+
+/** 启动时的语言（浏览器入口 browser.ts 的 startLang 用它）：languages 就是 navigator.languages，空列表时取 en。 */
+export function detectLang(env: { readonly search: string; readonly languages: readonly string[]; readonly storage: () => Pick<Storage, 'getItem'> }): Lang {
+  return resolveLang({ search: env.search, stored: readStoredLang(env.storage), languages: env.languages });
+}
+
+export interface SwitchDeps {
+  /** 刷新前要等的事：名册和已保存关卡排队的写入做完（第 1 轮审查后加上；等的过程中出错也照样切换）。 */
+  readonly wait: () => Promise<unknown>;
+  readonly storage: () => Pick<Storage, 'setItem'>;
+  /** 当前地址（等完以后再读）。 */
+  readonly href: () => string;
+  /** 换到新地址（刷新页面）。 */
+  readonly assign: (url: string) => void;
+}
+
+/**
+ * 切换语言：先等排队的写入做完，再保存选择，去掉地址里的 ?lang=（不然它会盖过保存的选择），然后刷新页面。
+ * 保存不下来时改用 ?lang=（只对这次访问有效）。
+ */
+export async function switchLangWith(lang: Lang, deps: SwitchDeps): Promise<void> {
+  try {
+    await deps.wait();
+  } catch {
+    // 写入失败另有提示；语言照样切换
+  }
+  const url = new URL(deps.href());
+  if (storeLang(deps.storage, lang)) url.searchParams.delete('lang');
+  else url.searchParams.set('lang', lang);
+  deps.assign(url.toString());
+}

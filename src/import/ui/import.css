@@ -199,7 +199,8 @@
 
 .clip-controls {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* F6：用途和播放方式各占一行，下拉框放得下最长的选项（日语、英语的选项比中文长） */
+  grid-template-columns: 1fr;
   gap: var(--mw-space-2);
   margin-top: var(--mw-space-2);
 }

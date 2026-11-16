@@ -196,6 +196,8 @@
 
 .person-actions {
   display: flex;
+  /* F6：分工的下拉框不压窄（日语、英语的分工名较长）；放不下时“设置”和删除按钮换到下一行 */
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--mw-space-1);
 }
@@ -204,15 +206,13 @@
   display: flex;
   align-items: center;
   gap: var(--mw-space-2);
-  flex: 1;
-  min-width: 0;
+  flex: 1 0 auto;
   color: var(--mw-text-subtle);
   font-size: var(--mw-text-xs);
 }
 
 .person-role .mw-select {
-  flex: 1;
-  min-width: 0;
+  flex: 1 0 auto;
   height: 28px;
 }
 

@@ -1,5 +1,6 @@
 // 语言选择（F6）：开始界面和暂停菜单里各一个。选项固定写成“中文 / 日本語 / English”。
-// 切换时保存选择并刷新页面（i18n/browser.ts）：名册、已保存的关卡、静音设置都在浏览器的存储里，刷新后还在；
+// 切换时先等名册和已保存关卡排队的写入做完，再保存选择并刷新页面（i18n/browser.ts）：名册、已保存的关卡、
+// 静音设置都在浏览器的存储里，刷新后还在；
 // 只在开始界面和暂停菜单里提供，游玩中不会切到一半。
 
 import { switchLang } from '../i18n/browser';
@@ -17,7 +18,10 @@ export function langSelect(id: string): HTMLLabelElement {
   select.setAttribute('aria-label', t('lang.label'));
   select.addEventListener('change', () => {
     const lang = parseLang(select.value);
-    if (lang && lang !== currentLang()) switchLang(lang);
+    if (!lang || lang === currentLang()) return;
+    // 等名册和关卡的写入做完才刷新（见 i18n/browser.ts）；等的时候不能再选
+    select.disabled = true;
+    void switchLang(lang);
   });
   row.append(el('span', { className: 'mw-subtle', text: t('lang.label') }), select);
   return row;

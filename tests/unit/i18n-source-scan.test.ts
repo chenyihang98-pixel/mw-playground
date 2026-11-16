@@ -21,11 +21,6 @@ const WHOLE: readonly { readonly path: string; readonly reason: string }[] = [
       'GLB 结构检查模块，命令行工具 inspect-asset 也用它（命令行保持中文）。浏览器只用到它的错误，由 src/import/precheck.ts 按错误码翻译（中文界面照旧显示原文）',
   },
   { path: 'src/workshop/diff.ts', reason: '只在工坊服务端用：预览和回退里的差别说明由服务端写好，浏览器原样显示（标了 data-i18n-raw，F6 报告里列出）' },
-  {
-    path: 'src/game/level/gen/checker.ts',
-    reason:
-      '检查器的诊断信息：只在检查器拒绝了生成器做出的布局（程序缺陷）时出现；P5 的独立性测试限定检查器只能引用几个模块，为了不改那条约束，这里不翻译（F6 报告里列为没有翻译）',
-  },
   { path: 'src/game/level/builtin.ts', reason: 'P2 手工地图的布局数据（名字是数据的一部分，不改）；界面上的名字按 id 查 src/game/levels/titles.ts 的翻译表' },
   { path: 'src/game/level/generatedLevels.ts', reason: 'P5 冻结的生成关卡（布局、种子、说明书原样保存，不改）；界面上的名字和开场白按 id 查翻译表' },
   { path: 'src/game/spec.ts', reason: '玩法规格的自检说明（specProblems），只在单元测试里用，不显示在界面上' },

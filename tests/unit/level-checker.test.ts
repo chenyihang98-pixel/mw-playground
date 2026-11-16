@@ -175,6 +175,7 @@ describe('独立性', () => {
     const source = readFileSync(new URL('../../src/game/level/gen/checker.ts', import.meta.url), 'utf8');
     const imports = [...source.matchAll(/from '([^']+)'/g)].map((m) => m[1]);
     expect(imports).not.toContain('./generator');
-    expect(imports.every((i) => ['../../spec', '../geometry', '../schema', './brief', './config'].includes(i ?? ''))).toBe(true);
+    // F6 起检查器的说明取界面语言的词典（i18n 只提供文字，不含生成器的逻辑）
+    expect(imports.every((i) => ['../../spec', '../geometry', '../schema', './brief', './config', '../../../i18n'].includes(i ?? ''))).toBe(true);
   });
 });

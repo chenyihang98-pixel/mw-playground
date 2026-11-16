@@ -4,6 +4,11 @@
 //   每个画面检查界面文字（en：没有汉字和假名；ja：没有和日语不同的中文界面文字），检查按钮、标签不溢出、面板没有横向滚动，
 //   并截图到 test-results/i18n/（不提交）。用户数据和生成的文字所在的元素标了 data-i18n-raw，检查时跳过。
 // - 切换：开始界面 zh → ja → en，界面跟着变，刷新后保持；名册、已保存的关卡、静音设置都还在；暂停菜单里也能切换。
+// - 第 1 轮审查后补的：
+//   - 名册、已保存关卡的写入还没做完时切换语言：等写入做完才刷新，刷新后改动都在（测试在页面里开一个读写事务占住对象仓库，
+//     让游戏的写入排在后面，模拟存储慢）；
+//   - navigator.languages 是空列表时，入口按 en 处理（不看 navigator.language）；
+//   - 版面检查也查原生下拉框有没有被压窄、截断选项的文字。
 // 夹具写到系统临时目录，测试结束后删除。只读测试钩子，不改状态。
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -126,6 +131,18 @@ function layoutProblems(page: Page): Promise<string[]> {
         const over = [...el.querySelectorAll('*')].filter((c) => shown(c) && c.getBoundingClientRect().right > right + 1).slice(-3).map(name);
         bad.push(`横向滚动 ${name(el)} ${String(el.scrollWidth)} > ${String(el.clientWidth)}：${over.join(' | ')}`);
       }
+    }
+    // 原生下拉框：比它自然的宽度（容得下最长的选项）窄，就是有选项的文字被截断了
+    for (const select of document.querySelectorAll('select')) {
+      if (!shown(select) || hasRaw(select)) continue;
+      const clone = select.cloneNode(true) as HTMLSelectElement;
+      clone.removeAttribute('id');
+      Object.assign(clone.style, { position: 'absolute', visibility: 'hidden', left: '0', top: '0', width: 'auto', minWidth: '0', maxWidth: 'none', flex: 'none' });
+      select.parentElement?.append(clone);
+      const natural = clone.getBoundingClientRect().width;
+      clone.remove();
+      const actual = select.getBoundingClientRect().width;
+      if (actual + 1 < natural) bad.push(`下拉框被截断 ${name(select)} ${actual.toFixed(0)} < ${natural.toFixed(0)}`);
     }
     const root = document.documentElement;
     if (root.scrollWidth > root.clientWidth + 1) bad.push(`页面横向滚动 ${String(root.scrollWidth)} > ${String(root.clientWidth)}`);
@@ -315,4 +332,103 @@ test('切换：开始界面 zh → ja → en，界面跟着变，刷新后保持
   expect(after.roster.entries.map((e) => e.fileName)).toEqual(['friend.glb']);
   expect(after.levels.saved.map((e) => e.id)).toEqual([savedId]);
   expect(after.audio.muted).toBe(true);
+});
+
+/**
+ * 在页面里占住一个对象仓库：开一个读写事务，不停地发请求，ms 毫秒后才结束。游戏之后对这个仓库的写入会排在它后面，
+ * 用来模拟存储慢（写入还没做完）。等这个事务真的开始了才返回。
+ */
+async function holdStore(page: Page, db: string, store: string, ms: number) {
+  await page.evaluate(
+    ({ db, store, ms }) =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open(db);
+        open.onerror = () => {
+          reject(new Error(String(open.error)));
+        };
+        open.onsuccess = () => {
+          const conn = open.result;
+          const tx = conn.transaction(store, 'readwrite');
+          const objects = tx.objectStore(store);
+          const until = performance.now() + ms;
+          let started = false;
+          const spin = () => {
+            const req = objects.get('__f6-hold__');
+            req.onsuccess = () => {
+              if (!started) {
+                started = true;
+                resolve();
+              }
+              if (performance.now() < until) spin();
+            };
+          };
+          spin();
+          tx.oncomplete = () => {
+            conn.close();
+          };
+        };
+      }),
+    { db, store, ms },
+  );
+}
+
+test('名册的写入还没做完时在开始界面切换语言：等写入做完才刷新，刷新后改动还在', async ({ page }) => {
+  const zh = messagesOf('zh');
+  await page.goto('/');
+  await ready(page);
+  await page.locator('#import-file').setInputFiles(files['friend.glb'] ?? '');
+  await expect.poll(async () => (await read(page)).import.card?.fileName).toBe('friend.glb');
+  await page.getByRole('button', { name: zh['import.addPerson'], exact: true }).click();
+  await expect.poll(async () => (await read(page)).roster.saving).toBe(false);
+  await page.getByRole('button', { name: zh['common.close'], exact: true }).filter({ visible: true }).first().click();
+  await page.getByRole('button', { name: zh['common.roster'], exact: true }).filter({ visible: true }).first().click();
+  await expect.poll(async () => (await read(page)).ui.panel).toBe('roster');
+
+  // 占住名册的对象仓库 2.5 秒：改分工后的写入排在后面，还没做完
+  await holdStore(page, 'mw-playground', 'roster', 2500);
+  await page.getByRole('combobox', { name: zh['roster.roleOf'].replace('{name}', 'friend.glb') }).selectOption('companion');
+  await page.getByRole('button', { name: zh['roster.close'], exact: true }).click();
+  expect((await read(page)).roster.saving).toBe(true);
+
+  // 这时切换语言：等写入做完才刷新
+  await Promise.all([page.waitForEvent('load', { timeout: 20_000 }), page.locator('#home-lang').selectOption('en')]);
+  await ready(page);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  expect((await read(page)).roster.entries.map((e) => [e.fileName, e.role, e.status])).toEqual([['friend.glb', 'companion', 'ready']]);
+});
+
+test('已保存关卡的写入还没做完时在暂停菜单里切换语言：等写入做完才刷新，刷新后这一关还在', async ({ page }) => {
+  const zh = messagesOf('zh');
+  await page.goto('/?level=test-a');
+  await ready(page);
+  await page.getByRole('button', { name: zh['levels.choose'] }).filter({ visible: true }).first().click();
+  await page.getByRole('button', { name: zh['levels.random'], exact: true }).filter({ visible: true }).click();
+  await expect.poll(async () => (await read(page)).levels.select.random.kind, { timeout: 20_000 }).toBe('preview');
+
+  // 占住已保存关卡的对象仓库 2.5 秒：确认后的写入排在后面
+  await holdStore(page, 'mw-playground-levels', 'levels', 2500);
+  await page.getByRole('button', { name: zh['random.confirmLabel'], exact: true }).click();
+  await expect.poll(async () => (await read(page)).levels.saved.length).toBe(1);
+  const savedId = (await read(page)).levels.saved[0]?.id;
+  await page.getByRole('button', { name: zh['common.start'], exact: true }).filter({ visible: true }).click();
+  await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
+  await page.keyboard.press('Escape');
+  await expect.poll(async () => (await read(page)).game.phase).toBe('paused');
+
+  await Promise.all([page.waitForEvent('load', { timeout: 20_000 }), page.locator('#pause-lang').selectOption('ja')]);
+  await ready(page);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
+  expect((await read(page)).levels.saved.map((e) => [e.id, e.status])).toEqual([[savedId, 'ready']]);
+});
+
+test('navigator.languages 是空列表时（没有 ?lang=、没有保存的选择），按 en 处理，不看 navigator.language', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, 'languages', { get: () => [] });
+    Object.defineProperty(Navigator.prototype, 'language', { get: () => 'ja-JP' });
+  });
+  await page.goto('/');
+  await ready(page);
+  expect(await page.evaluate(() => [navigator.languages.length, navigator.language])).toEqual([0, 'ja-JP']);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(page.locator('#mw-home').getByRole('button', { name: messagesOf('en')['common.start'], exact: true })).toBeVisible();
 });

@@ -33,6 +33,7 @@ import {
 import { layoutProblems, levelLayoutBaseSchema, type LevelLayout } from '../schema';
 import { MAX_COLLECTIBLES_PER_PLATFORM, briefProblems, type Brief } from './brief';
 import { GEN_CONFIG } from './config';
+import { t } from '../../../i18n';
 
 /** brief：说明书或参数的问题；layout：检查发现的布局问题。 */
 export type ProblemCategory = 'brief' | 'layout';
@@ -107,7 +108,7 @@ export class Navigation {
     for (const layer of this.layers) {
       if (node >= layer.offset && node < layer.offset + layer.nx * layer.nz) return layer;
     }
-    throw new Error(`节点 ${String(node)} 不存在`);
+    throw new Error(t('checker.noNode', { node: String(node) }));
   }
 
   /** 节点所在格子的中心和那一层的脚底高度。 */
@@ -401,26 +402,26 @@ function briefMismatches(level: LevelLayout, solids: readonly Solid[], brief: Br
   const out: string[] = [];
   const tier = GEN_CONFIG.tiers[brief.tier];
   if (level.size.width !== tier.size || level.size.depth !== tier.size) {
-    out.push(`地图尺寸 ${String(level.size.width)} × ${String(level.size.depth)} m 与说明书的档位 ${brief.tier}（${String(tier.size)} m）不符`);
+    out.push(t('checker.sizeMismatch', { width: String(level.size.width), depth: String(level.size.depth), tier: brief.tier, size: String(tier.size) }));
   }
-  if (level.platforms.length !== brief.platforms) out.push(`高台有 ${String(level.platforms.length)} 个，说明书要 ${String(brief.platforms)} 个`);
-  if (level.collectibles.length !== brief.collectibles) out.push(`收集点有 ${String(level.collectibles.length)} 个，说明书要 ${String(brief.collectibles)} 个`);
-  if (level.guards.length !== brief.guards) out.push(`守卫有 ${String(level.guards.length)} 个，说明书要 ${String(brief.guards)} 个`);
+  if (level.platforms.length !== brief.platforms) out.push(t('checker.platformCount', { actual: String(level.platforms.length), expected: String(brief.platforms) }));
+  if (level.collectibles.length !== brief.collectibles) out.push(t('checker.collectibleCount', { actual: String(level.collectibles.length), expected: String(brief.collectibles) }));
+  if (level.guards.length !== brief.guards) out.push(t('checker.guardCount', { actual: String(level.guards.length), expected: String(brief.guards) }));
   if (brief.distribution === 'elevated') {
     const platforms = solids.filter((s) => s.kind === 'platform');
     const counts = new Map<string, number>();
     for (const c of level.collectibles) {
       const on = platforms.find((p) => rectContains(p.rect, c.position.x, c.position.z));
-      if (!on) out.push(`收集点 ${c.id} 不在高台上（说明书要求只放在高台上）`);
+      if (!on) out.push(t('checker.notOnPlatform', { id: c.id }));
       else counts.set(on.id, (counts.get(on.id) ?? 0) + 1);
     }
     for (const [id, n] of counts) {
-      if (n > MAX_COLLECTIBLES_PER_PLATFORM) out.push(`高台 ${id} 上有 ${String(n)} 个收集点，每个高台最多 ${String(MAX_COLLECTIBLES_PER_PLATFORM)} 个`);
+      if (n > MAX_COLLECTIBLES_PER_PLATFORM) out.push(t('checker.platformOverfull', { id, count: String(n), max: String(MAX_COLLECTIBLES_PER_PLATFORM) }));
     }
   }
   if (brief.patrol === 'back-and-forth') {
     for (const g of level.guards) {
-      if (!isBackAndForth(g.route)) out.push(`守卫 ${g.id} 的路线不是来回各走一遍（A→…→Z→…→A）`);
+      if (!isBackAndForth(g.route)) out.push(t('checker.patrolNotSymmetric', { id: g.id }));
     }
   }
   return out;
@@ -435,41 +436,41 @@ export function checkLevel(input: unknown, options: CheckOptions = {}): CheckRep
   // 说明书或参数的问题
   const h = options.grid ?? GEN_CONFIG.check.grid;
   const minDistance = options.spawnGuardDistance ?? GEN_CONFIG.check.spawnGuardDistance;
-  if (!Number.isFinite(h) || h <= 0) fail('brief', 'parameter', `网格边长 ${String(h)} 不对：必须是正数`);
-  if (!Number.isFinite(minDistance) || minDistance < 0) fail('brief', 'parameter', `出生点和守卫的最小距离 ${String(minDistance)} 不对：必须是非负数`);
-  if (options.brief) for (const p of briefProblems(options.brief)) fail('brief', 'brief', `说明书 ${p.path}：${p.message}`);
+  if (!Number.isFinite(h) || h <= 0) fail('brief', 'parameter', t('checker.badGrid', { grid: String(h) }));
+  if (!Number.isFinite(minDistance) || minDistance < 0) fail('brief', 'parameter', t('checker.badDistance', { distance: String(minDistance) }));
+  if (options.brief) for (const p of briefProblems(options.brief)) fail('brief', 'brief', t('checker.briefProblem', { path: p.path, message: p.message }));
   if (problems.length > 0) return empty();
 
   // 结构和语义（parseLevel 的两部分）
   const base = levelLayoutBaseSchema.safeParse(input);
   if (!base.success) {
-    for (const issue of base.error.issues) fail('layout', 'layout-schema', `${issue.path.map(String).join('.') || '（根）'}：${issue.message}`);
+    for (const issue of base.error.issues) fail('layout', 'layout-schema', `${issue.path.map(String).join('.') || t('common.root')}：${issue.message}`);
     return empty();
   }
   const level: LevelLayout = base.data;
-  for (const p of layoutProblems(base.data)) fail('layout', 'layout-rules', `${p.path.map(String).join('.') || '（根）'}：${p.message}`);
+  for (const p of layoutProblems(base.data)) fail('layout', 'layout-rules', `${p.path.map(String).join('.') || t('common.root')}：${p.message}`);
 
   const solids = layoutSolids(level);
   const bounds = mapBounds(level);
   const r = SPEC.capsule.radius;
   const cells = Math.ceil((bounds.maxX - bounds.minX) / h) * Math.ceil((bounds.maxZ - bounds.minZ) / h) * (1 + level.platforms.length);
   if (cells > MAX_CELLS) {
-    fail('brief', 'parameter', `网格边长 ${String(h)} m 对这张 ${String(level.size.width)} × ${String(level.size.depth)} m 的地图太细（${String(cells)} 个格子）：加大网格边长`);
+    fail('brief', 'parameter', t('checker.gridTooFine', { grid: String(h), width: String(level.size.width), depth: String(level.size.depth), cells: String(cells) }));
     return { ...empty(), level: null };
   }
 
   // 出生空间：胶囊在地图内、不与障碍重叠
   const spawn = level.spawn;
   if (spawn.x < bounds.minX + r || spawn.x > bounds.maxX - r || spawn.z < bounds.minZ + r || spawn.z > bounds.maxZ - r) {
-    fail('layout', 'spawn', '出生点的胶囊超出地图边界');
+    fail('layout', 'spawn', t('checker.spawnOutside'));
   }
   for (const s of solids) {
-    if (circleOverlapsRect(spawn.x, spawn.z, r, s.rect)) fail('layout', 'spawn', `出生点的胶囊与 ${s.id} 重叠`);
+    if (circleOverlapsRect(spawn.x, spawn.z, r, s.rect)) fail('layout', 'spawn', t('checker.spawnOverlap', { id: s.id }));
   }
 
   // 收集点数量
   if (level.collectibles.length < level.target) {
-    fail('layout', 'collectible-count', `收集点只有 ${String(level.collectibles.length)} 个，少于目标数 ${String(level.target)}`);
+    fail('layout', 'collectible-count', t('checker.notEnoughCollectibles', { count: String(level.collectibles.length), target: String(level.target) }));
   }
 
   // 巡逻路线：整段不穿过障碍（按守卫的胶囊半径），只在地面上；离出生点足够远
@@ -485,35 +486,35 @@ export function checkLevel(input: unknown, options: CheckOptions = {}): CheckRep
           fail(
             'layout',
             'patrol',
-            d === 0 ? `守卫 ${g.id} 的第 ${String(k)} 段路线穿过 ${s.id}（不在地面上）` : `守卫 ${g.id} 的第 ${String(k)} 段路线离 ${s.id} 只有 ${d.toFixed(2)} m，守卫的胶囊会碰到它`,
+            d === 0 ? t('checker.patrolThrough', { guard: g.id, segment: String(k), solid: s.id }) : t('checker.patrolTooClose', { guard: g.id, segment: String(k), solid: s.id, distance: d.toFixed(2) }),
           );
         }
       }
       if (pointSegmentDistance(spawn, a, b) < minDistance) {
-        fail('layout', 'spawn-guard-distance', `出生点离守卫 ${g.id} 的第 ${String(k)} 段路线不到 ${String(minDistance)} m`);
+        fail('layout', 'spawn-guard-distance', t('checker.spawnNearPatrol', { guard: g.id, segment: String(k), distance: String(minDistance) }));
       }
     }
     for (const p of g.route) {
       if (p.x < bounds.minX + r || p.x > bounds.maxX - r || p.z < bounds.minZ + r || p.z > bounds.maxZ - r) {
-        fail('layout', 'patrol', `守卫 ${g.id} 的路线点 (${String(p.x)}, ${String(p.z)}) 离地图边界不足一个胶囊半径`);
+        fail('layout', 'patrol', t('checker.patrolNearEdge', { guard: g.id, x: String(p.x), z: String(p.z) }));
       }
     }
   }
 
-  if (options.brief) for (const m of briefMismatches(level, solids, options.brief)) fail('layout', 'brief-mismatch', `布局与说明书不符：${m}`);
+  if (options.brief) for (const m of briefMismatches(level, solids, options.brief)) fail('layout', 'brief-mismatch', t('checker.briefMismatch', { problem: m }));
 
   // 寻路：每个必需的收集点都能从出生点走到
   const navigation = buildNavigation(level, solids, h);
   const sources = spawnSources(navigation, spawn);
   const reach = collectibleReach(navigation, level, solids);
   if (sources.length === 0) {
-    fail('layout', 'spawn', '出生点附近没有足够的空间（保守的寻路网格上没有能站的格子）');
+    fail('layout', 'spawn', t('checker.noStandingSpace'));
   } else {
     const dist = navigation.distances(sources);
     const reachable = reach.filter((c) => c.nodes.some((n) => Number.isFinite(dist[n] ?? Infinity)));
     if (reachable.length < level.target) {
       const missing = reach.filter((c) => !reachable.includes(c)).map((c) => c.id);
-      fail('layout', 'unreachable', `从出生点走不到的收集点：${missing.join('、')}（能走到 ${String(reachable.length)} 个，目标 ${String(level.target)} 个）`);
+      fail('layout', 'unreachable', t('checker.unreachable', { ids: missing.join(t('common.listSep')), reachable: String(reachable.length), target: String(level.target) }));
     }
   }
 

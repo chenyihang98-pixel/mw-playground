@@ -10,7 +10,9 @@ import { GENERATED_LEVELS } from '../../src/game/level/generatedLevels';
 import { builtinEntries, builtinPackage } from '../../src/game/levels/catalog';
 import { BUILTIN_OPENING_KEYS, BUILTIN_TITLE_KEYS, displayOpening, displayTitle } from '../../src/game/levels/titles';
 import { currentLang, messagesOf, setLang, t, type MessageKey } from '../../src/i18n';
-import { LANGS, LANG_STORAGE_KEY, langFromBrowser, readStoredLang, resolveLang, storeLang, type Lang } from '../../src/i18n/lang';
+import { LANGS, LANG_STORAGE_KEY, detectLang, langFromBrowser, readStoredLang, resolveLang, storeLang, switchLangWith, type Lang } from '../../src/i18n/lang';
+import { checkLevel } from '../../src/game/level/gen/checker';
+import { handmade, wallWithGap } from '../helpers/levels';
 import { poseWording } from '../../src/import/ui/wording';
 import { SERVER_ERROR_KEYS, serverErrorText } from '../../src/workshop/client';
 import { ERROR_CODES } from '../../src/workshop/protocol';
@@ -114,6 +116,54 @@ describe('语言的决定顺序', () => {
     expect(resolveLang({ search: '', stored: readStoredLang(throwing), languages: ['ja-JP'] })).toBe('ja');
   });
 
+  it('启动时：navigator.languages 是空列表就取 en（不再看别的浏览器设置）', () => {
+    const empty = () => ({ getItem: () => null });
+    expect(detectLang({ search: '', languages: [], storage: empty })).toBe('en');
+    expect(detectLang({ search: '', languages: ['ja-JP'], storage: empty })).toBe('ja');
+    expect(detectLang({ search: '?lang=zh', languages: [], storage: empty })).toBe('zh');
+  });
+
+  it('切换：等排队的写入做完才刷新；等的时候出错也照样切换；保存不下来时改用 ?lang=', async () => {
+    const map = new Map<string, string>();
+    const storage = () => ({
+      setItem: (k: string, v: string) => {
+        map.set(k, v);
+      },
+    });
+    let release: () => void = () => undefined;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const assigned: string[] = [];
+    const switching = switchLangWith('ja', {
+      wait: () => pending,
+      storage,
+      href: () => 'http://127.0.0.1:5173/?level=test-a&lang=en',
+      assign: (url) => assigned.push(url),
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    // 写入还没做完：没有保存选择，也没有刷新
+    expect(assigned).toEqual([]);
+    expect(map.size).toBe(0);
+    release();
+    await switching;
+    expect(map.get(LANG_STORAGE_KEY)).toBe('ja');
+    expect(assigned).toEqual(['http://127.0.0.1:5173/?level=test-a']);
+
+    // 等的过程中出错：照样切换
+    const failed: string[] = [];
+    await switchLangWith('en', { wait: () => Promise.reject(new Error('写入失败')), storage, href: () => 'http://127.0.0.1:5173/', assign: (url) => failed.push(url) });
+    expect(failed).toEqual(['http://127.0.0.1:5173/']);
+
+    // 保存不下来：改用 ?lang=
+    const blocked: string[] = [];
+    const denied = () => {
+      throw new DOMException('denied', 'SecurityError');
+    };
+    await switchLangWith('en', { wait: () => Promise.resolve(), storage: denied, href: () => 'http://127.0.0.1:5173/?level=test-a', assign: (url) => blocked.push(url) });
+    expect(blocked).toEqual(['http://127.0.0.1:5173/?level=test-a&lang=en']);
+  });
+
   it('保存和读回用同一个键', () => {
     const map = new Map<string, string>();
     const storage = () => ({
@@ -204,6 +254,21 @@ describe('随机一关的文字', () => {
         expect(parseBrief(brief, new Set(people.map((p) => p.id))).ok, `${lang} ${seed}`).toBe(true);
       }
     }
+  });
+});
+
+describe('检查器的说明（第 1 轮审查后翻译）', () => {
+  it('同一个走不到的布局：中文是原来的说法；英语、日语按当前语言（英语里没有汉字）', () => {
+    const layout = handmade({ boxes: wallWithGap(0.3) });
+    const zh = checkLevel(layout).problems.find((p) => p.code === 'unreachable');
+    expect(zh?.message).toMatch(/^从出生点走不到的收集点：/);
+    setLang('en');
+    const en = checkLevel(layout).problems.find((p) => p.code === 'unreachable');
+    expect(en?.message).toMatch(/^Gems that cannot be reached from the start point: /);
+    expect(en?.message).not.toMatch(CJK);
+    setLang('ja');
+    const ja = checkLevel(layout).problems.find((p) => p.code === 'unreachable');
+    expect(ja?.message).toMatch(/^スタート地点から届かない宝石：/);
   });
 });
 
