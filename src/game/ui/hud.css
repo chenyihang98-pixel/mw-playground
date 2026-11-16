@@ -374,3 +374,17 @@
 .overlay-actions--column {
   flex-direction: column;
 }
+
+/* 暂停菜单里的语言选择（F6） */
+.overlay-lang {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mw-space-1);
+  margin-top: var(--mw-space-3);
+  padding-top: var(--mw-space-3);
+  border-top: 1px solid var(--mw-border);
+}
+
+.overlay-lang p {
+  margin: 0;
+}

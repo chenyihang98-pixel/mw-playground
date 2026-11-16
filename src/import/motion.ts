@@ -3,8 +3,9 @@
 
 import { Matrix3, Matrix4, PropertyBinding, Vector3, type AnimationClip, type Interpolant, type KeyframeTrack, type Object3D } from 'three';
 import { CLIP_RULES } from './limits';
+import { t as tr } from '../i18n';
 
-export const LOCK_UNSUPPORTED_MESSAGE = '该片段暂不支持锁定水平位移，请选择其他原地片段或使用兜底。';
+export const LOCK_UNSUPPORTED_MESSAGE = tr('motion.lockUnsupported');
 
 export type RootMotion =
   /** 片段里没有 position 轨道：原地片段。 */
@@ -92,24 +93,24 @@ function findRootNode(clip: AnimationClip, root: Object3D): { target: TrackTarge
   const first = top[0];
   if (!first) return null;
   if (top.length > 1) {
-    const names = [...new Set(top.map((t) => t.node.name || t.node.uuid))].join('、');
-    return { reason: `层级最靠上的位置动画不唯一（${names}）` };
+    const names = [...new Set(top.map((t) => t.node.name || t.node.uuid))].join(tr('common.listSep'));
+    return { reason: tr('motion.topNotUnique', { names }) };
   }
   const ancestors = new Set(ancestorsBelow(first.node, root));
   for (const t of targets) {
     if (!ancestors.has(t.node)) continue;
     if (t.property === 'quaternion' || t.property === 'rotation') {
-      return { reason: `父节点 ${t.node.name || t.node.uuid} 在片段里有旋转动画` };
+      return { reason: tr('motion.parentRotates', { node: t.node.name || t.node.uuid }) };
     }
     if (t.property === 'scale') {
-      return { reason: `父节点 ${t.node.name || t.node.uuid} 在片段里有缩放动画，无法确定坐标系` };
+      return { reason: tr('motion.parentScales', { node: t.node.name || t.node.uuid }) };
     }
   }
   const matrix = parentToModel(first.node, root);
   const det = matrix.determinant();
-  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return { reason: '父节点的变换不可逆，无法确定坐标系' };
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return { reason: tr('motion.parentNotInvertible') };
   const track = clip.tracks[first.trackIndex];
-  if (!track || (valueStride(track) !== 3 && valueStride(track) !== 9)) return { reason: '位置轨道的数据格式无法识别' };
+  if (!track || (valueStride(track) !== 3 && valueStride(track) !== 9)) return { reason: tr('motion.badTrackFormat') };
   return { target: first, matrix };
 }
 
@@ -154,7 +155,7 @@ export function analyzeRootMotion(clip: AnimationClip, root: Object3D, threshold
   if (found === null) return { kind: 'none' };
   if ('reason' in found) return { kind: 'unidentified', reason: found.reason };
   const track = clip.tracks[found.target.trackIndex];
-  if (!track) return { kind: 'unidentified', reason: '位置轨道不存在' };
+  if (!track) return { kind: 'unidentified', reason: tr('motion.noTrack') };
   const { maxHorizontal, endHorizontal } = horizontalDisplacement(track, found.matrix);
   return {
     kind: 'identified',

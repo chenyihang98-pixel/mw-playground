@@ -1,3 +1,5 @@
+// F6：最先决定界面语言（其他模块顶层用 t() 算出来的文字也要是当前语言）
+import './i18n/boot';
 import './ui/theme.css';
 import { startGameApp } from './game/app';
 import { resolveLevelPackage } from './game/boot';

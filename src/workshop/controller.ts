@@ -8,6 +8,7 @@ import type { LevelPackage } from '../game/levels/package';
 import type { WorkshopClient, HealthResult } from './client';
 import { packageOfWire } from './level';
 import type { Fallback, Preview, RosterPersonSnapshot } from './protocol';
+import { t } from '../i18n';
 
 export interface WorkshopControllerHost {
   /** 确认后：保存（P5 的保存模块）并加载这一关。 */
@@ -79,9 +80,9 @@ export class WorkshopController {
   /** 模型能不能用（不能用时给出原因）。 */
   get usable(): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
     const health = this.healthNow;
-    if (!health) return { ok: false, reason: '正在检查工坊服务…' };
+    if (!health) return { ok: false, reason: t('workshop.checking') };
     if (health.kind === 'unreachable') return { ok: false, reason: health.reason };
-    if (!health.health.available) return { ok: false, reason: health.health.reason ?? '模型不可用' };
+    if (!health.health.available) return { ok: false, reason: health.health.reason ?? t('workshop.modelUnavailable') };
     return { ok: true };
   }
 
@@ -103,7 +104,7 @@ export class WorkshopController {
     if (this.epoch !== epoch || result.kind === 'stale') return;
     switch (result.kind) {
       case 'busy':
-        this.set({ kind: 'message', level: 'warning', text: `工坊正忙：${result.message}。请稍后再试。` });
+        this.set({ kind: 'message', level: 'warning', text: t('workshop.busy', { message: result.message }) });
         return;
       case 'unavailable':
         this.set({ kind: 'message', level: 'warning', text: result.reason });
@@ -163,12 +164,12 @@ export class WorkshopController {
       return;
     }
     if (result.kind === 'failed') {
-      this.set({ ...current, confirming: false, error: `没有确认成功：${result.message}` });
+      this.set({ ...current, confirming: false, error: t('workshop.confirmFailed', { message: result.message }) });
       return;
     }
     const wire = packageOfWire(result.response.level);
     if (!wire.ok || wire.pkg.layoutHash !== view.pkg.layoutHash) {
-      this.set({ kind: 'message', level: 'error', text: wire.ok ? '定稿和预览不一致' : wire.error });
+      this.set({ kind: 'message', level: 'error', text: wire.ok ? t('workshop.finalMismatch') : wire.error });
       return;
     }
     // 按生成标识只写入一次

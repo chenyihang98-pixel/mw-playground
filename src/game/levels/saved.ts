@@ -11,6 +11,7 @@ import { briefSchema, visualPresetSchema } from '../level/gen/brief';
 import { parseLevel } from '../level/schema';
 import type { RosterStore, StoredEntry } from '../../roster/store';
 import { layoutHash, type LevelPackage, type LevelSource } from './package';
+import { t } from '../../i18n';
 
 export const SAVED_FORMAT = 'mw-saved-level';
 export const SAVED_VERSION = 1;
@@ -58,30 +59,30 @@ type Decoded = { readonly ok: true; readonly pkg: LevelPackage; readonly order: 
 /** 存储里的值还原成一关。只校验、不重新生成、不重算时间。 */
 export function decodeSavedLevel(value: unknown, key?: string): Decoded {
   if (typeof value !== 'object' || value === null || (value as { format?: unknown }).format !== SAVED_FORMAT) {
-    return { ok: false, error: '记录损坏：不是已保存的关卡' };
+    return { ok: false, error: t('saved.notSavedLevel') };
   }
   const version = (value as { version?: unknown }).version;
   if (version !== SAVED_VERSION) {
-    const shown = typeof version === 'number' || typeof version === 'string' ? String(version) : '缺失';
-    return { ok: false, error: `认不出的存储版本（${shown}），本版只认版本 ${String(SAVED_VERSION)}` };
+    const shown = typeof version === 'number' || typeof version === 'string' ? String(version) : t('format.missing');
+    return { ok: false, error: t('format.unknownVersion', { shown, version: String(SAVED_VERSION) }) };
   }
   const parsed = recordSchema.safeParse(value);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
-    return { ok: false, error: `记录损坏：${first ? `${first.path.map(String).join('.')}：${first.message}` : '格式不对'}` };
+    return { ok: false, error: t('format.corrupt', { where: first ? `${first.path.map(String).join('.')}：${first.message}` : t('format.badFormat') }) };
   }
   const r: SavedRecord = parsed.data;
-  if (key !== undefined && key !== r.id) return { ok: false, error: '记录损坏：键与记录里的 id 不一致' };
+  if (key !== undefined && key !== r.id) return { ok: false, error: t('roster.keyMismatch') };
   let layout;
   try {
     layout = parseLevel(r.layout);
   } catch (error) {
-    return { ok: false, error: `记录损坏：${error instanceof Error ? error.message : String(error)}` };
+    return { ok: false, error: t('format.corrupt', { where: error instanceof Error ? error.message : String(error) }) };
   }
   if (layout.timeLimit !== r.rules.timeLimit || layout.target !== r.rules.target) {
-    return { ok: false, error: '记录损坏：布局里的时间限制或目标数与保存的规则不一致' };
+    return { ok: false, error: t('saved.rulesMismatch') };
   }
-  if (layoutHash(layout) !== r.id) return { ok: false, error: '记录损坏：布局的哈希与记录的 id 不一致' };
+  if (layoutHash(layout) !== r.id) return { ok: false, error: t('saved.hashMismatch') };
   return {
     ok: true,
     order: r.order,
@@ -131,8 +132,8 @@ interface Item {
 
 function describeError(error: unknown): string {
   const name = error && typeof error === 'object' && 'name' in error ? String(error.name) : '';
-  if (name === 'QuotaExceededError') return '存储空间不够';
-  if (name === 'SecurityError' || name === 'InvalidStateError') return '浏览器禁止使用本地存储';
+  if (name === 'QuotaExceededError') return t('storage.quota');
+  if (name === 'SecurityError' || name === 'InvalidStateError') return t('storage.denied');
   if (error instanceof Error && error.message) return error.message;
   return name || String(error);
 }
@@ -161,7 +162,7 @@ export class SavedLevels {
   }
 
   private failed(what: string, error: unknown): void {
-    this.problem = `${what}（${describeError(error)}）。游戏照常运行，本次会话里的关卡列表仍然能用，但刷新后不会保留这些修改`;
+    this.problem = t('saved.storageProblem', { what, error: describeError(error) });
     this.notice(this.problem);
     this.emit();
   }
@@ -204,7 +205,7 @@ export class SavedLevels {
       stored = await this.store.loadAll();
     } catch (error) {
       this.loadingNow = false;
-      this.failed('读不了浏览器里保存的关卡', error);
+      this.failed(t('saved.loadFailed'), error);
       return;
     }
     const loaded: Item[] = [];
@@ -214,7 +215,7 @@ export class SavedLevels {
       if (decoded.ok) loaded.push({ id: key, order: decoded.order, pkg: decoded.pkg, error: null });
       else {
         loaded.push({ id: key, order: Number.MAX_SAFE_INTEGER, pkg: null, error: decoded.error });
-        this.notice(`已保存的关卡里有一项已跳过：${decoded.error}（记录还在，可以删除）`);
+        this.notice(t('saved.entrySkipped', { error: decoded.error }));
       }
     }
     this.items = [...this.items, ...loaded].sort((a, b) => a.order - b.order);
@@ -226,7 +227,7 @@ export class SavedLevels {
     return this.items.map((i) => ({
       id: i.id,
       status: i.pkg ? 'ready' : 'failed',
-      title: i.pkg?.title ?? '（无法读取的关卡）',
+      title: i.pkg?.title ?? t('saved.unreadableTitle'),
       error: i.error,
       source: i.pkg?.source ?? null,
       layoutHash: i.pkg?.layoutHash ?? null,
@@ -246,7 +247,7 @@ export class SavedLevels {
     if (existing) return { ok: true, id: existing.id, duplicate: true };
     const order = this.items.reduce((max, i) => (i.order === Number.MAX_SAFE_INTEGER ? max : Math.max(max, i.order + 1)), 0);
     const record = encode(pkg, order);
-    if (!record) return { ok: false, error: '只有由说明书生成的关卡才能保存' };
+    if (!record) return { ok: false, error: t('saved.onlyGenerated') };
     const saved: LevelPackage = { ...pkg, key: `saved:${record.id}` };
     this.items = [...this.items, { id: record.id, order, pkg: saved, error: null }];
     const write = this.store.put(record.id, record).then(
@@ -257,7 +258,7 @@ export class SavedLevels {
         }
       },
       (error: unknown) => {
-        this.failed(`关卡“${pkg.title}”没有保存`, error);
+        this.failed(t('saved.notSaved', { title: pkg.title }), error);
       },
     );
     void this.track(write);
@@ -273,7 +274,7 @@ export class SavedLevels {
       this.store.delete(id).then(
         () => undefined,
         (error: unknown) => {
-          this.failed('关卡没有从存储里删除', error);
+          this.failed(t('saved.notDeleted'), error);
         },
       ),
     );

@@ -23,6 +23,8 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     baseURL: BASE_URL,
+    // F6：界面语言按浏览器语言决定；原有的测试都按中文界面写，这里固定浏览器语言为 zh-CN（ja、en 的测试自己切换）
+    locale: 'zh-CN',
     trace: 'off',
     screenshot: 'off',
     video: 'off',

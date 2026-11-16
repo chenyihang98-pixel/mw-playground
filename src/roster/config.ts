@@ -1,5 +1,7 @@
 // 名册（P4）的配置：上限和分工。改上限时同时改 docs/status.md 的 P4 一节。
 
+import { t } from '../i18n';
+
 export const ROSTER_LIMITS = Object.freeze({
   /** 名册最多几个人物（包括恢复失败、仍留在存储里的项）。 */
   maxPeople: 20,
@@ -14,11 +16,11 @@ export const ROLES = ['player', 'guard', 'playerGuard', 'companion', 'none'] as 
 export type Role = (typeof ROLES)[number];
 
 export const ROLE_LABELS: Readonly<Record<Role, string>> = Object.freeze({
-  player: '主角',
-  guard: '守卫',
-  playerGuard: '主角兼守卫',
-  companion: '同伴',
-  none: '不出场',
+  player: t('role.player'),
+  guard: t('role.guard'),
+  playerGuard: t('role.playerGuard'),
+  companion: t('role.companion'),
+  none: t('role.none'),
 });
 
 /** 这个分工是不是主角（含主角兼守卫）。 */

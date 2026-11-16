@@ -7,6 +7,7 @@
 import { SPEC } from '../../spec';
 import type { CheckReport } from './checker';
 import { GEN_CONFIG, INTENTS, type Intent, type Tier } from './config';
+import { t } from '../../../i18n';
 
 type GenConfig = typeof GEN_CONFIG;
 
@@ -68,8 +69,7 @@ export function decideTimeLimit(routeSeconds: number, intent: Intent, tier: Tier
       routeSeconds,
       needed,
       message:
-        `太远：路线时间约 ${routeSeconds.toFixed(1)} 秒，按最紧的难度系数 ${String(tightestFactor(config))} 加余量 ${String(margin)} 秒需要约 ${needed.toFixed(0)} 秒，` +
-        `超过 ${tier} 地图的时间上限 ${String(bounds.max)} 秒：减少收集点、降低障碍密度，或换成更大的地图档位`,
+        t('timing.tooFar', { route: routeSeconds.toFixed(1), factor: String(tightestFactor(config)), margin: String(margin), needed: needed.toFixed(0), tier, max: String(bounds.max) }),
     };
   }
   const raw = routeSeconds * config.timing.intent[intent] + margin;

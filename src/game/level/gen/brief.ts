@@ -25,6 +25,7 @@ import {
   type TimeOfDay,
   type Weather,
 } from './config';
+import { t } from '../../../i18n';
 
 export const BRIEF_SCHEMA_VERSION = 1;
 
@@ -98,19 +99,19 @@ export function briefProblems(brief: Brief, rosterIds?: ReadonlySet<string>): Br
   if (brief.collectibles < range.min || brief.collectibles > range.max) {
     add(
       'collectibles',
-      `${brief.tier} 地图的收集点数量要在 ${String(range.min)}–${String(range.max)} 之间，现在是 ${String(brief.collectibles)}：改成这个范围里的数，或换一个地图档位`,
+      t('brief.collectiblesRange', { tier: brief.tier, min: String(range.min), max: String(range.max), count: String(brief.collectibles) }),
     );
   }
   if (brief.guards > tier.maxGuards) {
-    add('guards', `${brief.tier} 地图最多 ${String(tier.maxGuards)} 个守卫，现在是 ${String(brief.guards)}：减少守卫，或换成更大的地图档位`);
+    add('guards', t('brief.tooManyGuards', { tier: brief.tier, max: String(tier.maxGuards), count: String(brief.guards) }));
   }
   if (brief.distribution === 'elevated') {
     if (brief.platforms === 0) {
-      add('distribution', '收集点分布是 elevated（只放在高台上），但高台数量是 0：把高台数量改成 1–4，或换一种分布');
+      add('distribution', t('brief.elevatedNoPlatforms'));
     } else if (brief.collectibles > brief.platforms * MAX_COLLECTIBLES_PER_PLATFORM) {
       add(
         'collectibles',
-        `收集点只放在高台上时，每个高台最多 ${String(MAX_COLLECTIBLES_PER_PLATFORM)} 个：${String(brief.platforms)} 个高台最多 ${String(brief.platforms * MAX_COLLECTIBLES_PER_PLATFORM)} 个收集点，现在是 ${String(brief.collectibles)}：减少收集点、增加高台，或换一种分布`,
+        t('brief.elevatedTooMany', { perPlatform: String(MAX_COLLECTIBLES_PER_PLATFORM), platforms: String(brief.platforms), max: String(brief.platforms * MAX_COLLECTIBLES_PER_PLATFORM), count: String(brief.collectibles) }),
       );
     }
   }
@@ -118,17 +119,17 @@ export function briefProblems(brief: Brief, rosterIds?: ReadonlySet<string>): Br
   const guardCast = brief.cast.filter((c) => c.role === 'guard').length;
   const companionCast = brief.cast.filter((c) => c.role === 'companion').length;
   if (guardCast > brief.guards) {
-    add('cast', `出场人物里有 ${String(guardCast)} 个守卫，但守卫数量是 ${String(brief.guards)}：减少出场的守卫，或把守卫数量加到 ${String(guardCast)}（不超过档位上限 ${String(tier.maxGuards)}）`);
+    add('cast', t('brief.castGuards', { cast: String(guardCast), guards: String(brief.guards), max: String(tier.maxGuards) }));
   }
   if (companionCast > b.maxCompanions) {
-    add('cast', `出场人物里有 ${String(companionCast)} 个同伴，最多 ${String(b.maxCompanions)} 个：减少出场的同伴`);
+    add('cast', t('brief.castCompanions', { count: String(companionCast), max: String(b.maxCompanions) }));
   }
   const seen = new Set<string>();
   brief.cast.forEach((c, i) => {
-    if (seen.has(c.personId)) add(`cast.${String(i)}.personId`, `人物 ${c.personId} 在出场人物里出现了不止一次：每个人物只能出场一次`);
+    if (seen.has(c.personId)) add(`cast.${String(i)}.personId`, t('brief.dupPerson', { id: c.personId }));
     seen.add(c.personId);
     if (rosterIds && !rosterIds.has(c.personId)) {
-      add(`cast.${String(i)}.personId`, `出场人物 ${c.personId} 不在名册里：从名册里选人物，或去掉这一项`);
+      add(`cast.${String(i)}.personId`, t('brief.notInRoster', { id: c.personId }));
     }
   });
   return problems;
@@ -140,14 +141,14 @@ export type BriefResult = { readonly ok: true; readonly brief: Brief } | { reado
 export function parseBrief(input: unknown, rosterIds?: ReadonlySet<string>): BriefResult {
   const version = typeof input === 'object' && input !== null ? (input as { schemaVersion?: unknown }).schemaVersion : undefined;
   if (version !== BRIEF_SCHEMA_VERSION) {
-    const shown = typeof version === 'number' || typeof version === 'string' ? String(version) : '缺失';
-    return { ok: false, problems: [{ path: 'schemaVersion', message: `说明书版本（${shown}）认不出：本版只认 schemaVersion ${String(BRIEF_SCHEMA_VERSION)}` }] };
+    const shown = typeof version === 'number' || typeof version === 'string' ? String(version) : t('format.missing');
+    return { ok: false, problems: [{ path: 'schemaVersion', message: t('brief.unknownVersion', { shown, version: String(BRIEF_SCHEMA_VERSION) }) }] };
   }
   const parsed = briefSchema.safeParse(input);
   if (!parsed.success) {
     return {
       ok: false,
-      problems: parsed.error.issues.map((issue) => ({ path: issue.path.map(String).join('.') || '(根)', message: issue.message })),
+      problems: parsed.error.issues.map((issue) => ({ path: issue.path.map(String).join('.') || t('brief.rootPath'), message: issue.message })),
     };
   }
   const problems = briefProblems(parsed.data, rosterIds);

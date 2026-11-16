@@ -4,6 +4,7 @@
 // 浏览器不支持、被禁止、配额不够、读写出错时，操作返回被拒绝的 Promise（不同步抛错），由名册给出提示。
 
 import type { RosterStore, StoredEntry } from './store';
+import { t } from '../i18n';
 
 const DB_NAME = 'mw-playground';
 const DB_VERSION = 1;
@@ -30,7 +31,7 @@ export class IndexedDbRosterStore implements RosterStore {
     const opening = new Promise<IDBDatabase>((resolve, reject) => {
       try {
         if (typeof indexedDB === 'undefined') {
-          reject(new Error('浏览器不支持 IndexedDB'));
+          reject(new Error(t('idb.unsupported')));
           return;
         }
         const request = indexedDB.open(this.names.database, DB_VERSION);
@@ -42,13 +43,13 @@ export class IndexedDbRosterStore implements RosterStore {
           resolve(request.result);
         };
         request.onerror = () => {
-          reject(failure(request.error, '打不开 IndexedDB'));
+          reject(failure(request.error, t('idb.openFailed')));
         };
         request.onblocked = () => {
-          reject(new Error('IndexedDB 被其他页面占用'));
+          reject(new Error(t('idb.blocked')));
         };
       } catch (error) {
-        reject(failure(error, '打不开 IndexedDB'));
+        reject(failure(error, t('idb.openFailed')));
       }
     });
     // 打开失败时不缓存，下一次操作再试
@@ -68,20 +69,20 @@ export class IndexedDbRosterStore implements RosterStore {
         let finished = false;
         tx.oncomplete = () => {
           if (finished) resolve(result as T);
-          else reject(new Error('IndexedDB 事务没有完成'));
+          else reject(new Error(t('idb.txIncomplete')));
         };
         tx.onerror = () => {
-          reject(failure(tx.error, 'IndexedDB 读写出错'));
+          reject(failure(tx.error, t('idb.rwError')));
         };
         tx.onabort = () => {
-          reject(failure(tx.error, 'IndexedDB 事务被中止'));
+          reject(failure(tx.error, t('idb.txAborted')));
         };
         work(tx.objectStore(this.names.store), (value) => {
           result = value;
           finished = true;
         });
       } catch (error) {
-        reject(failure(error, 'IndexedDB 读写出错'));
+        reject(failure(error, t('idb.rwError')));
       }
     });
   }

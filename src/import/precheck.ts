@@ -1,7 +1,26 @@
 // 读取之前的检查（纯函数）：文件类型和大小；GLB 再用 P1 的 inspect 模块做结构预检，不经过加载器。
 
 import { inspectGlb, type InspectReport } from '../asset/inspect';
+import type { InspectError, InspectErrorCode } from '../asset/inspect/types';
 import { IMPORT_LIMITS, UNSUPPORTED_COMPRESSION_EXTENSIONS, type ImportLimits } from './limits';
+import { currentLang, t, type MessageKey } from '../i18n';
+
+/** GLB 结构预检的错误（P1 的 inspect 模块，命令行也用它，说明是中文）按错误码翻译（F6）。 */
+const INSPECT_ERROR_KEYS: Readonly<Record<InspectErrorCode, MessageKey>> = {
+  empty: 'inspectError.empty',
+  'not-glb': 'inspectError.notGlb',
+  'unsupported-version': 'inspectError.unsupportedVersion',
+  truncated: 'inspectError.truncated',
+  'length-mismatch': 'inspectError.lengthMismatch',
+  'bad-chunks': 'inspectError.badChunks',
+  'invalid-json': 'inspectError.invalidJson',
+  'invalid-gltf': 'inspectError.invalidGltf',
+};
+
+/** 中文界面照旧用 inspect 模块的原文（带具体数字）；日语和英语按错误码给出对应的说明。 */
+export function inspectErrorText(error: InspectError): string {
+  return currentLang() === 'zh' ? error.message : t(INSPECT_ERROR_KEYS[error.code]);
+}
 
 export type ImportFormat = 'glb' | 'obj' | 'stl' | 'ply';
 
@@ -43,19 +62,19 @@ export function checkBeforeRead(fileName: string, size: number, limits: ImportLi
   if (typeof format !== 'string') {
     const error =
       format.unsupported === '.gltf'
-        ? '.gltf 会引用外部文件：请导出为自包含的 GLB'
-        : `不支持的文件类型${format.unsupported ? `“${format.unsupported}”` : ''}：请选择 .glb、.obj、.stl 或 .ply 文件`;
+        ? t('import.gltfExternal')
+        : t('import.unsupportedType', { type: format.unsupported ? t('import.quotedType', { type: format.unsupported }) : '' });
     return { ok: false, error, warnings: [] };
   }
   if (size > limits.fileRejectBytes) {
     return {
       ok: false,
-      error: `文件太大（${formatMb(size)} MB），超过 ${formatMb(limits.fileRejectBytes)} MB 的上限`,
+      error: t('import.tooLarge', { size: formatMb(size), limit: formatMb(limits.fileRejectBytes) }),
       warnings: [],
     };
   }
-  if (size === 0) return { ok: false, error: '文件是空的', warnings: [] };
-  const warnings = size > limits.fileWarnBytes ? [`文件较大（${formatMb(size)} MB），读取和加载可能较慢`] : [];
+  if (size === 0) return { ok: false, error: t('import.emptyFile'), warnings: [] };
+  const warnings = size > limits.fileWarnBytes ? [t('import.largeFile', { size: formatMb(size) })] : [];
   return { ok: true, value: format, warnings };
 }
 
@@ -75,30 +94,30 @@ export interface GlbFacts {
 export function precheckGlb(bytes: Uint8Array, limits: ImportLimits = IMPORT_LIMITS): CheckResult<GlbFacts> {
   const inspected = inspectGlb(bytes);
   if (!inspected.ok) {
-    return { ok: false, error: `文件损坏或不是合法的 GLB：${inspected.error.message}`, warnings: [] };
+    return { ok: false, error: t('import.corruptGlb', { detail: inspectErrorText(inspected.error) }), warnings: [] };
   }
   const report = inspected.report;
   const warnings: string[] = [];
   const reject = (error: string): CheckResult<GlbFacts> => ({ ok: false, error, warnings });
 
-  if (report.externalResources.length > 0) return reject('文件引用了外部资源，请导出为自包含的 GLB');
+  if (report.externalResources.length > 0) return reject(t('import.externalResources'));
 
   const unsupported = report.extensionsRequired.filter((ext) => UNSUPPORTED_COMPRESSION_EXTENSIONS.includes(ext));
-  if (unsupported.length > 0) return reject(`本版不支持这种压缩格式：${unsupported.join('、')}`);
+  if (unsupported.length > 0) return reject(t('import.unsupportedCompression', { names: unsupported.join(t('common.listSep')) }));
 
   const triangles = report.meshes.triangles.status === 'computed' ? report.meshes.triangles.value : null;
   if (triangles !== null) {
     if (triangles > limits.trianglesReject) {
-      return reject(`三角面太多（${formatCount(triangles)}），超过 ${formatCount(limits.trianglesReject)} 的上限`);
+      return reject(t('import.tooManyTriangles', { count: formatCount(triangles), limit: formatCount(limits.trianglesReject) }));
     }
-    if (triangles > limits.trianglesWarn) warnings.push(`三角面较多（${formatCount(triangles)}），可能影响帧率`);
+    if (triangles > limits.trianglesWarn) warnings.push(t('import.manyTriangles', { count: formatCount(triangles) }));
   }
 
   const bones = report.skins.uniqueJointCount;
-  if (bones > limits.bonesMax) return reject(`骨骼太多（${formatCount(bones)}），超过 ${formatCount(limits.bonesMax)} 的上限`);
+  if (bones > limits.bonesMax) return reject(t('import.tooManyBones', { count: formatCount(bones), limit: formatCount(limits.bonesMax) }));
 
   const clips = report.animations.count;
-  if (clips > limits.clipsMax) return reject(`动画片段太多（${formatCount(clips)}），超过 ${formatCount(limits.clipsMax)} 的上限`);
+  if (clips > limits.clipsMax) return reject(t('import.tooManyClips', { count: formatCount(clips), limit: formatCount(limits.clipsMax) }));
 
   const imageSizes: { width: number; height: number }[] = [];
   for (const image of report.textures.images) {
@@ -106,7 +125,7 @@ export function precheckGlb(bytes: Uint8Array, limits: ImportLimits = IMPORT_LIM
     const { width, height } = image.size.value;
     imageSizes.push({ width, height });
     if (Math.max(width, height) > limits.textureEdgeMax) {
-      return reject(`贴图太大（${String(width)}×${String(height)}），边长超过 ${formatCount(limits.textureEdgeMax)} 的上限`);
+      return reject(t('import.textureTooLarge', { width: String(width), height: String(height), limit: formatCount(limits.textureEdgeMax) }));
     }
   }
 

@@ -8,6 +8,7 @@ import { loadModel, type LoadedModel } from './load';
 import { bindPoseBounds } from './normalize';
 import { checkBeforeRead, precheckGlb } from './precheck';
 import { disposeObject, loadedStats, postLoadCheck } from './resources';
+import { t } from '../i18n';
 
 export interface ImportSource {
   readonly name: string;
@@ -23,7 +24,7 @@ export type ImportOutcome =
 
 function message(error: unknown): string {
   if (error instanceof Error) return error.message;
-  return typeof error === 'string' ? error : '未知错误';
+  return typeof error === 'string' ? error : t('import.unknownError');
 }
 
 export async function importModel(source: ImportSource, limits: ImportLimits = IMPORT_LIMITS): Promise<ImportOutcome> {
@@ -39,7 +40,7 @@ export async function importModel(source: ImportSource, limits: ImportLimits = I
   try {
     bytes = await source.read();
   } catch (error) {
-    return fail('read', `读不了文件：${message(error)}`);
+    return fail('read', t('import.readFailed', { message: message(error) }));
   }
 
   if (format === 'glb') {
@@ -52,7 +53,7 @@ export async function importModel(source: ImportSource, limits: ImportLimits = I
   try {
     loaded = await loadModel(format, bytes);
   } catch (error) {
-    return fail('parse', `文件损坏或格式不对，无法解析：${message(error)}`);
+    return fail('parse', t('import.parseFailed', { message: message(error) }));
   }
 
   // 从这里起 loaded.scene 已经可用：任何一步失败（包括意外的异常）都先释放它
@@ -69,7 +70,7 @@ export async function importModel(source: ImportSource, limits: ImportLimits = I
     // 绑定姿态只算一次：包围盒、“绑定姿态”片段和实例都用同一份
     const bindPose = computeBindPose(scene);
     const bounds = bindPoseBounds(scene, bindPose);
-    if (!bounds) return release('文件里没有可显示的几何');
+    if (!bounds) return release(t('import.noGeometry'));
     const asset = new ImportedAsset({
       id: await sha256Hex(bytes),
       fileName: source.name,
@@ -85,7 +86,7 @@ export async function importModel(source: ImportSource, limits: ImportLimits = I
     });
     return { ok: true, asset, warnings };
   } catch (error) {
-    return release(`文件损坏或格式不对，加载后的检查失败：${message(error)}`);
+    return release(t('import.checkFailed', { message: message(error) }));
   }
 }
 

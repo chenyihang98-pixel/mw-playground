@@ -15,8 +15,8 @@ import type { SoundSnapshot } from './audio/sound';
 export type PanelId = 'levels' | 'roster' | 'import';
 /** 覆盖层的位置（P6）：居中，或让到左侧、右侧。 */
 export type OverlayDock = 'center' | 'left' | 'right';
-/** 难度估计的三档（P6）。 */
-export type DifficultyLabel = '轻松' | '普通' | '紧张';
+/** 难度估计的三档（P6）在当前语言里的叫法（F6：中文是 轻松 / 普通 / 紧张，见 difficulty.* 的词条）。 */
+export type DifficultyLabel = string;
 
 export type LookMode = 'pointer-lock' | 'drag';
 

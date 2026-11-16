@@ -9,6 +9,7 @@
 import './workshopPanel.css';
 import type { LevelPackage } from '../levels/package';
 import { FALLBACK_LEVEL_ID } from '../level/generatedLevels';
+import { displayTitle } from '../levels/titles';
 import { WorkshopClient } from '../../workshop/client';
 import { WorkshopController, type WorkshopView } from '../../workshop/controller';
 import { OUTCOME_LABELS, type Fallback, type PersonRole, type RosterPersonSnapshot } from '../../workshop/protocol';
@@ -16,6 +17,8 @@ import { button, el, notice, tag } from '../../ui/dom';
 import { icon } from '../../ui/icons';
 import { drawLevelMap, visualLabel } from './levelInfo';
 import type { WorkshopSnapshot } from '../appTypes';
+import { t } from '../../i18n';
+import { markRaw, rawNotice, rawSpan, richNotice, tNodes } from '../../ui/raw';
 
 export interface WorkshopPanelHost {
   /** 名册里可以出场的人物（已恢复好的）。 */
@@ -31,16 +34,16 @@ export interface WorkshopPanelHost {
 type RoleChoice = 'both' | PersonRole;
 
 /** 出场人物区的标题和说明（F3：工坊生成的关卡，没勾选的人不出场）。 */
-const CAST_TITLE = '出场人物（没勾选的人不出场）';
-const CAST_HINT = '一个都不勾选时，这一关没有同伴，守卫用默认小人；主角仍按名册。';
+const CAST_TITLE = t('workshop.castTitle');
+const CAST_HINT = t('workshop.castHint');
 
 /** 生成进行时，等待提示下面的说明（F4）。 */
-const RUNNING_HINT = '第一次生成要先把模型加载进显卡；长时间没用之后可能要等几十秒。';
+const RUNNING_HINT = t('workshop.runningHint');
 
 const ROLE_CHOICES: readonly [RoleChoice, string][] = [
-  ['both', '同伴或守卫'],
-  ['companion', '只当同伴'],
-  ['guard', '只当守卫'],
+  ['both', t('workshop.roleBoth')],
+  ['companion', t('workshop.roleCompanion')],
+  ['guard', t('workshop.roleGuard')],
 ];
 
 export class WorkshopPanel {
@@ -69,22 +72,22 @@ export class WorkshopPanel {
         applyLevel: (pkg) => {
           host.applyLevel(pkg);
         },
-        applyFallback: () => host.applyFallback().title,
+        applyFallback: () => displayTitle(host.applyFallback()).text,
       },
       () => {
         this.changed();
       },
     );
     this.input.rows = 3;
-    this.input.placeholder = '例如：下雨的夜晚，中等大小的地图，宝石都藏在高台上，两个守卫来回巡逻。';
-    this.input.setAttribute('aria-label', '一句话描述想玩的关卡');
+    this.input.placeholder = t('workshop.placeholder');
+    this.input.setAttribute('aria-label', t('workshop.inputLabel'));
     this.input.addEventListener('input', () => {
       this.renderCounter();
     });
-    this.generateButton = button('生成关卡', () => {
+    this.generateButton = button(t('workshop.generate'), () => {
       void this.controller.generate(this.input.value, this.snapshotRoster());
     }, { icon: 'star', variant: 'primary', className: 'ws-generate' });
-    const textLabel = el('label', { className: 'ws-label', text: '用一句话描述想玩的关卡' });
+    const textLabel = el('label', { className: 'ws-label', text: t('workshop.inputTitle') });
     const textRow = el('div', { className: 'ws-text-row' });
     textRow.append(this.input, this.counter);
     this.form.append(textLabel, textRow, this.people, this.generateButton);
@@ -109,7 +112,7 @@ export class WorkshopPanel {
       const choice = this.choices.get(p.id);
       if (!choice?.checked) continue;
       const roles: PersonRole[] = choice.roles === 'both' ? ['companion', 'guard'] : [choice.roles];
-      out.push({ id: p.id, name: p.name.slice(0, 64) || '（无名）', roles });
+      out.push({ id: p.id, name: p.name.slice(0, 64) || t('workshop.unnamed'), roles });
     }
     return out;
   }
@@ -146,8 +149,8 @@ export class WorkshopPanel {
     this.peopleKey = key;
     if (people.length === 0) {
       // 名册里没有可以出场的人物：显示和以前一样
-      const emptyTitle = el('div', { className: 'ws-label', text: '出场人物（可以不选）' });
-      this.people.replaceChildren(emptyTitle, el('p', { className: 'mw-subtle ws-empty', text: '名册里还没有可以出场的人物。' }));
+      const emptyTitle = el('div', { className: 'ws-label', text: t('workshop.castTitleOptional') });
+      this.people.replaceChildren(emptyTitle, el('p', { className: 'mw-subtle ws-empty', text: t('workshop.noPeople') }));
       return;
     }
     const title = el('div', { className: 'ws-label', text: CAST_TITLE });
@@ -159,14 +162,15 @@ export class WorkshopPanel {
       const check = el('input');
       check.type = 'checkbox';
       check.checked = choice.checked;
-      check.setAttribute('aria-label', `让 ${p.name} 出场`);
+      check.setAttribute('aria-label', t('workshop.letAppear', { name: p.name }));
       const name = el('label', { className: 'ws-person-name' });
-      name.append(check, el('span', { text: p.name }));
+      // 人名是名册里的用户数据，原样显示
+      name.append(check, markRaw(el('span', { text: p.name })));
       const select = el('select', { className: 'mw-select' });
       for (const [value, label] of ROLE_CHOICES) select.add(new Option(label, value));
       select.value = choice.roles;
       select.disabled = !choice.checked;
-      select.setAttribute('aria-label', `${p.name} 可以当`);
+      select.setAttribute('aria-label', t('workshop.canBe', { name: p.name }));
       select.dataset.personId = p.id;
       check.addEventListener('change', () => {
         choice.checked = check.checked;
@@ -184,12 +188,12 @@ export class WorkshopPanel {
   private render(): void {
     // 状态标签：提供方和模型名（不含密钥）
     const health = this.controller.health;
-    if (!health) this.status.replaceChildren(tag('正在检查工坊服务…', 'default', 'refresh'));
-    else if (health.kind === 'unreachable') this.status.replaceChildren(tag('工坊服务不可用', 'orange', 'alert'));
+    if (!health) this.status.replaceChildren(tag(t('workshop.checking'), 'default', 'refresh'));
+    else if (health.kind === 'unreachable') this.status.replaceChildren(tag(t('workshop.serviceUnavailable'), 'orange', 'alert'));
     else {
       const h = health.health;
       this.status.replaceChildren(
-        tag(h.available ? '模型可用' : '模型不可用', h.available ? 'green' : 'orange', h.available ? 'check' : 'alert'),
+        tag(h.available ? t('workshop.modelAvailable') : t('workshop.modelUnavailable'), h.available ? 'green' : 'orange', h.available ? 'check' : 'alert'),
         tag(`${h.provider}${h.model ? ` · ${h.model}` : ''}`, 'default', 'layers'),
       );
     }
@@ -198,10 +202,11 @@ export class WorkshopPanel {
     this.unavailable.hidden = !showUnavailable;
     if (showUnavailable) {
       const list = el('ul', { className: 'mw-notices' });
-      list.append(notice('warning', `${usable.reason}。可以先玩“随机一关”，游戏的其他部分照常。`));
+      // 原因可能是服务端健康检查的原文（没有错误码），原样显示
+      list.append(richNotice('warning', tNodes('workshop.unavailableNotice', { reason: rawSpan(usable.reason) })));
       this.unavailable.replaceChildren(
         list,
-        button('改用随机一关', () => {
+        button(t('workshop.useRandom'), () => {
           this.host.startRandom();
         }, { icon: 'dice', variant: 'accent', className: 'ws-random' }),
       );
@@ -229,19 +234,19 @@ export class WorkshopPanel {
         const box = el('div', { className: 'ws-running' });
         const spinner = el('span', { className: 'ws-spinner' });
         spinner.setAttribute('aria-hidden', 'true');
-        box.append(spinner, el('span', { text: `正在准备模型并写说明书，程序随后生成并检查布局…（${String(seconds)} 秒）` }));
+        box.append(spinner, el('span', { text: t('workshop.running', { seconds: String(seconds) }) }));
         parts.push(
           box,
           // F4：生成前要先加载模型（F2），冷启动时可能要等一阵；只在生成进行时显示
           el('p', { className: 'mw-subtle ws-note', text: RUNNING_HINT }),
-          button('停止生成', () => {
+          button(t('workshop.stop'), () => {
             this.controller.cancel();
           }, { icon: 'close' }),
         );
         break;
       }
       case 'cancelled':
-        parts.push(el('p', { className: 'mw-muted ws-note', text: '已取消这次生成（不算失败，也没有换关卡）。' }));
+        parts.push(el('p', { className: 'mw-muted ws-note', text: t('workshop.cancelled') }));
         break;
       case 'message': {
         const list = el('ul', { className: 'mw-notices' });
@@ -251,7 +256,8 @@ export class WorkshopPanel {
       }
       case 'saved': {
         const list = el('ul', { className: 'mw-notices' });
-        list.append(notice('info', `“${view.title}”已经保存到“已保存的关卡”，并加载好了。`));
+        // 标题是模型写的，原样显示
+        list.append(richNotice('info', tNodes('workshop.saved', { title: rawSpan(view.title) })));
         parts.push(list);
         break;
       }
@@ -268,8 +274,9 @@ export class WorkshopPanel {
   private fallbackParts(fallback: Fallback, title: string): HTMLElement[] {
     const list = el('ul', { className: 'mw-notices' });
     list.append(
-      notice(fallback.outcome === 'error' ? 'error' : 'warning', `已回退到内置关卡“${title}”（来源：内置回退关卡，不是模型做的）。原因：${fallback.reason}`),
-      ...fallback.differences.map((d) => notice('info', d)),
+      // 回退的原因和差别是服务端写的原文（没有错误码），原样显示
+      richNotice(fallback.outcome === 'error' ? 'error' : 'warning', tNodes('workshop.fellBack', { title, reason: rawSpan(fallback.reason) })),
+      ...fallback.differences.map((d) => rawNotice('info', d)),
     );
     const parts: HTMLElement[] = [list];
     if (fallback.history.length > 0) parts.push(this.historyBox(fallback.history));
@@ -278,9 +285,10 @@ export class WorkshopPanel {
 
   private historyBox(history: readonly string[]): HTMLElement {
     const box = el('details', { className: 'ws-history' });
-    box.append(el('summary', { text: `模型的修复记录（${String(history.length)} 条）` }));
+    box.append(el('summary', { text: t('workshop.historyTitle', { count: String(history.length) }) }));
     const list = el('ol');
-    for (const h of history) list.append(el('li', { text: h }));
+    // 修复记录是服务端写的原文，原样显示
+    for (const h of history) list.append(markRaw(el('li', { text: h })));
     box.append(list);
     return box;
   }
@@ -289,12 +297,13 @@ export class WorkshopPanel {
     const { preview, pkg } = view;
     const brief = pkg.brief;
     const head = el('div', { className: 'ws-preview-head' });
-    head.append(el('strong', { className: 'ws-title', text: pkg.title }));
+    // 标题、开场白、台词是模型写的，原样显示（F7 处理）
+    head.append(markRaw(el('strong', { className: 'ws-title', text: pkg.title })));
     const tags = el('div', { className: 'level-tags' });
     tags.append(
-      tag('模型生成', 'purple', 'layers'),
+      tag(t('source.model'), 'purple', 'layers'),
       tag(OUTCOME_LABELS[preview.outcome], preview.outcome === 'model-first' ? 'green' : preview.outcome === 'model-repaired' ? 'blue' : 'orange', 'check'),
-      tag(`修复 ${String(preview.repairs)} 次`, 'default'),
+      tag(t('workshop.repairs', { count: String(preview.repairs) }), 'default'),
       tag(`${preview.provider}${preview.model ? ` · ${preview.model}` : ''}`, 'default'),
     );
     head.append(tags);
@@ -312,24 +321,31 @@ export class WorkshopPanel {
       box.append(el('dt', { text: k }), el('dd', { text: v }));
       facts.append(box);
     };
-    fact('时间限制', `${String(pkg.rules.timeLimit)} 秒（估计值）`);
-    fact('宝石', `${String(pkg.rules.target)} 个`);
-    fact('守卫', `${String(pkg.layout.guards.length)} 个`);
-    fact('高台', `${String(pkg.layout.platforms.length)} 个`);
-    fact('视觉', visualLabel(pkg));
+    fact(t('preview.timeLimit'), t('preview.timeLimitValue', { seconds: String(pkg.rules.timeLimit) }));
+    fact(t('preview.gems'), t('preview.count', { count: String(pkg.rules.target) }));
+    fact(t('preview.guards'), t('preview.count', { count: String(pkg.layout.guards.length) }));
+    fact(t('preview.platforms'), t('preview.count', { count: String(pkg.layout.platforms.length) }));
+    fact(t('preview.visual'), visualLabel(pkg));
     body.append(mapBox, facts);
     const parts: HTMLElement[] = [head, body];
-    if (brief?.opening) parts.push(el('p', { className: 'random-opening', text: brief.opening }));
+    if (brief?.opening) parts.push(markRaw(el('p', { className: 'random-opening', text: brief.opening })));
     const names = new Map(this.host.people().map((p) => [p.id, p.name]));
     for (const c of brief?.cast ?? []) {
       if (!c.line) continue;
-      const line = el('p', { className: 'ws-line' });
-      line.append(el('strong', { text: `${names.get(c.personId) ?? '（不在名册里的人物）'}（${c.role === 'guard' ? '守卫' : '同伴'}）` }), document.createTextNode(`：${c.line}`));
+      const line = markRaw(el('p', { className: 'ws-line' }));
+      line.append(
+        el('strong', { text: t('intro.speaker', { name: names.get(c.personId) ?? t('workshop.notInRoster'), role: c.role === 'guard' ? t('role.guard') : t('role.companion') }) }),
+        document.createTextNode(t('intro.line', { line: c.line })),
+      );
       parts.push(line);
     }
     if (preview.adjustment) {
       const list = el('ul', { className: 'mw-notices' });
-      list.append(notice('warning', `程序调整过一次：${preview.adjustment.change}（原因：${preview.adjustment.message}）`), ...preview.differences.map((d) => notice('info', `主要变化：${d}`)));
+      // 调整的说明和差别是服务端写的原文，原样显示
+      list.append(
+        richNotice('warning', tNodes('workshop.adjusted', { change: rawSpan(preview.adjustment.change), message: rawSpan(preview.adjustment.message) })),
+        ...preview.differences.map((d) => richNotice('info', tNodes('workshop.mainChange', { change: rawSpan(d) }))),
+      );
       parts.push(list);
     }
     if (preview.history.length > 0) parts.push(this.historyBox(preview.history));
@@ -339,23 +355,23 @@ export class WorkshopPanel {
       parts.push(list);
     }
     const checked = el('p', { className: 'random-checked' });
-    checked.append(icon('check', 'mw-icon'), document.createTextNode('空间与规则检查通过，难度为估计。'));
+    checked.append(icon('check', 'mw-icon'), document.createTextNode(t('preview.checked')));
     const actions = el('div', { className: 'random-actions' });
-    const confirm = button(view.confirming ? '正在确认…' : '确认', () => {
+    const confirm = button(view.confirming ? t('workshop.confirming') : t('workshop.confirm'), () => {
       void this.controller.confirm();
-    }, { icon: 'check', variant: 'primary', label: '确认工坊关卡' });
+    }, { icon: 'check', variant: 'primary', label: t('workshop.confirmLabel') });
     confirm.disabled = view.confirming;
     actions.append(
       confirm,
-      button('改一句话重来', () => {
+      button(t('workshop.retry'), () => {
         if (this.controller.discard()) {
           this.input.focus();
           this.input.select();
         }
       }, { icon: 'edit' }),
-      button('放弃', () => {
+      button(t('workshop.discard'), () => {
         this.controller.discard();
-      }, { icon: 'close', variant: 'ghost', label: '放弃工坊关卡' }),
+      }, { icon: 'close', variant: 'ghost', label: t('workshop.discardLabel') }),
     );
     parts.push(checked, actions);
     return parts;

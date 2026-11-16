@@ -6,17 +6,20 @@ import type { SoundBoard } from '../game/audio/sound';
 import { controlsHelp } from '../game/ui/hud';
 import { button, el, setButtonText, tag, type TagColor } from './dom';
 import { icon } from './icons';
+import { langSelect } from './langSelect';
+import { markRaw } from './raw';
+import { t } from '../i18n';
 
-export const GAME_TITLE = '宝石游乐场';
+export const GAME_TITLE = t('app.title');
 
 /** 静音开关：名字固定为“静音”，用 aria-pressed 表示状态（顶栏和开始界面各一个，不会同时显示）。 */
 export function muteToggle(sound: SoundBoard, options: { size?: 'md' | 'lg'; className?: string } = {}): HTMLButtonElement {
-  const b = button('静音', () => {
+  const b = button(t('sound.mute'), () => {
     sound.toggle();
   }, { icon: 'volume', iconOnly: true, size: options.size, className: options.className });
   const render = () => {
     b.setAttribute('aria-pressed', String(sound.muted));
-    b.title = sound.muted ? '已静音（点一下恢复声音）' : sound.storageAvailable ? '静音' : '静音（浏览器禁止本地存储，静音设置存不下来，声音照常）';
+    b.title = sound.muted ? t('sound.mutedTitle') : sound.storageAvailable ? t('sound.mute') : t('sound.muteNoStorage');
     b.querySelector('svg')?.replaceWith(icon(sound.muted ? 'mute' : 'volume'));
     b.classList.toggle('is-muted', sound.muted);
   };
@@ -27,6 +30,8 @@ export function muteToggle(sound: SoundBoard, options: { size?: 'md' | 'lg'; cla
 
 export interface LevelChip {
   readonly title: string;
+  /** 标题是保存或生成的文字，原样显示（F6）。 */
+  readonly titleRaw?: boolean;
   readonly source: { readonly text: string; readonly color: TagColor };
   readonly difficulty: string | null;
 }
@@ -44,12 +49,12 @@ export class TopBar {
   ) {
     const brand = el('div', { className: 'mw-brand' });
     brand.append(icon('gem', 'mw-icon mw-brand-icon'), el('span', { text: GAME_TITLE }));
-    this.levelButton = button('', actions.onLevels, { icon: 'map', label: '选择关卡', id: 'level-toggle', className: 'mw-level-chip' });
+    this.levelButton = button('', actions.onLevels, { icon: 'map', label: t('levels.choose'), id: 'level-toggle', className: 'mw-level-chip' });
     this.levelButton.append(icon('chevronDown', 'mw-icon mw-chevron'));
-    this.rosterButton = button('名册', actions.onRoster, { icon: 'users', id: 'roster-toggle' });
+    this.rosterButton = button(t('common.roster'), actions.onRoster, { icon: 'users', id: 'roster-toggle' });
     this.rosterButton.setAttribute('aria-expanded', 'false');
     importButton.classList.add('mw-btn', 'mw-btn--primary');
-    importButton.replaceChildren(icon('upload'), el('span', { className: 'mw-btn-label', text: '导入角色' }));
+    importButton.replaceChildren(icon('upload'), el('span', { className: 'mw-btn-label', text: t('import.button') }));
     const left = el('div', { id: 'mw-topbar-left', className: 'mw-topbar-group' });
     left.append(brand, this.levelButton);
     const right = el('div', { id: 'mw-topbar-right', className: 'mw-topbar-group' });
@@ -58,9 +63,11 @@ export class TopBar {
     host.append(this.root);
   }
 
-  setLevel(title: string): void {
+  setLevel(title: string, raw = false): void {
     setButtonText(this.levelButton, title);
-    this.levelButton.title = `当前关卡：${title}（点开选择关卡）`;
+    const label = this.levelButton.querySelector<HTMLElement>('.mw-btn-label');
+    if (label) markRaw(label, raw);
+    this.levelButton.title = t('topbar.levelTitle', { title });
   }
 
   setPanel(levelsOpen: boolean, rosterOpen: boolean): void {
@@ -92,22 +99,22 @@ export class HomeScreen {
   private readonly helpButton: HTMLButtonElement;
 
   constructor(host: HTMLElement, actions: HomeActions, sound: SoundBoard) {
-    this.root.setAttribute('aria-label', '开始界面');
+    this.root.setAttribute('aria-label', t('home.label'));
     this.root.hidden = true;
     const card = el('div', { className: 'home-card' });
     const badge = el('div', { className: 'home-badge' });
     badge.append(icon('gem', 'mw-icon'));
     const title = el('h1', { text: GAME_TITLE });
-    const tagline = el('p', { className: 'home-tagline', text: '在限定时间里收集所有宝石，躲开巡逻的守卫。导入你自己的角色，带上同伴一起闯关。' });
+    const tagline = el('p', { className: 'home-tagline', text: t('home.tagline') });
     const level = el('div', { className: 'home-level' });
-    const levelLabel = el('span', { className: 'home-level-label', text: '当前关卡' });
+    const levelLabel = el('span', { className: 'home-level-label', text: t('home.currentLevel') });
     level.append(levelLabel, this.levelTitle, this.levelTags);
 
-    this.startButton = button('开始', actions.onStart, { icon: 'play', variant: 'primary', size: 'lg', className: 'home-start' });
-    const levels = button('选关', actions.onLevels, { icon: 'map', size: 'lg', label: '选择关卡' });
-    const roster = button('名册', actions.onRoster, { icon: 'users', size: 'lg' });
-    const importButton = button('导入角色', actions.onImport, { icon: 'upload', size: 'lg' });
-    this.helpButton = button('操作说明', () => {
+    this.startButton = button(t('common.start'), actions.onStart, { icon: 'play', variant: 'primary', size: 'lg', className: 'home-start' });
+    const levels = button(t('home.levels'), actions.onLevels, { icon: 'map', size: 'lg', label: t('levels.choose') });
+    const roster = button(t('common.roster'), actions.onRoster, { icon: 'users', size: 'lg' });
+    const importButton = button(t('import.button'), actions.onImport, { icon: 'upload', size: 'lg' });
+    this.helpButton = button(t('help.title'), () => {
       this.setHelp(this.help.hidden === true);
     }, { icon: 'keyboard', size: 'lg' });
     this.helpButton.setAttribute('aria-controls', 'home-help');
@@ -115,9 +122,9 @@ export class HomeScreen {
     const grid = el('div', { className: 'home-actions' });
     grid.append(levels, roster, importButton, this.helpButton);
     this.help.hidden = true;
-    this.help.append(el('h2', { text: '操作说明' }), controlsHelp());
+    this.help.append(el('h2', { text: t('help.title') }), controlsHelp());
     const foot = el('div', { className: 'home-foot' });
-    foot.append(el('span', { className: 'mw-subtle', text: '声音' }), muteToggle(sound));
+    foot.append(el('span', { className: 'mw-subtle', text: t('home.sound') }), muteToggle(sound), langSelect('home-lang'));
     card.append(badge, title, tagline, level, this.startButton, grid, this.help, foot);
     this.root.append(card);
     host.append(this.root);
@@ -131,8 +138,9 @@ export class HomeScreen {
 
   setLevel(chip: LevelChip): void {
     this.levelTitle.textContent = chip.title;
+    markRaw(this.levelTitle, chip.titleRaw ?? false);
     const tags = [tag(chip.source.text, chip.source.color, 'layers')];
-    if (chip.difficulty) tags.push(tag(`难度估计：${chip.difficulty}`, 'purple', 'star'));
+    if (chip.difficulty) tags.push(tag(t('level.difficultyTag', { difficulty: chip.difficulty }), 'purple', 'star'));
     this.levelTags.replaceChildren(...tags);
   }
 

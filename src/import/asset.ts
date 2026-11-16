@@ -21,6 +21,7 @@ import { analyzeRootMotion, lockHorizontalMotion, type RootMotion } from './moti
 import { applyNormalization, clampHeight, DEFAULT_NORMALIZE, type NormalizedSize, type NormalizeSettings } from './normalize';
 import type { ImportFormat } from './precheck';
 import { collectResources, disposeInstancedMeshes, disposeResources, disposeSkeletons, type LoadedStats } from './resources';
+import { t } from '../i18n';
 
 /** 文件内容的 SHA-256（十六进制）。浏览器和 Node 都有 crypto.subtle。 */
 export async function sha256Hex(bytes: Uint8Array): Promise<string> {
@@ -188,7 +189,7 @@ export class ImportedAsset {
   }
 
   setMotionLocked(index: number, locked: boolean): void {
-    if (locked && !this.canLockMotion(index)) throw new Error('该片段不能锁定水平位移');
+    if (locked && !this.canLockMotion(index)) throw new Error(t('asset.lockUnavailable'));
     if (locked) this.lockedMotion.add(index);
     else this.lockedMotion.delete(index);
     this.changed();
@@ -261,7 +262,7 @@ export class ImportedAsset {
   createInstance(registry?: InstanceRegistry): ModelInstance {
     if (this.disposed) throw new Error('资产已经释放');
     if (registry && !registry.tryAcquire()) {
-      throw new InstanceLimitError(`同屏的导入实例已经有 ${String(registry.max)} 个，不能再加入`);
+      throw new InstanceLimitError(t('asset.instanceLimit', { max: String(registry.max) }));
     }
     const instance = new ModelInstance(this, registry);
     this.instances.add(instance);

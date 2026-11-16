@@ -10,6 +10,8 @@ import type { Roster } from '../roster';
 import { button, el, notice, tag, type TagColor } from '../../ui/dom';
 import { icon } from '../../ui/icons';
 import type { ThumbnailRenderer } from './thumbnails';
+import { t } from '../../i18n';
+import { markRaw } from '../../ui/raw';
 
 export interface RosterPanelHost {
   /** 在导入卡片里打开这个人物，修改设置。 */
@@ -67,26 +69,26 @@ export class RosterPanel {
     private readonly host: RosterPanelHost,
     private readonly thumbnails: ThumbnailRenderer,
   ) {
-    this.panel.setAttribute('aria-label', '名册');
+    this.panel.setAttribute('aria-label', t('common.roster'));
     this.panel.hidden = true;
     this.storage.setAttribute('role', 'alert');
     this.notices.setAttribute('role', 'status');
     const header = el('div', { className: 'mw-panel-header' });
     const title = el('h2');
-    title.append(icon('users', 'mw-icon roster-title-icon'), document.createTextNode('名册'));
-    this.closeButton = button('关闭名册', () => {
+    title.append(icon('users', 'mw-icon roster-title-icon'), document.createTextNode(t('common.roster')));
+    this.closeButton = button(t('roster.close'), () => {
       this.host.close();
     }, { icon: 'close', iconOnly: true, variant: 'ghost' });
     header.append(title, this.restoring, this.count, this.closeButton);
-    this.empty.append(icon('user', 'mw-icon roster-empty-icon'), el('p', { text: '名册是空的：导入角色后点“加入为新人物”或“设为主角”。' }));
+    this.empty.append(icon('user', 'mw-icon roster-empty-icon'), el('p', { text: t('roster.empty') }));
     const body = el('div', { className: 'mw-panel-body mw-scroll' });
     body.append(this.storage, this.notices, this.empty, this.list);
     const footer = el('div', { className: 'mw-panel-footer' });
     footer.append(
-      button('恢复默认主角', () => {
+      button(t('roster.resetPlayer'), () => {
         this.roster.restoreDefaultPlayer();
       }, { icon: 'user', size: 'sm' }),
-      el('span', { className: 'mw-subtle', text: '分工一改就自动保存。' }),
+      el('span', { className: 'mw-subtle', text: t('roster.autoSaveHint') }),
     );
     this.panel.append(header, body, footer);
     root.append(this.panel);
@@ -115,9 +117,10 @@ export class RosterPanel {
     img.hidden = true;
     thumb.append(icon('user', 'mw-icon person-placeholder'), img);
 
-    const name = el('input', { className: 'mw-input person-name' });
+    // 显示名和文件名是用户数据，原样显示
+    const name = markRaw(el('input', { className: 'mw-input person-name' }));
     name.type = 'text';
-    const rename = button('保存名字', () => {
+    const rename = button(t('roster.saveName'), () => {
       const result = this.roster.rename(key, name.value);
       if (!result.ok) name.setCustomValidity(result.error);
       else name.setCustomValidity('');
@@ -129,7 +132,7 @@ export class RosterPanel {
     nameRow.append(name, rename);
 
     const roleBox = el('span', { className: 'person-role-tag' });
-    const file = el('span', { className: 'person-file mw-subtle' });
+    const file = markRaw(el('span', { className: 'person-file mw-subtle' }));
     const meta = el('div', { className: 'person-meta' });
     meta.append(roleBox, file);
 
@@ -139,28 +142,28 @@ export class RosterPanel {
       const result = this.roster.setRole(key, role.value as Role);
       if (!result.ok) this.refresh();
     });
-    const open = button('设置', () => {
+    const open = button(t('roster.settings'), () => {
       this.host.openCard(key);
     }, { icon: 'edit', size: 'sm' });
-    const remove = button('删除', () => {
+    const remove = button(t('common.delete'), () => {
       this.confirming.add(key);
       this.refresh();
     }, { icon: 'trash', iconOnly: true, size: 'sm', variant: 'ghost' });
     const actions = el('div', { className: 'person-actions' });
     const roleField = el('label', { className: 'person-role' });
-    roleField.append(el('span', { text: '分工' }), role);
+    roleField.append(el('span', { text: t('roster.role') }), role);
     actions.append(roleField, open, remove);
 
-    const confirm = button('确认删除', () => {
+    const confirm = button(t('roster.confirmDelete'), () => {
       this.confirming.delete(key);
       this.host.remove(key);
     }, { icon: 'trash', variant: 'danger', size: 'sm' });
-    const cancel = button('取消', () => {
+    const cancel = button(t('common.cancel'), () => {
       this.confirming.delete(key);
       this.refresh();
     }, { size: 'sm' });
     const confirmRow = el('div', { className: 'person-confirm' });
-    confirmRow.append(el('span', { text: '从名册里删除这个人物？' }), confirm, cancel);
+    confirmRow.append(el('span', { text: t('roster.deleteQuestion') }), confirm, cancel);
 
     const status = el('div', { className: 'person-status' });
     const main = el('div', { className: 'person-main' });
@@ -173,7 +176,7 @@ export class RosterPanel {
   refresh(): void {
     const snapshot = this.roster.snapshot();
     this.count.textContent = `${String(snapshot.entries.length)} / ${String(snapshot.max)}`;
-    this.restoring.textContent = snapshot.restoring ? '正在恢复…' : '';
+    this.restoring.textContent = snapshot.restoring ? t('roster.restoring') : '';
     this.storage.replaceChildren();
     if (snapshot.storage.problem) this.storage.append(notice('error', snapshot.storage.problem));
     this.storage.hidden = snapshot.storage.problem === null;
@@ -204,10 +207,10 @@ export class RosterPanel {
       card.li.dataset.role = entry.role ?? 'unknown';
       if (document.activeElement !== card.name) card.name.value = name;
       card.name.disabled = entry.role === null;
-      card.name.setAttribute('aria-label', `${name} 的显示名`);
+      card.name.setAttribute('aria-label', t('roster.nameOf', { name }));
       card.rename.disabled = entry.role === null;
-      card.rename.setAttribute('aria-label', `保存 ${name} 的显示名`);
-      card.rename.title = '保存名字';
+      card.rename.setAttribute('aria-label', t('roster.saveNameOf', { name }));
+      card.rename.title = t('roster.saveName');
       const roleKey = entry.role ?? 'unknown';
       if (card.roleBox.dataset.role !== roleKey) {
         card.roleBox.dataset.role = roleKey;
@@ -216,19 +219,19 @@ export class RosterPanel {
       card.file.textContent = entry.fileName && entry.fileName !== name ? entry.fileName : '';
       card.role.value = entry.role ?? 'none';
       card.role.disabled = !ready;
-      card.role.setAttribute('aria-label', `${name} 的分工`);
-      card.status.textContent = entry.status === 'failed' ? `恢复失败：${entry.error ?? ''}` : entry.status === 'loading' ? '正在恢复…' : '';
+      card.role.setAttribute('aria-label', t('roster.roleOf', { name }));
+      card.status.textContent = entry.status === 'failed' ? t('roster.restoreFailed', { error: entry.error ?? '' }) : entry.status === 'loading' ? t('roster.restoring') : '';
       card.status.hidden = ready;
       card.status.className = `person-status${entry.status === 'failed' ? ' is-error' : ''}`;
       card.open.disabled = !ready;
-      card.open.setAttribute('aria-label', `打开 ${name} 的导入卡片`);
+      card.open.setAttribute('aria-label', t('roster.openCardOf', { name }));
       const confirming = this.confirming.has(entry.key);
       card.remove.hidden = confirming;
-      card.remove.setAttribute('aria-label', `删除 ${name}`);
-      card.remove.title = `删除 ${name}`;
+      card.remove.setAttribute('aria-label', t('roster.deleteOf', { name }));
+      card.remove.title = t('roster.deleteOf', { name });
       card.confirmRow.hidden = !confirming;
-      card.confirm.setAttribute('aria-label', `确认删除 ${name}`);
-      card.cancel.setAttribute('aria-label', `取消删除 ${name}`);
+      card.confirm.setAttribute('aria-label', t('roster.confirmDeleteOf', { name }));
+      card.cancel.setAttribute('aria-label', t('roster.cancelDeleteOf', { name }));
       // 缩略图：资产恢复好了才画；画好之前显示占位图标
       const asset = ready ? this.roster.assetOf(entry.key) : null;
       const url = asset ? this.thumbnails.get(asset) : null;
@@ -249,7 +252,7 @@ export class RosterPanel {
   }
 
   private roleTag(role: Role | null): HTMLElement {
-    if (role === null) return tag('无法识别', 'red', 'alert');
+    if (role === null) return tag(t('roster.unrecognized'), 'red', 'alert');
     return tag(ROLE_LABELS[role], ROLE_COLORS[role], role === 'none' ? undefined : role === 'companion' ? 'users' : role === 'guard' ? 'shield' : 'star');
   }
 }

@@ -11,6 +11,7 @@ import { routeTime } from '../level/gen/timing';
 import type { LevelPackage } from '../levels/package';
 import type { TagColor } from '../../ui/dom';
 import type { DifficultyLabel } from '../appTypes';
+import { t } from '../../i18n';
 
 export type { DifficultyLabel };
 
@@ -29,9 +30,9 @@ export const DIFFICULTY_THRESHOLDS = { relaxed: 2.3, normal: 1.75 } as const;
 const cache = new Map<string, DifficultyEstimate>();
 
 export function difficultyOf(factor: number): DifficultyLabel {
-  if (factor >= DIFFICULTY_THRESHOLDS.relaxed) return '轻松';
-  if (factor >= DIFFICULTY_THRESHOLDS.normal) return '普通';
-  return '紧张';
+  if (factor >= DIFFICULTY_THRESHOLDS.relaxed) return t('difficulty.relaxed');
+  if (factor >= DIFFICULTY_THRESHOLDS.normal) return t('difficulty.normal');
+  return t('difficulty.tense');
 }
 
 export function estimateDifficulty(pkg: LevelPackage): DifficultyEstimate {
@@ -54,7 +55,12 @@ export function estimateDifficulty(pkg: LevelPackage): DifficultyEstimate {
   return estimate;
 }
 
-export const DIFFICULTY_COLORS: Readonly<Record<DifficultyLabel, TagColor>> = { 轻松: 'green', 普通: 'blue', 紧张: 'red' };
+/** 难度估计每一档的颜色，按当前语言的叫法查（F6）。 */
+export const DIFFICULTY_COLORS: Readonly<Record<DifficultyLabel, TagColor>> = {
+  [t('difficulty.relaxed')]: 'green',
+  [t('difficulty.normal')]: 'blue',
+  [t('difficulty.tense')]: 'red',
+};
 
 export interface SourceBadge {
   readonly text: string;
@@ -65,20 +71,20 @@ export interface SourceBadge {
 export function sourceBadge(pkg: LevelPackage, builtinKind?: 'handmade' | 'generated'): SourceBadge {
   switch (pkg.source) {
     case 'builtin':
-      if (pkg.key.startsWith('dev:')) return { text: '测试关卡', color: 'default' };
-      return { text: builtinKind === 'generated' || (builtinKind === undefined && pkg.brief !== null) ? '内置 · 生成' : '内置 · 手工', color: 'default' };
+      if (pkg.key.startsWith('dev:')) return { text: t('source.test'), color: 'default' };
+      return { text: builtinKind === 'generated' || (builtinKind === undefined && pkg.brief !== null) ? t('source.builtinGenerated') : t('source.builtinHandmade'), color: 'default' };
     case 'random':
-      return { text: '随机', color: 'purple' };
+      return { text: t('source.random'), color: 'purple' };
     case 'adjusted':
-      return { text: '随机 · 程序调整', color: 'orange' };
+      return { text: t('source.adjusted'), color: 'orange' };
     case 'model':
-      return { text: '模型生成', color: 'purple' };
+      return { text: t('source.model'), color: 'purple' };
   }
 }
 
-export const THEME_LABELS: Readonly<Record<string, string>> = { grass: '草地', sand: '沙地', snow: '雪地' };
-export const TIME_LABELS: Readonly<Record<string, string>> = { day: '白天', dusk: '黄昏', night: '夜晚' };
-export const WEATHER_LABELS: Readonly<Record<string, string>> = { clear: '晴', fog: '雾', rain: '雨' };
+export const THEME_LABELS: Readonly<Record<string, string>> = { grass: t('theme.grass'), sand: t('theme.sand'), snow: t('theme.snow') };
+export const TIME_LABELS: Readonly<Record<string, string>> = { day: t('time.day'), dusk: t('time.dusk'), night: t('time.night') };
+export const WEATHER_LABELS: Readonly<Record<string, string>> = { clear: t('weather.clear'), fog: t('weather.fog'), rain: t('weather.rain') };
 
 /** 视觉预设的叫法，例如“雪地 · 夜晚 · 雨”。 */
 export function visualLabel(pkg: LevelPackage): string {

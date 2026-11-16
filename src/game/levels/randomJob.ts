@@ -10,6 +10,7 @@ import { produceLevel, type ProduceResult } from '../level/gen/pipeline';
 import { deriveSeed } from '../level/gen/random';
 import { randomBrief, type RosterPerson } from '../level/gen/randomBrief';
 import { packageOfProduced, type LevelPackage } from './package';
+import { t } from '../../i18n';
 
 export type RandomJobState =
   | { readonly kind: 'running'; readonly tried: number; readonly total: number }
@@ -35,12 +36,12 @@ export interface RandomJobDeps {
 export function describeFailure(result: Exclude<ProduceResult, { ok: true }>): string {
   switch (result.kind) {
     case 'brief':
-      return `说明书错误：${result.problems.map((p) => `${p.path}：${p.message}`).join('；')}`;
+      return t('random.reasonBrief', { problems: result.problems.map((p) => `${p.path}：${p.message}`).join(t('common.semicolon')) });
     case 'cannot-fit':
     case 'too-far':
-      return result.adjustment ? `${result.message}（程序调整过一次：${result.adjustment.change}）` : result.message;
+      return result.adjustment ? t('random.reasonAdjusted', { message: result.message, change: result.adjustment.change }) : result.message;
     case 'rejected':
-      return `检查没通过（程序缺陷）：${result.problems.map((p) => p.message).join('；')}`;
+      return t('random.reasonDefect', { problems: result.problems.map((p) => p.message).join(t('common.semicolon')) });
   }
 }
 
@@ -91,15 +92,15 @@ export class RandomLevelJob {
     const tried = index + 1;
     if (result.ok) {
       const notes: string[] = [];
-      if (result.level.adjustment) notes.push(`程序调整过一次：${result.level.adjustment.change}（原因：${result.level.adjustment.message}）`);
-      if (this.reasons.length > 0) notes.push(`前 ${String(this.reasons.length)} 份说明书没有成功：${this.reasons.join('；')}`);
+      if (result.level.adjustment) notes.push(t('workshop.adjusted', { change: result.level.adjustment.change, message: result.level.adjustment.message }));
+      if (this.reasons.length > 0) notes.push(t('random.failedBefore', { count: String(this.reasons.length), reasons: this.reasons.join(t('common.semicolon')) }));
       this.set({ kind: 'preview', pkg: packageOfProduced(result.level), tried, notes });
       return;
     }
     if (result.kind === 'rejected') {
       // 程序缺陷不靠重试掩盖：不换下一份说明书，直接停止并报出来
       const problems = result.problems.map((p) => p.message);
-      console.error(`随机关卡生成发现程序缺陷（检查器拒绝了生成器做出的布局），已停止生成：${problems.join('；')}`);
+      console.error(t('random.defectStop', { problems: problems.join(t('common.semicolon')) }));
       this.set({ kind: 'defect', tried, problems });
       return;
     }

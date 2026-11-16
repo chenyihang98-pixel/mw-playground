@@ -15,6 +15,7 @@
 import { z } from 'zod';
 import { PURPOSES, type Playback, type Purpose } from '../import/clipRules';
 import { ROLES, ROSTER_LIMITS, type Role } from './config';
+import { t } from '../i18n';
 
 export const RECORD_FORMAT = 'mw-roster-person';
 export const RECORD_VERSION = 1;
@@ -41,9 +42,9 @@ export interface PersonRecord {
   readonly file: Blob;
 }
 
-const sha = z.string().regex(/^[0-9a-f]{64}$/, '不是 SHA-256');
+const sha = z.string().regex(/^[0-9a-f]{64}$/, t('format.notSha'));
 const clipKeyPattern = /^([0-9a-f]{64})#(0|[1-9][0-9]*)$/;
-const clipKeyString = z.string().regex(clipKeyPattern, '片段键应为“SHA-256#序号”');
+const clipKeyString = z.string().regex(clipKeyPattern, t('format.clipKeyFormat'));
 
 const settingsSchema = z.strictObject({
   displayHeight: z.number(),
@@ -67,10 +68,10 @@ const recordSchema = z
     file: z.instanceof(Blob),
   })
   .superRefine((record, ctx) => {
-    if (record.id !== record.sha256) ctx.addIssue({ code: 'custom', path: ['id'], message: 'id 与 sha256 不一致' });
+    if (record.id !== record.sha256) ctx.addIssue({ code: 'custom', path: ['id'], message: t('format.idMismatch') });
     const keys = [...Object.keys(record.settings.purposes), ...Object.keys(record.settings.playbacks), ...record.settings.lockedMotion];
     for (const key of keys) {
-      if (!key.startsWith(`${record.sha256}#`)) ctx.addIssue({ code: 'custom', path: ['settings'], message: `片段键 ${key} 不属于这个文件` });
+      if (!key.startsWith(`${record.sha256}#`)) ctx.addIssue({ code: 'custom', path: ['settings'], message: t('format.clipKeyForeign', { key }) });
     }
   });
 
@@ -102,18 +103,18 @@ export type DecodeResult =
 
 /** 从存储里读出的值还原记录。认不出的版本、损坏的记录返回原因，不抛异常。 */
 export function decodeRecord(value: unknown): DecodeResult {
-  if (typeof value !== 'object' || value === null) return { ok: false, reason: 'corrupt', message: '记录损坏：不是对象' };
+  if (typeof value !== 'object' || value === null) return { ok: false, reason: 'corrupt', message: t('format.notObject') };
   const raw = value as { format?: unknown; version?: unknown };
-  if (raw.format !== RECORD_FORMAT) return { ok: false, reason: 'corrupt', message: '记录损坏：不是名册记录' };
+  if (raw.format !== RECORD_FORMAT) return { ok: false, reason: 'corrupt', message: t('format.notRosterRecord') };
   if (raw.version !== RECORD_VERSION) {
-    const shown = typeof raw.version === 'number' || typeof raw.version === 'string' ? String(raw.version) : '缺失';
-    return { ok: false, reason: 'version', message: `认不出的存储版本（${shown}），本版只认版本 ${String(RECORD_VERSION)}` };
+    const shown = typeof raw.version === 'number' || typeof raw.version === 'string' ? String(raw.version) : t('format.missing');
+    return { ok: false, reason: 'version', message: t('format.unknownVersion', { shown, version: String(RECORD_VERSION) }) };
   }
   const parsed = recordSchema.safeParse(value);
   if (!parsed.success) {
     const first = parsed.error.issues[0];
-    const where = first ? `${first.path.map(String).join('.')}${first.path.length > 0 ? '：' : ''}${first.message}` : '格式不对';
-    return { ok: false, reason: 'corrupt', message: `记录损坏：${where}` };
+    const where = first ? `${first.path.map(String).join('.')}${first.path.length > 0 ? '：' : ''}${first.message}` : t('format.badFormat');
+    return { ok: false, reason: 'corrupt', message: t('format.corrupt', { where }) };
   }
   const r = parsed.data;
   return {

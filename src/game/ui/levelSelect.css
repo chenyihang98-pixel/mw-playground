@@ -290,5 +290,7 @@
 
 .random-actions {
   display: flex;
+  /* F6：日语、英语的按钮文字较长，放不下时换行，不出横向滚动 */
+  flex-wrap: wrap;
   gap: var(--mw-space-2);
 }

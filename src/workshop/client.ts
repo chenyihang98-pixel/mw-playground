@@ -12,11 +12,30 @@ import {
   generateResponseSchema,
   healthResponseSchema,
   okResponseSchema,
+  type ErrorCode,
   type FinalizeResponse,
   type GenerateResponse,
   type HealthResponse,
   type RosterPersonSnapshot,
 } from './protocol';
+import { currentLang, t, type MessageKey } from '../i18n';
+
+/** 服务端错误码在浏览器里的说法（F6）。服务端的原始消息不改（日志和接口兼容）。 */
+export const SERVER_ERROR_KEYS: Readonly<Record<ErrorCode, MessageKey>> = {
+  busy: 'serverError.busy',
+  'bad-request': 'serverError.badRequest',
+  'too-large': 'serverError.tooLarge',
+  'not-found': 'serverError.notFound',
+  expired: 'serverError.expired',
+  stale: 'serverError.stale',
+  unavailable: 'serverError.unavailable',
+  internal: 'serverError.internal',
+};
+
+/** 服务端返回的错误在界面上的文字：中文照旧用服务端的原文；日语和英语按错误码翻译。 */
+export function serverErrorText(error: { readonly code: ErrorCode; readonly message: string }): string {
+  return currentLang() === 'zh' ? error.message : t(SERVER_ERROR_KEYS[error.code]);
+}
 
 export type HealthResult = { readonly kind: 'ok'; readonly health: HealthResponse } | { readonly kind: 'unreachable'; readonly reason: string };
 
@@ -33,7 +52,7 @@ export type FinalizeResult =
   | { readonly kind: 'expired'; readonly message: string }
   | { readonly kind: 'failed'; readonly message: string };
 
-export const SERVICE_UNREACHABLE = '连不上工坊服务（用 npm run dev:workshop 同时启动游戏和工坊服务）';
+export const SERVICE_UNREACHABLE = t('workshop.unreachable');
 
 type ErrorBody = z.output<typeof errorResponseSchema>;
 
@@ -92,7 +111,7 @@ export class WorkshopClient {
 
   /** 开始生成（同一时间只发一个）。onStart 在发出请求前拿到生成标识。 */
   async generate(text: string, roster: readonly RosterPersonSnapshot[], onStart?: (generationId: string) => void): Promise<GenerateResult> {
-    if (this.current) return { kind: 'busy', message: '上一个生成还没结束' };
+    if (this.current) return { kind: 'busy', message: t('workshop.previousRunning') };
     const id = this.newId();
     const controller = new AbortController();
     this.current = { id, controller };
@@ -108,9 +127,9 @@ export class WorkshopClient {
       }
       const error = this.errorOf(body);
       if (!error) return { kind: 'unavailable', reason: SERVICE_UNREACHABLE };
-      if (error.code === ERROR_CODES.busy) return { kind: 'busy', message: error.message };
-      if (error.code === ERROR_CODES.unavailable) return { kind: 'unavailable', reason: error.message };
-      return { kind: 'failed', message: error.message };
+      if (error.code === ERROR_CODES.busy) return { kind: 'busy', message: serverErrorText(error) };
+      if (error.code === ERROR_CODES.unavailable) return { kind: 'unavailable', reason: serverErrorText(error) };
+      return { kind: 'failed', message: serverErrorText(error) };
     } catch {
       if (!this.isCurrent(id)) return { kind: 'stale' };
       return { kind: 'unavailable', reason: SERVICE_UNREACHABLE };
@@ -141,11 +160,11 @@ export class WorkshopClient {
         if (status === 200) {
           const parsed = finalizeResponseSchema.safeParse(body);
           if (parsed.success && parsed.data.generationId === generationId) return { kind: 'ok', response: parsed.data };
-          return { kind: 'failed', message: '工坊服务的响应不合规' };
+          return { kind: 'failed', message: t('workshop.badResponse') };
         }
         const error = this.errorOf(body);
-        if (error?.code === ERROR_CODES.expired) return { kind: 'expired', message: error.message };
-        return { kind: 'failed', message: error?.message ?? SERVICE_UNREACHABLE };
+        if (error?.code === ERROR_CODES.expired) return { kind: 'expired', message: serverErrorText(error) };
+        return { kind: 'failed', message: error ? serverErrorText(error) : SERVICE_UNREACHABLE };
       } catch {
         return { kind: 'failed', message: SERVICE_UNREACHABLE };
       }

@@ -11,6 +11,9 @@ import type { LevelSelectSnapshot } from '../appTypes';
 import { button, el, notice, tag } from '../../ui/dom';
 import { icon } from '../../ui/icons';
 import { DIFFICULTY_COLORS, THEME_LABELS, TIME_LABELS, WEATHER_LABELS, drawLevelMap, estimateDifficulty, sourceBadge, visualLabel } from './levelInfo';
+import { t } from '../../i18n';
+import { markRaw, rawSpan, tNodes } from '../../ui/raw';
+import { displayTitle } from '../levels/titles';
 
 export interface LevelSelectHost {
   current(): LevelPackage;
@@ -30,12 +33,12 @@ export interface LevelSelectHost {
   readonly workshop?: { readonly root: HTMLElement; onShown(): void };
 }
 
-const TIER_LABEL: Readonly<Record<string, string>> = { small: '小', medium: '中', large: '大' };
+const TIER_LABEL: Readonly<Record<string, string>> = { small: t('tier.small'), medium: t('tier.medium'), large: t('tier.large') };
 /** 收集点分布在界面上的叫法（elevated 叫“只放在高台上”）。 */
-const DISTRIBUTION_LABEL: Readonly<Record<string, string>> = { scattered: '分散', edge: '靠边', elevated: '只放在高台上', clustered: '集中' };
-const PATROL_LABEL: Readonly<Record<string, string>> = { loop: '绕圈', 'back-and-forth': '来回' };
-const DENSITY_LABEL: Readonly<Record<string, string>> = { low: '少', mid: '中', high: '多' };
-const INTENT_LABEL: Readonly<Record<string, string>> = { relaxed: '轻松', normal: '普通', tense: '紧张' };
+const DISTRIBUTION_LABEL: Readonly<Record<string, string>> = { scattered: t('distribution.scattered'), edge: t('distribution.edge'), elevated: t('distribution.elevated'), clustered: t('distribution.clustered') };
+const PATROL_LABEL: Readonly<Record<string, string>> = { loop: t('patrol.loop'), 'back-and-forth': t('patrol.backAndForth') };
+const DENSITY_LABEL: Readonly<Record<string, string>> = { low: t('density.low'), mid: t('density.mid'), high: t('density.high') };
+const INTENT_LABEL: Readonly<Record<string, string>> = { relaxed: t('intent.relaxed'), normal: t('intent.normal'), tense: t('intent.tense') };
 
 /** 列表里每一关的小地图边长（像素）。 */
 const THUMB_MAP = 64;
@@ -44,15 +47,15 @@ function levelTags(pkg: LevelPackage, kind?: 'handmade' | 'generated'): HTMLElem
   const source = sourceBadge(pkg, kind);
   const difficulty = estimateDifficulty(pkg);
   const tags = [tag(source.text, source.color, 'layers')];
-  const diff = difficulty.label ? tag(`难度估计：${difficulty.label}`, DIFFICULTY_COLORS[difficulty.label], 'star') : tag('难度：无法估计', 'default', 'star');
-  if (difficulty.routeSeconds !== null) diff.title = `按跑速收集完约 ${difficulty.routeSeconds.toFixed(0)} 秒（不算守卫和绕路）`;
+  const diff = difficulty.label ? tag(t('level.difficultyTag', { difficulty: difficulty.label }), DIFFICULTY_COLORS[difficulty.label], 'star') : tag(t('level.difficultyUnknown'), 'default', 'star');
+  if (difficulty.routeSeconds !== null) diff.title = t('level.routeHint', { seconds: difficulty.routeSeconds.toFixed(0) });
   tags.push(diff);
   return tags;
 }
 
 function levelFacts(pkg: LevelPackage): string {
   const guards = pkg.layout.guards.length;
-  return `${String(pkg.rules.timeLimit)} 秒 · ${String(pkg.rules.target)} 个宝石 · ${guards > 0 ? `${String(guards)} 个守卫` : '没有守卫'} · ${visualLabel(pkg)}`;
+  return t('level.facts', { seconds: String(pkg.rules.timeLimit), count: String(pkg.rules.target), guards: guards > 0 ? t('hud.guards', { count: String(guards) }) : t('hud.noGuards'), visual: visualLabel(pkg) });
 }
 
 function mapCanvas(pkg: LevelPackage, size: number, id?: string): HTMLCanvasElement {
@@ -83,24 +86,24 @@ export class LevelSelectPanel {
     root: HTMLElement,
     private readonly host: LevelSelectHost,
   ) {
-    this.panel.setAttribute('aria-label', '选择关卡');
+    this.panel.setAttribute('aria-label', t('levels.choose'));
     this.panel.hidden = true;
     this.storage.setAttribute('role', 'alert');
     const header = el('div', { className: 'mw-panel-header' });
     const title = el('h2');
-    title.append(icon('map', 'mw-icon level-title-icon'), document.createTextNode('选择关卡'));
-    this.closeButton = button('关闭', () => {
+    title.append(icon('map', 'mw-icon level-title-icon'), document.createTextNode(t('levels.choose')));
+    this.closeButton = button(t('common.close'), () => {
       this.host.close();
-    }, { icon: 'close', iconOnly: true, variant: 'ghost', label: '关闭关卡选择' });
+    }, { icon: 'close', iconOnly: true, variant: 'ghost', label: t('levels.close') });
     header.append(title, this.currentTag, this.closeButton);
 
     const left = el('div', { className: 'level-col mw-scroll' });
-    const savedTitle = el('h3', { className: 'mw-section-title', text: '已保存的关卡 ' });
+    const savedTitle = el('h3', { className: 'mw-section-title', text: t('levels.saved') });
     savedTitle.append(this.savedCount);
-    left.append(el('h3', { className: 'mw-section-title', text: '内置关卡' }), this.builtinList, savedTitle, this.savedList);
+    left.append(el('h3', { className: 'mw-section-title', text: t('levels.builtin') }), this.builtinList, savedTitle, this.savedList);
     const right = el('div', { className: 'level-col level-col--random mw-scroll' });
-    if (host.workshop) right.append(el('h3', { className: 'mw-section-title', text: '关卡工坊' }), host.workshop.root);
-    const randomTitle = el('h3', { className: 'mw-section-title', text: '随机一关' });
+    if (host.workshop) right.append(el('h3', { className: 'mw-section-title', text: t('levels.workshop') }), host.workshop.root);
+    const randomTitle = el('h3', { className: 'mw-section-title', text: t('levels.random') });
     if (host.workshop) randomTitle.classList.add('level-section-gap');
     right.append(randomTitle, this.randomArea);
     const body = el('div', { className: 'mw-panel-body level-body' });
@@ -133,7 +136,8 @@ export class LevelSelectPanel {
   }
 
   /** 一关的条目：小地图、名字、来源和难度估计、规则摘要；整行是加载按钮。 */
-  private item(pkg: LevelPackage | null, title: string, label: string, isCurrent: boolean, onLoad: () => void, kind?: 'handmade' | 'generated'): HTMLElement {
+  /** raw：标题是保存或生成的文字，原样显示（F6；内置关卡的名字按 id 翻译，不是原样）。 */
+  private item(pkg: LevelPackage | null, title: string, label: string, isCurrent: boolean, onLoad: () => void, kind?: 'handmade' | 'generated', raw = false): HTMLElement {
     const item = el('div', { className: 'level-item' });
     item.classList.toggle('is-current', isCurrent);
     const load = el('button', { className: 'level-load' });
@@ -141,8 +145,9 @@ export class LevelSelectPanel {
     load.setAttribute('aria-label', label);
     load.addEventListener('click', onLoad);
     const text = el('span', { className: 'level-text' });
-    const name = el('span', { className: 'level-name', text: title });
-    if (isCurrent) name.append(tag('当前', 'gold'));
+    const name = el('span', { className: 'level-name' });
+    name.append(raw ? rawSpan(title) : title);
+    if (isCurrent) name.append(tag(t('levels.current'), 'gold'));
     text.append(name);
     if (pkg) {
       const tags = el('span', { className: 'level-tags' });
@@ -160,10 +165,13 @@ export class LevelSelectPanel {
   refresh(): void {
     if (!this.shown) return; // 显示时再画（setShown 会刷新）
     const current = this.host.current();
-    this.currentTag.replaceChildren(tag(`当前：${current.title}`, 'gold', 'map'));
+    const currentTitle = displayTitle(current);
+    const currentTag = tag('', 'gold', 'map');
+    currentTag.append(...tNodes('levels.currentTitle', { title: currentTitle.raw ? rawSpan(currentTitle.text) : currentTitle.text }));
+    this.currentTag.replaceChildren(currentTag);
     this.builtinList.replaceChildren(
       ...this.host.builtins().map((b) =>
-        this.item(this.builtin(b.id), b.title, `加载内置关卡 ${b.title}`, current.key === `builtin:${b.id}`, () => {
+        this.item(this.builtin(b.id), b.title, t('levels.loadBuiltin', { title: b.title }), current.key === `builtin:${b.id}`, () => {
           this.host.loadBuiltin(b.id);
           this.host.close();
         }, b.kind),
@@ -180,24 +188,24 @@ export class LevelSelectPanel {
       const intro = el('div', { className: 'random-intro' });
       intro.append(
         icon('dice', 'mw-icon random-icon'),
-        el('p', { text: '按一份随机的关卡说明书现场生成一关。先看预览，满意再确认；确认后会保存到“已保存的关卡”。' }),
+        el('p', { text: t('random.description') }),
       );
       parts.push(
         intro,
-        button('随机一关', () => {
+        button(t('levels.random'), () => {
           this.startRandom();
         }, { icon: 'dice', variant: 'accent', size: 'lg', className: 'random-go' }),
       );
-      if (state?.kind === 'cancelled') parts.push(el('p', { className: 'mw-muted random-note', text: '已取消这次生成。' }));
+      if (state?.kind === 'cancelled') parts.push(el('p', { className: 'mw-muted random-note', text: t('random.cancelled') }));
       if (state?.kind === 'defect') {
         const list = el('ul', { className: 'mw-notices' });
-        list.append(notice('error', '随机生成发现程序缺陷（检查器拒绝了生成器做出的布局），已停止生成，并加载了内置的回退关卡。'));
+        list.append(notice('error', t('random.defect')));
         for (const p of state.problems) list.append(notice('error', p));
         parts.push(list);
       }
       if (state?.kind === 'failed') {
         const list = el('ul', { className: 'mw-notices' });
-        list.append(notice('warning', `随机生成试了 ${String(state.tried)} 份说明书都没有成功，已加载内置的回退关卡。`));
+        list.append(notice('warning', t('random.allFailed', { count: String(state.tried) })));
         for (const r of state.reasons) list.append(notice('info', r));
         parts.push(list);
       }
@@ -207,10 +215,10 @@ export class LevelSelectPanel {
       const fill = el('div', { className: 'random-bar-fill' });
       fill.style.width = `${String(Math.round(((state.tried + 0.5) / Math.max(1, state.total)) * 100))}%`;
       bar.append(fill);
-      progress.append(el('p', { text: `正在生成…（已试 ${String(state.tried)} / ${String(state.total)} 份说明书）` }), bar);
+      progress.append(el('p', { text: t('random.generating', { tried: String(state.tried), total: String(state.total) }) }), bar);
       parts.push(
         progress,
-        button('取消生成', () => {
+        button(t('random.cancel'), () => {
           this.job?.cancel();
         }, { icon: 'close' }),
       );
@@ -229,14 +237,14 @@ export class LevelSelectPanel {
         box.append(el('dt', { text: k }), el('dd', { text: v }));
         facts.append(box);
       };
-      fact('时间限制', `${String(pkg.rules.timeLimit)} 秒（估计值）`);
-      fact('宝石', `${String(pkg.rules.target)} 个`);
+      fact(t('preview.timeLimit'), t('preview.timeLimitValue', { seconds: String(pkg.rules.timeLimit) }));
+      fact(t('preview.gems'), t('preview.count', { count: String(pkg.rules.target) }));
       if (brief) {
-        fact('地图', `${TIER_LABEL[brief.tier] ?? brief.tier}地图，障碍${DENSITY_LABEL[brief.density] ?? brief.density}，高台 ${String(brief.platforms)} 个`);
-        fact('收集点', `${String(brief.collectibles)} 个，${DISTRIBUTION_LABEL[brief.distribution] ?? brief.distribution}`);
-        fact('守卫', brief.guards > 0 ? `${String(brief.guards)} 个，${PATROL_LABEL[brief.patrol] ?? brief.patrol}` : '没有');
-        fact('说明书难度', INTENT_LABEL[brief.intent] ?? brief.intent);
-        fact('视觉', `${THEME_LABELS[brief.visual.theme] ?? brief.visual.theme} · ${TIME_LABELS[brief.visual.time] ?? brief.visual.time} · ${WEATHER_LABELS[brief.visual.weather] ?? brief.visual.weather}`);
+        fact(t('preview.map'), t('random.mapValue', { tier: TIER_LABEL[brief.tier] ?? brief.tier, density: DENSITY_LABEL[brief.density] ?? brief.density, platforms: String(brief.platforms) }));
+        fact(t('preview.collectibles'), t('random.collectiblesValue', { count: String(brief.collectibles), distribution: DISTRIBUTION_LABEL[brief.distribution] ?? brief.distribution }));
+        fact(t('preview.guards'), brief.guards > 0 ? t('random.guardsValue', { count: String(brief.guards), patrol: PATROL_LABEL[brief.patrol] ?? brief.patrol }) : t('random.noGuards'));
+        fact(t('random.intent'), INTENT_LABEL[brief.intent] ?? brief.intent);
+        fact(t('preview.visual'), `${THEME_LABELS[brief.visual.theme] ?? brief.visual.theme} · ${TIME_LABELS[brief.visual.time] ?? brief.visual.time} · ${WEATHER_LABELS[brief.visual.weather] ?? brief.visual.weather}`);
       }
       const mapBox = el('div', { className: 'random-map' });
       mapBox.append(mapCanvas(pkg, 260, 'level-preview-map'));
@@ -249,18 +257,18 @@ export class LevelSelectPanel {
         parts.push(notes);
       }
       const checked = el('p', { className: 'random-checked' });
-      checked.append(icon('check', 'mw-icon'), document.createTextNode('空间与规则检查通过，难度为估计。'));
+      checked.append(icon('check', 'mw-icon'), document.createTextNode(t('preview.checked')));
       const actions = el('div', { className: 'random-actions' });
       actions.append(
-        button('确认', () => {
+        button(t('random.confirm'), () => {
           this.confirm(pkg);
-        }, { icon: 'check', variant: 'primary', label: '确认这一关' }),
-        button('重来', () => {
+        }, { icon: 'check', variant: 'primary', label: t('random.confirmLabel') }),
+        button(t('random.retry'), () => {
           this.startRandom();
-        }, { icon: 'refresh', label: '重新随机一关' }),
-        button('放弃', () => {
+        }, { icon: 'refresh', label: t('random.retryLabel') }),
+        button(t('random.discard'), () => {
           this.job?.cancel();
-        }, { icon: 'close', variant: 'ghost', label: '放弃这一关' }),
+        }, { icon: 'close', variant: 'ghost', label: t('random.discardLabel') }),
       );
       parts.push(checked, actions);
     }
@@ -276,9 +284,9 @@ export class LevelSelectPanel {
     if (saved.storageProblem) this.storage.append(notice('error', saved.storageProblem));
     this.storage.hidden = saved.storageProblem === null;
     const entries = saved.list();
-    this.savedCount.textContent = entries.length > 0 ? `${String(entries.length)} 个` : '';
+    this.savedCount.textContent = entries.length > 0 ? t('levels.savedCount', { count: String(entries.length) }) : '';
     if (entries.length === 0) {
-      this.savedList.replaceChildren(el('p', { className: 'level-empty', text: saved.loading ? '正在读取…' : '还没有保存的关卡。随机一关并确认后会出现在这里。' }));
+      this.savedList.replaceChildren(el('p', { className: 'level-empty', text: saved.loading ? t('levels.loading') : t('levels.savedEmpty') }));
       return;
     }
     this.savedList.replaceChildren(
@@ -286,21 +294,21 @@ export class LevelSelectPanel {
         let item: HTMLElement;
         if (e.status === 'ready') {
           const pkg = saved.get(e.id);
-          item = this.item(pkg, e.title, `加载已保存的关卡 ${e.title}`, current.key === `saved:${e.id}`, () => {
+          item = this.item(pkg, e.title, t('levels.loadSaved', { title: e.title }), current.key === `saved:${e.id}`, () => {
             if (pkg) this.host.loadPackage(pkg);
             this.host.close();
-          });
+          }, undefined, true);
         } else {
           item = el('div', { className: 'level-item is-broken' });
           const text = el('div', { className: 'level-text' });
-          text.append(el('span', { className: 'level-name', text: e.title }), el('span', { className: 'level-facts', text: `无法读取：${e.error ?? ''}` }));
+          text.append(markRaw(el('span', { className: 'level-name', text: e.title })), el('span', { className: 'level-facts', text: t('levels.unreadable', { error: e.error ?? '' }) }));
           item.append(text);
         }
         item.dataset.id = e.id;
         item.append(
-          button('删除', () => {
+          button(t('common.delete'), () => {
             void saved.remove(e.id);
-          }, { icon: 'trash', iconOnly: true, variant: 'ghost', size: 'sm', label: `删除已保存的关卡 ${e.title}`, className: 'level-delete' }),
+          }, { icon: 'trash', iconOnly: true, variant: 'ghost', size: 'sm', label: t('levels.deleteSaved', { title: e.title }), className: 'level-delete' }),
         );
         return item;
       }),

@@ -17,6 +17,7 @@ import type { LevelLayoutInput } from '../schema';
 import { MAX_COLLECTIBLES_PER_PLATFORM, type Brief } from './brief';
 import { GEN_CONFIG } from './config';
 import { Rng, hash64 } from './random';
+import { t } from '../../../i18n';
 
 export type GenerateResult = { readonly ok: true; readonly layout: LevelLayoutInput } | { readonly ok: false; readonly reason: string };
 
@@ -208,7 +209,7 @@ function patrolCorridor(rng: Rng, plan: Plan, brief: Brief): PatrolPlan {
     for (let j = Math.min(k.j, z.j); j <= Math.max(k.j, z.j); j++) cells.push({ i: k.i, j });
     return { cells, route: [a, k, z, k] };
   }
-  throw new CannotFit('放不下守卫的巡逻路线');
+  throw new CannotFit(t('gen.noPatrol'));
 }
 
 /** 高台占的 2 × 2 格、坡道占的 2 格，以及坡道低端外面那一格（入口）。 */
@@ -247,7 +248,7 @@ function placePlatform(rng: Rng, plan: Plan): PlatformPlan | null {
 }
 
 function describe(brief: Brief): string {
-  return `${brief.tier} 地图（${String(GEN_CONFIG.tiers[brief.tier].size)} m）放 ${String(brief.collectibles)} 个收集点、${String(brief.platforms)} 个高台、${String(brief.guards)} 个守卫和 ${brief.density} 密度的障碍`;
+  return t('gen.describe', { tier: brief.tier, size: String(GEN_CONFIG.tiers[brief.tier].size), collectibles: String(brief.collectibles), platforms: String(brief.platforms), guards: String(brief.guards), density: brief.density });
 }
 
 function generate(brief: Brief, seed: string, config: GenConfig): LevelLayoutInput {
@@ -287,7 +288,7 @@ function generate(brief: Brief, seed: string, config: GenConfig): LevelLayoutInp
     // edge：空地挨着地图最外一圈的通道
     const candidates = brief.distribution === 'edge' ? interior.filter((c) => c.i === 1 || c.j === 1 || c.i === n - 2 || c.j === n - 2) : interior;
     const centers = spread(rng, candidates, brief.collectibles, spacing);
-    if (centers.length < brief.collectibles) throw new CannotFit('放不下这么多收集点');
+    if (centers.length < brief.collectibles) throw new CannotFit(t('gen.tooManyCollectibles'));
     for (const c of centers) {
       plan.plaza(rng, c);
       collectibleCells.push(c);
@@ -296,7 +297,7 @@ function generate(brief: Brief, seed: string, config: GenConfig): LevelLayoutInp
     const center: Cell = { i: rng.int(2, n - 3), j: rng.int(2, n - 3) };
     const cells = plan.plaza(rng, center);
     const chosen = rng.shuffle(cells).slice(0, brief.collectibles);
-    if (chosen.length < brief.collectibles) throw new CannotFit('一块空地放不下这么多收集点');
+    if (chosen.length < brief.collectibles) throw new CannotFit(t('gen.clusterTooSmall'));
     collectibleCells.push(...chosen);
   }
 
@@ -307,7 +308,7 @@ function generate(brief: Brief, seed: string, config: GenConfig): LevelLayoutInp
       farFromRoutes(c, minGuardDistance) &&
       collectibleCells.every((o) => Math.hypot(o.i - c.i, o.j - c.j) * g.cell >= 4),
   );
-  if (spawnCandidates.length === 0) throw new CannotFit('放不下出生点（离守卫的巡逻路线要足够远）');
+  if (spawnCandidates.length === 0) throw new CannotFit(t('gen.noSpawn'));
   const spawnCell = rng.pick(spawnCandidates);
   plan.plaza(rng, spawnCell);
 
@@ -323,7 +324,7 @@ function generate(brief: Brief, seed: string, config: GenConfig): LevelLayoutInp
   const platforms: PlatformPlan[] = [];
   for (let k = 0; k < brief.platforms; k++) {
     const p = placePlatform(rng, plan);
-    if (!p) throw new CannotFit(`放不下第 ${String(k + 1)} 个高台`);
+    if (!p) throw new CannotFit(t('gen.noPlatform', { index: String(k + 1) }));
     const { block, ramp } = platformCells(p);
     for (const c of block) plan.set(c.i, c.j, PLATFORM);
     for (const c of ramp) plan.set(c.i, c.j, RAMP);
@@ -331,7 +332,7 @@ function generate(brief: Brief, seed: string, config: GenConfig): LevelLayoutInp
   }
   const boxCount = tier.obstacles[brief.density];
   const boxCells = rng.shuffle(plan.cellsOf(FREE, (c) => plan.interior(c.i, c.j))).slice(0, boxCount);
-  if (boxCells.length < boxCount) throw new CannotFit(`放不下 ${String(boxCount)} 个障碍（只剩 ${String(boxCells.length)} 格空位）`);
+  if (boxCells.length < boxCount) throw new CannotFit(t('gen.noBoxes', { count: String(boxCount), free: String(boxCells.length) }));
   for (const c of boxCells) plan.set(c.i, c.j, BOX);
 
   // ---------- 3. 收集点、出生点和巡逻路线 ----------
@@ -365,7 +366,7 @@ function generate(brief: Brief, seed: string, config: GenConfig): LevelLayoutInp
 
   const collectibles: Point2[] = [];
   if (brief.distribution === 'elevated') {
-    if (platformLayouts.length === 0) throw new CannotFit('没有高台可以放收集点');
+    if (platformLayouts.length === 0) throw new CannotFit(t('gen.noPlatformForCollectibles'));
     const perPlatform = new Map<number, number>();
     for (let k = 0; k < brief.collectibles; k++) {
       const index = k % platformLayouts.length;
@@ -373,7 +374,7 @@ function generate(brief: Brief, seed: string, config: GenConfig): LevelLayoutInp
     }
     for (const [index, count] of perPlatform) {
       const p = platformLayouts[index];
-      if (!p || count > MAX_COLLECTIBLES_PER_PLATFORM) throw new CannotFit('高台上放不下这么多收集点');
+      if (!p || count > MAX_COLLECTIBLES_PER_PLATFORM) throw new CannotFit(t('gen.platformsFull'));
       if (count === 1) collectibles.push(p.center);
       else collectibles.push({ x: round(p.center.x - 0.7), z: p.center.z }, { x: round(p.center.x + 0.7), z: p.center.z });
     }

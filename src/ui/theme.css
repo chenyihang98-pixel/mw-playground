@@ -71,6 +71,11 @@
   --mw-panel-bottom: 72px;
 }
 
+/* F6：日语界面时日文字体在前（根元素的 lang 由 src/i18n/browser.ts 设定）；中文、英文用上面的顺序 */
+html[lang='ja'] {
+  --mw-font: 'Hiragino Sans', 'Yu Gothic UI', 'Meiryo', 'Noto Sans CJK JP', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
 body {
   font-family: var(--mw-font);
   color: var(--mw-text);
@@ -387,6 +392,13 @@ body {
   background: rgba(0, 0, 0, 0.25);
   color: var(--mw-text);
   font: var(--mw-text-s) var(--mw-font);
+}
+
+/* 语言选择（F6）：标签和下拉框排成一行 */
+.mw-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--mw-space-2);
 }
 
 .mw-select option {

@@ -16,8 +16,9 @@ import {
   segmentRectDistance,
   type GeometryInput,
 } from './geometry';
+import { t } from '../../i18n';
 
-const id = z.string().regex(/^[a-z0-9][a-z0-9-]*$/, 'id 只能用小写字母、数字和连字符');
+const id = z.string().regex(/^[a-z0-9][a-z0-9-]*$/, t('schema.idFormat'));
 const coord = z.number(); // zod 4 的 number 不接受 NaN / Infinity
 const positive = z.number().positive();
 const point = z.strictObject({ x: coord, z: coord });
@@ -83,24 +84,24 @@ export function layoutProblems(layout: ParsedLayout): LayoutProblem[] {
   for (const [group, items] of groups) {
     items.forEach((item, i) => {
       const previous = seen.get(item.id);
-      if (previous) add([group, i, 'id'], `id "${item.id}" 与 ${previous} 重复`);
+      if (previous) add([group, i, 'id'], t('schema.duplicateId', { id: item.id, previous }));
       else seen.set(item.id, `${group}[${i}]`);
     });
   }
 
   if (layout.target > layout.collectibles.length) {
-    add(['target'], `收集目标数 ${layout.target} 大于收集点数量 ${layout.collectibles.length}`);
+    add(['target'], t('schema.targetTooLarge', { target: layout.target, count: layout.collectibles.length }));
   }
 
   // 实体都在地图里，互不重叠（坡道和它所属的高台只是贴边）
   for (const solid of solids) {
-    if (!rectInside(solid.rect, bounds)) add([`${solid.kind}:${solid.id}`], `${solid.id} 超出地图边界`);
+    if (!rectInside(solid.rect, bounds)) add([`${solid.kind}:${solid.id}`], t('schema.outOfBounds', { id: solid.id }));
   }
   for (let i = 0; i < solids.length; i++) {
     for (let j = i + 1; j < solids.length; j++) {
       const a = solids[i];
       const b = solids[j];
-      if (a && b && rectsOverlap(a.rect, b.rect)) add([`${a.kind}:${a.id}`], `${a.id} 与 ${b.id} 重叠`);
+      if (a && b && rectsOverlap(a.rect, b.rect)) add([`${a.kind}:${a.id}`], t('schema.overlap', { a: a.id, b: b.id }));
     }
   }
 
@@ -109,20 +110,20 @@ export function layoutProblems(layout: ParsedLayout): LayoutProblem[] {
   layout.ramps.forEach((ramp, i) => {
     const platform = platforms.get(ramp.platform);
     if (!platform) {
-      add(['ramps', i, 'platform'], `坡道 ${ramp.id} 引用的高台 ${ramp.platform} 不存在`);
+      add(['ramps', i, 'platform'], t('schema.rampNoPlatform', { ramp: ramp.id, platform: ramp.platform }));
       return;
     }
     const gradient = SPEC.terrain.platformHeight / ramp.length;
     if (gradient > SPEC.terrain.rampMaxGradient + EPS) {
       add(
         ['ramps', i, 'length'],
-        `坡道 ${ramp.id} 太陡：长度 ${ramp.length} m 时坡度 ${((Math.atan(gradient) * 180) / Math.PI).toFixed(1)}°，最大 ${SPEC.terrain.rampMaxSlopeDeg}°（长度至少 ${SPEC.terrain.rampMinLength.toFixed(3)} m）`,
+        t('schema.rampTooSteep', { ramp: ramp.id, length: ramp.length, slope: ((Math.atan(gradient) * 180) / Math.PI).toFixed(1), max: SPEC.terrain.rampMaxSlopeDeg, minLength: SPEC.terrain.rampMinLength.toFixed(3) }),
       );
     }
-    if (ramp.width <= 2 * r) add(['ramps', i, 'width'], `坡道 ${ramp.id} 宽 ${ramp.width} m，不大于胶囊直径 ${2 * r} m`);
+    if (ramp.width <= 2 * r) add(['ramps', i, 'width'], t('schema.rampTooNarrow', { ramp: ramp.id, width: ramp.width, diameter: 2 * r }));
     const sideLength = ramp.side === '+x' || ramp.side === '-x' ? platform.maxZ - platform.minZ : platform.maxX - platform.minX;
     if (Math.abs(ramp.offset) + ramp.width / 2 > sideLength / 2 + EPS) {
-      add(['ramps', i], `坡道 ${ramp.id} 超出了高台 ${ramp.platform} 这一侧的范围`);
+      add(['ramps', i], t('schema.rampOutside', { ramp: ramp.id, platform: ramp.platform }));
     }
     // rampGeometry 只是为了确认能算出几何；实体列表里已经包含它
     rampGeometry(platform, ramp);
@@ -130,17 +131,17 @@ export function layoutProblems(layout: ParsedLayout): LayoutProblem[] {
 
   // 出生点：胶囊整个在地图内，不和任何实体重叠
   const spawnArea = expandRect(bounds, -r);
-  if (!rectContains(spawnArea, layout.spawn.x, layout.spawn.z)) add(['spawn'], '出生点离地图边界不足一个胶囊半径');
+  if (!rectContains(spawnArea, layout.spawn.x, layout.spawn.z)) add(['spawn'], t('schema.spawnNearEdge'));
   for (const solid of solids) {
-    if (circleOverlapsRect(layout.spawn.x, layout.spawn.z, r, solid.rect)) add(['spawn'], `出生点与 ${solid.id} 重叠`);
+    if (circleOverlapsRect(layout.spawn.x, layout.spawn.z, r, solid.rect)) add(['spawn'], t('schema.spawnOverlap', { id: solid.id }));
   }
 
   // 收集点：在地图内，不在盒子里面
   layout.collectibles.forEach((c, i) => {
-    if (!rectContains(spawnArea, c.position.x, c.position.z)) add(['collectibles', i], `收集点 ${c.id} 离地图边界不足一个胶囊半径`);
+    if (!rectContains(spawnArea, c.position.x, c.position.z)) add(['collectibles', i], t('schema.collectibleNearEdge', { id: c.id }));
     for (const solid of solids) {
       if (solid.kind === 'box' && rectContains(solid.rect, c.position.x, c.position.z)) {
-        add(['collectibles', i], `收集点 ${c.id} 在盒子 ${solid.id} 里面`);
+        add(['collectibles', i], t('schema.collectibleInBox', { id: c.id, box: solid.id }));
       }
     }
   });
@@ -148,7 +149,7 @@ export function layoutProblems(layout: ParsedLayout): LayoutProblem[] {
   // 守卫：路线的点在地图内；每段路线（含回到起点的一段）与所有实体保持一个胶囊半径以上
   layout.guards.forEach((guard, g) => {
     guard.route.forEach((p, k) => {
-      if (!rectContains(spawnArea, p.x, p.z)) add(['guards', g, 'route', k], `守卫 ${guard.id} 的路线点离地图边界不足一个胶囊半径`);
+      if (!rectContains(spawnArea, p.x, p.z)) add(['guards', g, 'route', k], t('schema.patrolPointNearEdge', { id: guard.id }));
     });
     const n = guard.route.length;
     let total = 0;
@@ -159,11 +160,11 @@ export function layoutProblems(layout: ParsedLayout): LayoutProblem[] {
       total += Math.hypot(b.x - a.x, b.z - a.z);
       for (const solid of solids) {
         if (segmentRectDistance(a, b, solid.rect) < r) {
-          add(['guards', g, 'route', k], `守卫 ${guard.id} 的第 ${k} 段路线离 ${solid.id} 不足一个胶囊半径`);
+          add(['guards', g, 'route', k], t('schema.patrolSegmentNear', { id: guard.id, segment: k, solid: solid.id }));
         }
       }
     }
-    if (total <= EPS) add(['guards', g, 'route'], `守卫 ${guard.id} 的路线长度为 0`);
+    if (total <= EPS) add(['guards', g, 'route'], t('schema.patrolZeroLength', { id: guard.id }));
   });
 
   return problems;
@@ -183,6 +184,6 @@ export class LevelError extends Error {}
 export function parseLevel(input: unknown): LevelLayout {
   const result = levelLayoutSchema.safeParse(input);
   if (result.success) return result.data;
-  const issues = result.error.issues.slice(0, 6).map((issue) => `${issue.path.map(String).join('.') || '（根）'}：${issue.message}`);
-  throw new LevelError(`关卡布局不合法：${issues.join('；')}`);
+  const issues = result.error.issues.slice(0, 6).map((issue) => `${issue.path.map(String).join('.') || t('common.root')}：${issue.message}`);
+  throw new LevelError(t('schema.invalidLayout', { issues: issues.join(t('common.semicolon')) }));
 }

@@ -8,8 +8,9 @@ import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import type { ImportFormat } from './precheck';
 import { disposeObject } from './resources';
+import { t } from '../i18n';
 
-export const OBJ_MATERIAL_NOTICE = 'OBJ 未读取材质文件，使用默认材质';
+export const OBJ_MATERIAL_NOTICE = t('import.objDefaultMaterial');
 
 export interface LoadedModel {
   readonly scene: Object3D;
@@ -32,10 +33,10 @@ export function defaultMaterial(vertexColors = false): MeshStandardMaterial {
 /** 几何必须有有限的顶点坐标，并且至少能组成一个三角形。 */
 function checkGeometry(geometry: BufferGeometry, label: string): void {
   if (!geometry.hasAttribute('position') || geometry.getAttribute('position').count < 3) {
-    throw new ModelParseError(`${label} 里没有可显示的三角面`);
+    throw new ModelParseError(t('import.noTriangles', { label }));
   }
   for (const value of geometry.getAttribute('position').array as ArrayLike<number> & Iterable<number>) {
-    if (!Number.isFinite(value)) throw new ModelParseError(`${label} 的顶点坐标里有非法数值，文件可能已损坏`);
+    if (!Number.isFinite(value)) throw new ModelParseError(t('import.badVertices', { label }));
   }
   if (!geometry.hasAttribute('normal')) geometry.computeVertexNormals();
 }
@@ -75,7 +76,7 @@ export async function loadModel(format: ImportFormat, bytes: Uint8Array): Promis
             mesh.material = defaultMaterial(false);
             meshes++;
           });
-          if (meshes === 0) throw new ModelParseError('OBJ 里没有可显示的网格，文件可能已损坏或不是 OBJ');
+          if (meshes === 0) throw new ModelParseError(t('import.objNoMesh'));
           group.name = 'obj';
           return { scene: group, clips: [], notices: [OBJ_MATERIAL_NOTICE] };
         },
@@ -89,7 +90,7 @@ export async function loadModel(format: ImportFormat, bytes: Uint8Array): Promis
         },
         () => {
           checkGeometry(geometry, 'STL');
-          return { scene: staticScene(geometry, 'stl', false), clips: [], notices: ['STL 使用默认材质'] };
+          return { scene: staticScene(geometry, 'stl', false), clips: [], notices: [t('import.stlDefaultMaterial')] };
         },
       );
     }
@@ -102,7 +103,7 @@ export async function loadModel(format: ImportFormat, bytes: Uint8Array): Promis
         },
         () => {
           // 有面的 PLY 也可能没有索引：面上带 UV 或颜色时 PLYLoader 会调用 toNonIndexed()。按文件头里的面数判断是不是点云。
-          if (faces === 0) throw new ModelParseError('PLY 里只有点，没有面');
+          if (faces === 0) throw new ModelParseError(t('import.plyPointsOnly'));
           checkGeometry(geometry, 'PLY');
           return plyModel(geometry);
         },
@@ -116,7 +117,7 @@ function plyModel(geometry: BufferGeometry): LoadedModel {
   return {
     scene: staticScene(geometry, 'ply', vertexColors),
     clips: [],
-    notices: [vertexColors ? 'PLY 使用顶点颜色' : 'PLY 使用默认材质'],
+    notices: [vertexColors ? t('import.plyVertexColors') : t('import.plyDefaultMaterial')],
   };
 }
 

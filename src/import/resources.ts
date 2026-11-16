@@ -3,6 +3,7 @@
 import type { BufferGeometry, InstancedMesh, Material, Mesh, Object3D, SkinnedMesh, Texture } from 'three';
 import { IMPORT_LIMITS, type ImportLimits } from './limits';
 import { formatCount, type CheckResult } from './precheck';
+import { t as tr } from '../i18n';
 
 export interface Resources {
   readonly geometries: Set<BufferGeometry>;
@@ -147,22 +148,22 @@ export function loadedStats(root: Object3D): LoadedStats {
 /** 加载之后的检查：实际三角面数、骨骼数、能读到的贴图尺寸。超限时调用方负责释放资源。 */
 export function postLoadCheck(stats: LoadedStats, limits: ImportLimits = IMPORT_LIMITS): CheckResult<LoadedStats> {
   const warnings: string[] = [];
-  if (stats.meshes === 0 || stats.triangles === 0) return { ok: false, error: '文件里没有可显示的三角面', warnings };
+  if (stats.meshes === 0 || stats.triangles === 0) return { ok: false, error: tr('import.noTrianglesInFile'), warnings };
   if (stats.triangles > limits.trianglesReject) {
-    return { ok: false, error: `三角面太多（${formatCount(stats.triangles)}），超过 ${formatCount(limits.trianglesReject)} 的上限`, warnings };
+    return { ok: false, error: tr('import.tooManyTriangles', { count: formatCount(stats.triangles), limit: formatCount(limits.trianglesReject) }), warnings };
   }
-  if (stats.triangles > limits.trianglesWarn) warnings.push(`三角面较多（${formatCount(stats.triangles)}），可能影响帧率`);
+  if (stats.triangles > limits.trianglesWarn) warnings.push(tr('import.manyTriangles', { count: formatCount(stats.triangles) }));
   if (stats.invalidSkinMeshes > 0) {
-    return { ok: false, error: '蒙皮数据引用了不存在的骨骼（关节索引超出范围），文件可能已损坏', warnings };
+    return { ok: false, error: tr('import.badSkin'), warnings };
   }
   if (stats.bones > limits.bonesMax) {
-    return { ok: false, error: `骨骼太多（${formatCount(stats.bones)}），超过 ${formatCount(limits.bonesMax)} 的上限`, warnings };
+    return { ok: false, error: tr('import.tooManyBones', { count: formatCount(stats.bones), limit: formatCount(limits.bonesMax) }), warnings };
   }
   for (const t of stats.textures) {
     if (Math.max(t.width, t.height) > limits.textureEdgeMax) {
       return {
         ok: false,
-        error: `贴图太大（${String(t.width)}×${String(t.height)}），边长超过 ${formatCount(limits.textureEdgeMax)} 的上限`,
+        error: tr('import.textureTooLarge', { width: String(t.width), height: String(t.height), limit: formatCount(limits.textureEdgeMax) }),
         warnings,
       };
     }

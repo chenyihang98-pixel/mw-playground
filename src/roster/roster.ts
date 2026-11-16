@@ -18,6 +18,7 @@ import type { CastMember } from './cast';
 import { clipIndexOf, decodeRecord, encodeRecord, type PersonRecord, type PersonSettings } from './format';
 import type { RosterStore, StoredEntry } from './store';
 import type { RosterEntrySnapshot, RosterSnapshot } from './types';
+import { t } from '../i18n';
 
 export type Importer = (source: ImportSource) => Promise<ImportOutcome>;
 
@@ -27,7 +28,7 @@ export type AddResult =
   | { readonly ok: false; readonly reason: 'duplicate' | 'full' | 'reading'; readonly error: string; readonly key: string | null };
 
 /** 存储里的记录还没读出来时加入的提示。 */
-export const ROSTER_READING_MESSAGE = '名册正在读取保存的人物，请稍后再加入';
+export const ROSTER_READING_MESSAGE = t('roster.reading');
 
 interface Entry {
   readonly key: string;
@@ -78,8 +79,8 @@ export function applySettings(asset: ImportedAsset, settings: PersonSettings): v
 
 function describeError(error: unknown): string {
   const name = error && typeof error === 'object' && 'name' in error ? String(error.name) : '';
-  if (name === 'QuotaExceededError') return '存储空间不够';
-  if (name === 'SecurityError' || name === 'InvalidStateError') return '浏览器禁止使用本地存储';
+  if (name === 'QuotaExceededError') return t('storage.quota');
+  if (name === 'SecurityError' || name === 'InvalidStateError') return t('storage.denied');
   if (error instanceof Error && error.message) return error.message;
   return name || String(error);
 }
@@ -130,7 +131,7 @@ export class Roster {
   }
 
   private storageFailed(what: string, error: unknown): void {
-    const message = `${what}（${describeError(error)}）。游戏照常运行，本次会话里的名册仍然能用，但刷新后不会保留这些修改`;
+    const message = t('roster.storageProblem', { what, error: describeError(error) });
     this.storageError = message;
     this.notice(message);
     this.emit();
@@ -216,7 +217,7 @@ export class Roster {
     } catch (error) {
       this.reading = false;
       this.restoringNow = false;
-      this.storageFailed('读不了浏览器里保存的名册', error);
+      this.storageFailed(t('roster.loadFailed'), error);
       return;
     }
     const valid: Entry[] = [];
@@ -225,9 +226,9 @@ export class Roster {
       if (this.find(item.key)) continue;
       const decoded = decodeRecord(item.value);
       if (!decoded.ok || decoded.record.id !== item.key) {
-        const message = decoded.ok ? '记录损坏：键与记录里的 id 不一致' : decoded.message;
+        const message = decoded.ok ? t('roster.keyMismatch') : decoded.message;
         broken.push({ key: item.key, record: null, asset: null, status: 'failed', error: message, unsubscribe: null });
-        this.notice(`名册里的一项已跳过：${message}（记录还在，可以在名册里删除）`);
+        this.notice(t('roster.entrySkipped', { message }));
         continue;
       }
       valid.push({ key: item.key, record: decoded.record, asset: null, status: 'loading', error: null, unsubscribe: null });
@@ -245,8 +246,8 @@ export class Roster {
           // 某一项出了意外的错误：标为失败、跳过，其余照常恢复
           if (entry.status !== 'ready') {
             entry.status = 'failed';
-            entry.error = `恢复失败：${describeError(error)}`;
-            this.notice(`“${this.nameOf(entry.key)}”${entry.error}，已跳过（记录还在，可以在名册里删除）`);
+            entry.error = t('roster.restoreFailed', { error: describeError(error) });
+            this.notice(t('roster.restoreSkipped', { name: this.nameOf(entry.key), error: entry.error }));
           }
         }
       }
@@ -263,18 +264,18 @@ export class Roster {
     const fail = (message: string) => {
       entry.status = 'failed';
       entry.error = message;
-      this.notice(`“${record.displayName}”${message}，已跳过（记录还在，可以在名册里删除）`);
+      this.notice(t('roster.restoreSkipped', { name: record.displayName, error: message }));
       this.emit();
     };
     let outcome: ImportOutcome;
     try {
       outcome = await this.importer(blobSource(record.fileName, record.file));
     } catch (error) {
-      fail(`恢复失败：${describeError(error)}`);
+      fail(t('roster.restoreFailed', { error: describeError(error) }));
       return;
     }
     if (!outcome.ok) {
-      fail(`恢复失败：${outcome.error}`);
+      fail(t('roster.restoreFailed', { error: outcome.error }));
       return;
     }
     const asset = outcome.asset;
@@ -285,7 +286,7 @@ export class Roster {
     }
     if (asset.id !== record.sha256) {
       asset.dispose();
-      fail('恢复失败：文件内容与记录的 SHA-256 不一致');
+      fail(t('roster.shaMismatch'));
       return;
     }
     applySettings(asset, record.settings);
@@ -326,7 +327,7 @@ export class Roster {
           }
         },
         (error: unknown) => {
-          this.storageFailed(`“${record.displayName}”没有保存`, error);
+          this.storageFailed(t('roster.notSaved', { name: record.displayName }), error);
         },
       );
     this.writes.set(entry.key, write);
@@ -351,13 +352,13 @@ export class Roster {
     const existing = this.find(asset.id);
     if (existing) {
       this.highlightKey = existing.key;
-      const error = `“${this.nameOf(existing.key)}”已在名册里`;
+      const error = t('roster.alreadyIn', { name: this.nameOf(existing.key) });
       this.notice(error);
       this.emit();
       return { ok: false, reason: 'duplicate', error, key: existing.key };
     }
     if (this.list.length >= ROSTER_LIMITS.maxPeople) {
-      const error = `名册已满（最多 ${String(ROSTER_LIMITS.maxPeople)} 个人物），不能再加入`;
+      const error = t('roster.full', { max: String(ROSTER_LIMITS.maxPeople) });
       this.notice(error);
       this.emit();
       return { ok: false, reason: 'full', error, key: null };
@@ -385,15 +386,15 @@ export class Roster {
   /** 设分工。主角只有一个：设新主角时原来的主角（包括主角兼守卫）改为不出场。同伴最多 maxCompanions 个。 */
   setRole(key: string, role: Role): ActionResult {
     const entry = this.find(key);
-    if (!entry?.record) return { ok: false, error: '名册里没有这一项' };
-    if (entry.status === 'loading') return { ok: false, error: '这一项还在恢复，请稍后再试' };
-    if (entry.status !== 'ready') return { ok: false, error: '这一项没有恢复，只能删除' };
+    if (!entry?.record) return { ok: false, error: t('roster.noEntry') };
+    if (entry.status === 'loading') return { ok: false, error: t('roster.stillRestoring') };
+    if (entry.status !== 'ready') return { ok: false, error: t('roster.notRestored') };
     if (entry.record.role === role) return { ok: true };
     if (role === 'companion') {
       // 还在恢复、分工已经是同伴的人物也算在内（恢复完就会出场）
       const companions = this.list.filter((e) => e !== entry && e.status !== 'failed' && e.record?.role === 'companion').length;
       if (companions >= ROSTER_LIMITS.maxCompanions) {
-        const error = `${ROLE_LABELS.companion}最多 ${String(ROSTER_LIMITS.maxCompanions)} 个`;
+        const error = t('roster.companionLimit', { role: ROLE_LABELS.companion, max: String(ROSTER_LIMITS.maxCompanions) });
         this.notice(error);
         this.emit();
         return { ok: false, error };
@@ -403,7 +404,7 @@ export class Roster {
       for (const other of this.list) {
         if (other !== entry && other.record && isPlayerRole(other.record.role)) {
           this.update(other, { role: 'none' });
-          this.notice(`“${other.record.displayName}”不再是主角，改为不出场`);
+          this.notice(t('roster.noLongerPlayer', { name: other.record.displayName }));
         }
       }
     }
@@ -424,10 +425,10 @@ export class Roster {
 
   rename(key: string, name: string): ActionResult {
     const entry = this.find(key);
-    if (!entry?.record) return { ok: false, error: '名册里没有这一项' };
+    if (!entry?.record) return { ok: false, error: t('roster.noEntry') };
     const trimmed = name.trim();
-    if (trimmed === '') return { ok: false, error: '显示名不能为空' };
-    if (trimmed.length > ROSTER_LIMITS.maxNameLength) return { ok: false, error: `显示名最长 ${String(ROSTER_LIMITS.maxNameLength)} 个字符` };
+    if (trimmed === '') return { ok: false, error: t('roster.nameEmpty') };
+    if (trimmed.length > ROSTER_LIMITS.maxNameLength) return { ok: false, error: t('roster.nameTooLong', { max: String(ROSTER_LIMITS.maxNameLength) }) };
     this.update(entry, { displayName: trimmed });
     this.emit();
     return { ok: true };
@@ -453,7 +454,7 @@ export class Roster {
       .then(
         () => undefined,
         (error: unknown) => {
-          this.storageFailed(`“${entry.record?.displayName ?? key}”没有从存储里删除`, error);
+          this.storageFailed(t('roster.notDeleted', { name: entry.record?.displayName ?? key }), error);
         },
       );
     this.writes.set(key, deletion);

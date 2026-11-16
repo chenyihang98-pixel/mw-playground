@@ -15,6 +15,7 @@ import { GEN_CONFIG, type Density } from './config';
 import { generateLayout } from './generator';
 import { deriveSeed } from './random';
 import { decideTimeLimit, routeTime } from './timing';
+import { t } from '../../../i18n';
 
 type GenConfig = typeof GEN_CONFIG;
 
@@ -89,7 +90,7 @@ function run(brief: Brief, seed: string, config: GenConfig): RunResult {
       return {
         ok: false,
         kind: 'rejected',
-        problems: [{ category: 'layout', code: 'route', message: '检查通过了，但路线时间算不出来（有收集点走不到）' }],
+        problems: [{ category: 'layout', code: 'route', message: t('pipeline.noRoute') }],
         attempts: attempt + 1,
       };
     }
@@ -104,7 +105,7 @@ function run(brief: Brief, seed: string, config: GenConfig): RunResult {
     kind: 'cannot-fit',
     reasons,
     attempts: total,
-    message: `放不下：${brief.tier} 地图（${String(tier.size)} m）试了 ${String(total)} 次都放不下这么多收集点、高台、守卫和障碍，可以减少数量或换成更大的地图档位`,
+    message: t('pipeline.cannotFit', { tier: brief.tier, size: String(tier.size), attempts: String(total) }),
   };
 }
 
@@ -115,10 +116,10 @@ export function adjustBrief(brief: Brief, reason: 'cannot-fit' | 'too-far', conf
   const minimum = config.tiers[brief.tier].collectibles.min;
   if (reason === 'cannot-fit') {
     const lower = LOWER_DENSITY[brief.density];
-    if (lower) return { brief: { ...brief, density: lower }, change: `障碍密度 ${brief.density} → ${lower}` };
+    if (lower) return { brief: { ...brief, density: lower }, change: t('pipeline.adjustDensity', { from: brief.density, to: lower }) };
   }
   if (brief.collectibles > minimum) {
-    return { brief: { ...brief, collectibles: minimum }, change: `收集点数 ${String(brief.collectibles)} → ${String(minimum)}（档位范围的下限）` };
+    return { brief: { ...brief, collectibles: minimum }, change: t('pipeline.adjustCollectibles', { from: String(brief.collectibles), to: String(minimum) }) };
   }
   return null;
 }

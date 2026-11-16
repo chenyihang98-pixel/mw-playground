@@ -10,6 +10,7 @@ import { builtinEntries, builtinPackage, fallbackPackage } from './levels/catalo
 import type { LevelPackage } from './levels/package';
 import { RandomLevelJob } from './levels/randomJob';
 import { SAVED_LEVELS_DB, SavedLevels } from './levels/saved';
+import { builtinTitle, displayOpening, displayTitle } from './levels/titles';
 import { CameraRig } from './render/cameraRig';
 import { CharacterView } from './render/characterView';
 import { Environment } from './render/environment';
@@ -33,7 +34,7 @@ import { WorkshopPanel } from './ui/workshopPanel';
 import type { SceneApp } from '../scene/createScene';
 import { InstanceRegistry, type ImportedAsset } from '../import/asset';
 import { ImportPanel, type HostResult } from '../import/ui/importPanel';
-import { STAND_IN_PREFIX, assignLevelCast } from '../roster/cast';
+import { STAND_IN_PREFIX, assignLevelCast, isStandInNotice } from '../roster/cast';
 import { isPlayerRole } from '../roster/config';
 import { CastDirector } from '../roster/director';
 import { IndexedDbRosterStore } from '../roster/idbStore';
@@ -42,6 +43,7 @@ import { RosterPanel } from '../roster/ui/rosterPanel';
 import { ThumbnailRenderer } from '../roster/ui/thumbnails';
 import { PanelManager } from '../ui/panels';
 import { HomeScreen, TopBar } from '../ui/shell';
+import { t } from '../i18n';
 
 export type { GameAppSnapshot } from './appTypes';
 
@@ -185,20 +187,20 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
       panels.close('import');
     },
     addPerson: (asset, file): HostResult => {
-      if (!roster.has(asset.id) && !file) return { ok: false, error: '缺少原文件，请重新导入这个文件' };
+      if (!roster.has(asset.id) && !file) return { ok: false, error: t('app.missingFile') };
       const result = roster.add(asset, file ?? new Blob());
-      return result.ok ? { ok: true, message: `已加入名册：${asset.fileName}（分工：不出场）` } : { ok: false, error: result.error };
+      return result.ok ? { ok: true, message: t('app.addedToRoster', { name: asset.fileName }) } : { ok: false, error: result.error };
     },
     setPlayer: (asset, file): HostResult => {
       // 还不在名册里就先加入，再设为主角；同一个文件已在名册里时直接用名册里的那一项
       if (!roster.has(asset.id)) {
-        if (!file) return { ok: false, error: '缺少原文件，请重新导入这个文件' };
+        if (!file) return { ok: false, error: t('app.missingFile') };
         const added = roster.add(asset, file);
         if (!added.ok) return { ok: false, error: added.error };
       }
       const result = roster.setRole(asset.id, 'player');
       if (!result.ok) return result;
-      return { ok: true, message: `已设为主角：${roster.nameOf(asset.id)}` };
+      return { ok: true, message: t('app.setAsPlayer', { name: roster.nameOf(asset.id) }) };
     },
     retains: (asset: ImportedAsset) => roster.owns(asset),
     inRoster: (asset: ImportedAsset) => roster.has(asset.id),
@@ -240,15 +242,17 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
 
   /** 开始面板里的开场白、台词和提示。 */
   const introOf = (pkg: LevelPackage, notices: readonly string[]): LevelIntro => ({
-    opening: pkg.brief?.opening ?? '',
+    // 内置关卡的开场白按 id 翻译；其他关卡的开场白是生成的文字，原样显示（F6）
+    opening: displayOpening(pkg).text,
+    openingRaw: displayOpening(pkg).raw,
     lines: (pkg.brief?.cast ?? [])
       .filter((c) => c.line !== '')
       .map((c) => ({
-        name: roster.has(c.personId) ? roster.nameOf(c.personId) : '（已不在名册里的人物）',
-        role: c.role === 'guard' ? '守卫' : '同伴',
+        name: roster.has(c.personId) ? roster.nameOf(c.personId) : t('app.notInRoster'),
+        role: c.role === 'guard' ? t('role.guard') : t('role.companion'),
         line: c.line,
       })),
-    notices: notices.filter((n) => n.includes('默认替身')),
+    notices: notices.filter((n) => isStandInNotice(n)),
   });
 
   /**
@@ -259,7 +263,7 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
   const recast = () => {
     const levelCast = (current.brief?.cast ?? []).map((c) => ({ personId: c.personId, role: c.role }));
     const cast = assignLevelCast(roster.members(), levelCast, state.guards.length, registry.max, { castIsExplicit: current.source === 'model' });
-    const shown = roster.restoring ? { ...cast, notices: cast.notices.filter((n) => !n.includes('默认替身')) } : cast;
+    const shown = roster.restoring ? { ...cast, notices: cast.notices.filter((n) => !isStandInNotice(n)) } : cast;
     const companions = director.apply(shown, (id) => (id.startsWith(STAND_IN_PREFIX) ? null : roster.assetOf(id)));
     setState(setCompanions(state, companions));
     hud.setIntro(introOf(current, shown.notices));
@@ -279,8 +283,11 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
     const source = sourceBadge(current, builtinKindOf(current));
     const difficulty = estimateDifficulty(current).label;
     hud.setBadges({ source, difficulty });
-    topBar.setLevel(current.title);
-    home.setLevel({ title: current.title, source, difficulty });
+    // 内置关卡按 id 翻译名字；其他关卡的标题原样显示（F6）
+    const title = displayTitle(current);
+    hud.setTitle(title.text, title.raw);
+    topBar.setLevel(title.text, title.raw);
+    home.setLevel({ title: title.text, titleRaw: title.raw, source, difficulty });
   };
 
   /** 换一关：释放旧的关卡视图和出场实例，按新的布局、规则和视觉预设重建，回到开始面板。不重新生成，也不重算时间。 */
@@ -332,7 +339,7 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
       },
     },
     current: () => current,
-    builtins: () => builtinEntries(),
+    builtins: () => builtinEntries().map((e) => ({ ...e, title: builtinTitle(e.id) ?? e.title })),
     builtinPackage: (id) => builtinPackage(id),
     close: () => {
       panels.close('levels');

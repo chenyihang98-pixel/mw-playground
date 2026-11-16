@@ -10,6 +10,7 @@
 
 import { z } from 'zod';
 import { briefSchema, visualPresetSchema } from '../game/level/gen/brief';
+import { t } from '../i18n';
 
 /** 错误码。 */
 export const ERROR_CODES = {
@@ -51,7 +52,7 @@ export const rosterPersonSchema = z.strictObject({
     .array(z.enum(PERSON_ROLES))
     .min(1)
     .max(PERSON_ROLES.length)
-    .refine((roles) => new Set(roles).size === roles.length, '分工不能重复'),
+    .refine((roles) => new Set(roles).size === roles.length, t('protocol.dupRoles')),
 });
 export type RosterPersonSnapshot = z.output<typeof rosterPersonSchema>;
 
@@ -63,7 +64,7 @@ export const generateRequestSchema = z.strictObject({
   roster: z
     .array(rosterPersonSchema)
     .max(HARD_LIMITS.roster)
-    .refine((list) => new Set(list.map((p) => p.id)).size === list.length, '人物不能重复'),
+    .refine((list) => new Set(list.map((p) => p.id)).size === list.length, t('protocol.dupPeople')),
 });
 export type GenerateRequest = z.output<typeof generateRequestSchema>;
 
@@ -126,12 +127,12 @@ export const OUTCOMES = ['model-first', 'model-repaired', 'program-adjusted', 'f
 export type Outcome = (typeof OUTCOMES)[number];
 
 export const OUTCOME_LABELS: Readonly<Record<Outcome, string>> = {
-  'model-first': '模型首次通过',
-  'model-repaired': '模型修复后通过',
-  'program-adjusted': '程序调整后通过',
-  fallback: '回退内置关卡',
-  cancelled: '用户取消',
-  error: '服务错误或超时',
+  'model-first': t('outcome.modelFirst'),
+  'model-repaired': t('outcome.modelRepaired'),
+  'program-adjusted': t('outcome.programAdjusted'),
+  fallback: t('outcome.fallback'),
+  cancelled: t('outcome.cancelled'),
+  error: t('outcome.error'),
 };
 
 const modelInfo = { provider: z.enum(PROVIDER_NAMES), model: z.string().nullable() };

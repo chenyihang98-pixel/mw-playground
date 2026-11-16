@@ -2,6 +2,7 @@
 // 片段一律按序号标识（稳定标识是“文件 SHA-256 + 序号”），名字只用来显示和识别用途。
 
 import { CLIP_RULES } from './limits';
+import { t } from '../i18n';
 
 export type Purpose = 'idle' | 'walk' | 'run' | 'jump' | 'other';
 export type Playback = 'loop' | 'once';
@@ -13,11 +14,11 @@ export const SLOT_PURPOSES = ['idle', 'walk', 'run', 'jump'] as const;
 export type SlotPurpose = (typeof SLOT_PURPOSES)[number];
 
 export const PURPOSE_LABELS: Readonly<Record<Purpose, string>> = {
-  idle: '待机',
-  walk: '走',
-  run: '跑',
-  jump: '跳',
-  other: '其他',
+  idle: t('purpose.idle'),
+  walk: t('purpose.walk'),
+  run: t('purpose.run'),
+  jump: t('purpose.jump'),
+  other: t('purpose.other'),
 };
 
 /** 一个片段的原始事实（由加载后的 AnimationClip 得到）。 */
@@ -121,8 +122,8 @@ function inferPlayback(purpose: Purpose): Playback {
 
 function eligibleForAuto(facts: ClipFacts, purpose: SlotPurpose): string | null {
   if (purpose === 'jump') return null;
-  if (isShortClip(facts)) return `时长极短（${facts.duration.toFixed(3)} 秒），不作为“${PURPOSE_LABELS[purpose]}”的自动建议`;
-  if (facts.rootMotionActive) return `带位移，默认不作为“${PURPOSE_LABELS[purpose]}”的自动建议`;
+  if (isShortClip(facts)) return t('clip.noteShort', { duration: facts.duration.toFixed(3), purpose: PURPOSE_LABELS[purpose] });
+  if (facts.rootMotionActive) return t('clip.noteRootMotion', { purpose: PURPOSE_LABELS[purpose] });
   return null;
 }
 
@@ -148,9 +149,9 @@ export function decideClips(facts: readonly ClipFacts[], overrides: ClipOverride
     const manual = effective.filter((e) => e.manual && e.purpose === purpose).sort((a, b) => a.facts.index - b.facts.index);
     if (manual.length > 0) {
       slots[purpose] = manual[0]?.facts.index ?? null;
-      for (const extra of manual.slice(1)) note(extra.facts.index, `也被手动设为“${PURPOSE_LABELS[purpose]}”，使用序号更小的 #${String(slots[purpose])}`);
+      for (const extra of manual.slice(1)) note(extra.facts.index, t('clip.noteManualDup', { purpose: PURPOSE_LABELS[purpose], index: String(slots[purpose]) }));
       for (const e of effective) {
-        if (!e.manual && e.recognized === purpose) note(e.facts.index, `识别为“${PURPOSE_LABELS[purpose]}”，已被手动选择覆盖`);
+        if (!e.manual && e.recognized === purpose) note(e.facts.index, t('clip.noteOverridden', { purpose: PURPOSE_LABELS[purpose] }));
       }
       continue;
     }
@@ -169,7 +170,7 @@ export function decideClips(facts: readonly ClipFacts[], overrides: ClipOverride
     const chosen = eligible[0];
     slots[purpose] = chosen?.facts.index ?? null;
     for (const other of eligible.slice(1)) {
-      note(other.facts.index, `同为“${PURPOSE_LABELS[purpose]}”，建议使用 #${String(chosen?.facts.index)}；可以手动选择这一个`);
+      note(other.facts.index, t('clip.noteSameAs', { purpose: PURPOSE_LABELS[purpose], index: String(chosen?.facts.index) }));
     }
   }
 
@@ -228,7 +229,7 @@ export interface AnimationPlan {
   readonly notices: readonly string[];
 }
 
-export const NO_MOVEMENT_NOTICE = '没有适用的移动动作，将使用整体摆动效果';
+export const NO_MOVEMENT_NOTICE = t('clip.noMovement');
 
 /**
  * 兜底规则：
@@ -244,11 +245,11 @@ export function planAnimations(slots: Slots, speeds: { walkSpeed: number; runSpe
   if (slots.run !== null) run = { kind: 'clip', index: slots.run, timeScale: 1 };
   if (walk === null && slots.run !== null) {
     walk = { kind: 'clip', index: slots.run, timeScale: speeds.walkSpeed / speeds.runSpeed };
-    notices.push('没有“走”的片段：用“跑”的片段放慢播放');
+    notices.push(t('clip.noWalk'));
   }
   if (run === null && slots.walk !== null) {
     run = { kind: 'clip', index: slots.walk, timeScale: speeds.runSpeed / speeds.walkSpeed };
-    notices.push('没有“跑”的片段：用“走”的片段加快播放');
+    notices.push(t('clip.noRun'));
   }
   const sway = walk === null || run === null;
   if (sway) notices.push(NO_MOVEMENT_NOTICE);
@@ -258,13 +259,13 @@ export function planAnimations(slots: Slots, speeds: { walkSpeed: number; runSpe
     idle = { kind: 'clip', index: slots.idle, timeScale: 1 };
   } else if (walk?.kind === 'clip') {
     idle = { kind: 'firstFrame', index: walk.index };
-    notices.push('没有“待机”的片段：用“走”的第一帧静止');
+    notices.push(t('clip.noIdleFirstFrame'));
   } else {
     idle = { kind: 'bindPose' };
-    notices.push('没有“待机”的片段：使用绑定姿态');
+    notices.push(t('clip.noIdleBind'));
   }
   const jump: MotionSource | null = slots.jump !== null ? { kind: 'clip', index: slots.jump, timeScale: 1 } : null;
-  if (jump === null) notices.push('没有“跳”的片段：跳跃时保持当前的动作');
+  if (jump === null) notices.push(t('clip.noJump'));
 
   return {
     idle,

@@ -20,6 +20,8 @@ import type { ClipRowSnapshot, ImportCardSnapshot, ImportPanelSnapshot, NoticeSn
 import { button, el, notice, setButtonText, tag } from '../../ui/dom';
 import { icon } from '../../ui/icons';
 import { poseWording } from './wording';
+import { t } from '../../i18n';
+import { markRaw } from '../../ui/raw';
 
 export type HostResult = { readonly ok: true; readonly message: string } | { readonly ok: false; readonly error: string };
 
@@ -61,9 +63,9 @@ export type RosterRelation = 'absent' | 'owned' | 'pending' | 'failed';
 export function settingsLockedReason(relation: RosterRelation): string | null {
   switch (relation) {
     case 'pending':
-      return '名册里的这个人物还在恢复：恢复好之后卡片会换成名册里的那一份，到时再修改设置（现在的修改不会保存，所以先禁用）';
+      return t('import.lockPending');
     case 'failed':
-      return '名册里的这个人物恢复失败：先在名册里删除它，再加入这个文件，才能修改并保存设置';
+      return t('import.lockFailed');
     case 'absent':
     case 'owned':
       return null;
@@ -71,20 +73,20 @@ export function settingsLockedReason(relation: RosterRelation): string | null {
 }
 
 function sourceLabel(source: MotionSource | null, skinned: boolean): string {
-  if (source === null) return '无（保持当前动作）';
+  if (source === null) return t('import.sourceNone');
   switch (source.kind) {
     case 'clip':
       return source.timeScale === 1 ? `#${String(source.index)}` : `#${String(source.index)} ×${source.timeScale.toFixed(2)}`;
     case 'firstFrame':
-      return `#${String(source.index)} 的第一帧`;
+      return t('import.sourceFirstFrame', { index: String(source.index) });
     case 'bindPose':
-      return skinned ? '绑定姿态' : '静止姿态';
+      return skinned ? t('pose.bind') : t('pose.static');
     case 'sway':
-      return '整体摆动';
+      return t('import.sourceSway');
   }
 }
 
-const PLAYBACK_LABELS: Readonly<Record<Playback, string>> = { loop: '循环', once: '一次' };
+const PLAYBACK_LABELS: Readonly<Record<Playback, string>> = { loop: t('playback.loop'), once: t('playback.once') };
 
 /** 说明级的兜底提示里，这几条是“能用但效果打了折扣”，按警告显示。 */
 const DEGRADED_NOTICES: readonly string[] = [NO_MOVEMENT_NOTICE];
@@ -117,7 +119,7 @@ function formatBytes(bytes: number): string {
 
 export class ImportPanel {
   /** “导入角色”按钮（P6 起放在顶栏里）。 */
-  readonly importButton = el('button', { id: 'import-button', text: '导入角色' });
+  readonly importButton = el('button', { id: 'import-button', text: t('import.button') });
   private readonly input = el('input', { id: 'import-file' });
   private readonly toasts = el('div', { id: 'mw-toasts' });
   private readonly status = el('div', { id: 'import-status' });
@@ -151,11 +153,11 @@ export class ImportPanel {
     this.errorBox.hidden = true;
     this.errorBox.append(icon('alert'), this.errorText);
     this.status.setAttribute('role', 'status');
-    this.card.setAttribute('aria-label', '导入预览');
+    this.card.setAttribute('aria-label', t('import.previewLabel'));
     this.card.hidden = true;
     this.dropHint.hidden = true;
     const dropInner = el('div', { className: 'drop-inner' });
-    dropInner.append(icon('upload', 'mw-icon drop-icon'), el('strong', { text: '松开鼠标导入模型' }), el('span', { text: '.glb / .obj / .stl / .ply' }));
+    dropInner.append(icon('upload', 'mw-icon drop-icon'), el('strong', { text: t('import.dropHint') }), el('span', { text: '.glb / .obj / .stl / .ply' }));
     this.dropHint.append(dropInner);
     this.toasts.append(this.errorBox, this.status);
     root.append(this.input, this.toasts, this.dropHint, this.card);
@@ -203,7 +205,7 @@ export class ImportPanel {
 
   private setError(message: string | null): void {
     this.error = message;
-    this.errorText.textContent = message === null ? '' : `导入失败：${message}`;
+    this.errorText.textContent = message === null ? '' : t('import.failed', { message });
     this.errorBox.hidden = message === null;
   }
 
@@ -211,7 +213,7 @@ export class ImportPanel {
     if (this.busy) return;
     this.busy = true;
     this.importButton.disabled = true;
-    this.setStatus(`正在导入 ${file.name}…`);
+    this.setStatus(t('import.importing', { name: file.name }));
     this.setError(null);
     try {
       const outcome = await importModel(fileSource(file));
@@ -227,13 +229,13 @@ export class ImportPanel {
         // 名册里已有同一个文件：卡片打开名册里的那一份（修改会保存），刚加载的副本释放掉
         outcome.asset.dispose();
         this.open(own, null);
-        this.setStatus(`${file.name} 已在名册里：卡片显示的是名册里的这一项，修改会保存`);
+        this.setStatus(t('import.alreadyInRoster', { name: file.name }));
         return;
       }
       this.open(outcome.asset, file);
-      this.setStatus(`已导入 ${file.name}`);
+      this.setStatus(t('import.imported', { name: file.name }));
     } catch (error) {
-      this.setError(`文件损坏或格式不对，无法解析：${error instanceof Error ? error.message : String(error)}`);
+      this.setError(t('import.parseFailed', { message: error instanceof Error ? error.message : String(error) }));
       this.setStatus('');
     } finally {
       this.busy = false;
@@ -248,7 +250,7 @@ export class ImportPanel {
       return;
     }
     this.open(asset, null);
-    this.setStatus(`正在修改 ${asset.fileName} 的设置（自动保存到名册）`);
+    this.setStatus(t('import.editing', { name: asset.fileName }));
   }
 
   private open(asset: ImportedAsset, file: Blob | null): void {
@@ -312,7 +314,7 @@ export class ImportPanel {
     const own = this.host.canonical(asset);
     if (own === asset) return false;
     this.open(own, null);
-    this.setStatus(`${own.fileName} 已在名册里：卡片改为显示名册里的这一项，修改会保存`);
+    this.setStatus(t('import.rebound', { name: own.fileName }));
     return true;
   }
 
@@ -321,18 +323,19 @@ export class ImportPanel {
     const skinned = asset.stats.skinnedMeshes > 0;
     const header = el('div', { className: 'mw-panel-header' });
     const titleBox = el('div', { className: 'card-title' });
-    const title = el('h2', { text: asset.fileName });
+    // 文件名是用户数据，原样显示
+    const title = markRaw(el('h2', { text: asset.fileName }));
     title.title = asset.fileName;
     const meta = el('div', { className: 'card-meta' });
     meta.append(
       tag(asset.format.toUpperCase(), 'blue'),
       tag(formatBytes(asset.sizeBytes)),
-      skinned ? tag('带骨骼', 'green', 'user') : tag('静态模型', 'default', 'layers'),
+      skinned ? tag(t('import.skinned'), 'green', 'user') : tag(t('import.static'), 'default', 'layers'),
     );
     titleBox.append(title, meta);
-    const closeButton = button('关闭', () => {
+    const closeButton = button(t('common.close'), () => {
       this.close();
-    }, { icon: 'close', iconOnly: true, variant: 'ghost', label: '关闭' });
+    }, { icon: 'close', iconOnly: true, variant: 'ghost', label: t('common.close') });
     closeButton.dataset.autofocus = 'true';
     header.append(titleBox, closeButton);
 
@@ -345,9 +348,9 @@ export class ImportPanel {
     lockNote.setAttribute('role', 'note');
 
     const display = el('div', { className: 'card-section' });
-    display.append(el('h3', { className: 'mw-section-title', text: '显示' }));
+    display.append(el('h3', { className: 'mw-section-title', text: t('import.display') }));
     const heightRow = el('div', { className: 'card-field' });
-    const heightLabel = el('label', { className: 'card-field-label', text: '显示身高' });
+    const heightLabel = el('label', { className: 'card-field-label', text: t('import.displayHeight') });
     heightLabel.htmlFor = 'import-height';
     const slider = el('input', { id: 'import-height', className: 'mw-range' });
     slider.type = 'range';
@@ -355,36 +358,36 @@ export class ImportPanel {
     slider.max = String(DISPLAY.maxHeight);
     slider.step = '0.01';
     slider.value = String(asset.settings.displayHeight);
-    slider.setAttribute('aria-label', '显示身高');
+    slider.setAttribute('aria-label', t('import.displayHeight'));
     slider.addEventListener('input', () => {
       asset.setDisplayHeight(Number(slider.value));
     });
     const heightValue = el('span', { className: 'card-field-value' });
     heightRow.append(heightLabel, slider, heightValue);
-    const heightHint = el('p', { className: 'mw-subtle card-hint', text: '身高和转向只影响显示，玩法用的胶囊不变；默认把 +Z 当作正前方。' });
+    const heightHint = el('p', { className: 'mw-subtle card-hint', text: t('import.heightHint') });
 
     const turnRow = el('div', { className: 'card-field card-field--turn' });
     const turnText = el('span', { className: 'card-field-value' });
-    const rotateLeft = button('向左转 90°', () => {
+    const rotateLeft = button(t('import.turnLeft'), () => {
       asset.rotateQuarter(1);
     }, { icon: 'rotateLeft', size: 'sm' });
-    const rotateRight = button('向右转 90°', () => {
+    const rotateRight = button(t('import.turnRight'), () => {
       asset.rotateQuarter(-1);
     }, { icon: 'rotateRight', size: 'sm' });
-    turnRow.append(el('span', { className: 'card-field-label', text: '正前方' }), rotateLeft, rotateRight, turnText);
+    turnRow.append(el('span', { className: 'card-field-label', text: t('import.forward') }), rotateLeft, rotateRight, turnText);
     display.append(heightRow, turnRow, heightHint);
 
     const noticeSection = el('div', { className: 'card-section' });
     const notices = el('ul', { id: 'import-notices', className: 'mw-notices' });
-    noticeSection.append(el('h3', { className: 'mw-section-title', text: '提示' }), notices);
+    noticeSection.append(el('h3', { className: 'mw-section-title', text: t('import.notices') }), notices);
 
     const planSection = el('div', { className: 'card-section' });
     const plan = el('dl', { className: 'card-plan' });
-    planSection.append(el('h3', { className: 'mw-section-title', text: '动作安排' }), plan);
+    planSection.append(el('h3', { className: 'mw-section-title', text: t('import.plan') }), plan);
 
     const clipSection = el('div', { className: 'card-section' });
     const clipCount = el('span', { className: 'mw-subtle' });
-    const clipTitle = el('h3', { className: 'mw-section-title', text: '片段 ' });
+    const clipTitle = el('h3', { className: 'mw-section-title', text: t('import.clips') });
     clipTitle.append(clipCount);
     const clips = el('ol', { id: 'import-clips', className: 'clip-list' });
     clipSection.append(clipTitle, clips);
@@ -400,10 +403,10 @@ export class ImportPanel {
       this.setStatus(result.ok ? result.message : result.error);
       this.refresh();
     };
-    const setPlayer = button('设为主角', () => {
+    const setPlayer = button(t('import.setPlayer'), () => {
       act((target, file) => this.host.setPlayer(target, file));
     }, { icon: 'star', variant: 'accent' });
-    const addPerson = button('加入为新人物', () => {
+    const addPerson = button(t('import.addPerson'), () => {
       act((target, file) => this.host.addPerson(target, file));
     }, { icon: 'users', variant: 'primary' });
     const footer = el('div', { className: 'mw-panel-footer card-actions' });
@@ -428,24 +431,24 @@ export class ImportPanel {
     };
     const textures = asset.stats.textures.map((t) => `${String(t.width)}×${String(t.height)}`);
     parts.stats.replaceChildren(
-      stat('尺寸（米）', `${(size?.width ?? 0).toFixed(2)} × ${(size?.height ?? 0).toFixed(2)} × ${(size?.depth ?? 0).toFixed(2)}`),
-      stat('三角面', asset.stats.triangles.toLocaleString('en-US')),
-      stat('骨骼', skinned ? String(asset.stats.bones) : '无骨骼'),
-      stat('片段', String(asset.clips.length)),
+      stat(t('import.statSize'), `${(size?.width ?? 0).toFixed(2)} × ${(size?.height ?? 0).toFixed(2)} × ${(size?.depth ?? 0).toFixed(2)}`),
+      stat(t('import.statTriangles'), asset.stats.triangles.toLocaleString('en-US')),
+      stat(t('import.statBones'), skinned ? String(asset.stats.bones) : t('import.noBones')),
+      stat(t('import.statClips'), String(asset.clips.length)),
       // 贴图逐张列出，单独占一整行，放不下就换行（不截断）
-      stat(textures.length > 0 ? `贴图（${String(textures.length)} 张）` : '贴图', textures.length > 0 ? textures.join('、') : '无', true),
+      stat(textures.length > 0 ? t('import.statTexturesCount', { count: String(textures.length) }) : t('import.statTextures'), textures.length > 0 ? textures.join(t('common.listSep')) : t('common.none'), true),
     );
     const height = String(asset.settings.displayHeight);
     if (parts.slider.value !== height && Number(parts.slider.value) !== asset.settings.displayHeight) parts.slider.value = height;
     parts.heightValue.textContent = `${asset.settings.displayHeight.toFixed(2)} m`;
-    parts.turnText.textContent = `已转 ${String(asset.settings.quarterTurns * 90)}°`;
+    parts.turnText.textContent = t('import.turned', { degrees: String(asset.settings.quarterTurns * 90) });
     parts.notices.replaceChildren(...this.noticeList(asset).map((n) => notice(n.level, n.text)));
     const planRows: [string, string][] = [
-      ['待机', sourceLabel(plan.idle, skinned)],
-      ['走', sourceLabel(plan.walk, skinned)],
-      ['跑', sourceLabel(plan.run, skinned)],
+      [t('purpose.idle'), sourceLabel(plan.idle, skinned)],
+      [t('purpose.walk'), sourceLabel(plan.walk, skinned)],
+      [t('purpose.run'), sourceLabel(plan.run, skinned)],
       // 没有跳的片段时提示里已经说明“保持当前的动作”，这里只写“无”
-      ['跳', plan.jump ? sourceLabel(plan.jump, skinned) : '无'],
+      [t('purpose.jump'), plan.jump ? sourceLabel(plan.jump, skinned) : t('common.none')],
     ];
     parts.plan.replaceChildren(
       ...planRows.map(([k, v]) => {
@@ -454,8 +457,8 @@ export class ImportPanel {
         return box;
       }),
     );
-    setButtonText(parts.setPlayer, this.host.isPlayer(asset) ? '已设为主角' : '设为主角');
-    setButtonText(parts.addPerson, this.host.inRoster(asset) ? '已在名册里' : '加入为新人物');
+    setButtonText(parts.setPlayer, this.host.isPlayer(asset) ? t('import.isPlayer') : t('import.setPlayer'));
+    setButtonText(parts.addPerson, this.host.inRoster(asset) ? t('import.inRoster') : t('import.addPerson'));
     // 名册里同一个文件还不可用时，这份副本上的设置先禁用（修改不会被保存）
     const relation = this.host.rosterStatus(asset);
     const lockedReason = settingsLockedReason(relation);
@@ -466,7 +469,7 @@ export class ImportPanel {
     parts.lockNote.replaceChildren(icon(relation === 'failed' ? 'alert' : 'warning'), el('span', { text: lockedReason ?? '' }));
     parts.lockNote.className = `lock-note mw-notice mw-notice--${relation === 'failed' ? 'error' : 'warning'}`;
     parts.lockNote.hidden = editable;
-    parts.clipCount.textContent = `${String(asset.clips.length)} 个`;
+    parts.clipCount.textContent = t('import.clipCount', { count: String(asset.clips.length) });
     this.renderClips(asset, parts.clips, editable);
   }
 
@@ -495,22 +498,23 @@ export class ImportPanel {
     const { clips: decisions } = asset.decisions();
     const items: HTMLLIElement[] = [];
     if (decisions.length === 0) {
-      items.push(el('li', { className: 'clip-empty mw-subtle', text: '这个模型没有动画片段。' }));
+      items.push(el('li', { className: 'clip-empty mw-subtle', text: t('import.noClips') }));
     }
     for (const d of decisions) {
       const clip = asset.clips[d.index];
       const li = el('li', { className: 'clip-item' });
       li.dataset.clipIndex = String(d.index);
 
-      const playButton = button('预览', () => {
+      const playButton = button(t('import.preview'), () => {
         this.preview.play(d.index);
-      }, { icon: 'play', iconOnly: true, size: 'sm', label: `预览片段 ${String(d.index)}` });
+      }, { icon: 'play', iconOnly: true, size: 'sm', label: t('import.previewClip', { index: String(d.index) }) });
       playButton.dataset.control = `play-${String(d.index)}`;
       if (this.preview.snapshot().clipIndex === d.index) playButton.classList.add('is-current');
 
       const head = el('div', { className: 'clip-head' });
       const clipName = clip?.name ?? '';
-      const name = el('span', { className: 'clip-name', text: clipName === '' ? '（未命名）' : clipName });
+      // 片段名来自文件，原样显示
+      const name = markRaw(el('span', { className: 'clip-name', text: clipName === '' ? t('import.unnamed') : clipName }), clipName !== '');
       name.title = clip?.name ?? '';
       head.append(
         playButton,
@@ -518,12 +522,12 @@ export class ImportPanel {
         name,
         el('span', { className: 'clip-duration', text: `${(clip?.duration ?? 0).toFixed(2)} s` }),
       );
-      if (d.slot) head.append(tag(`用于${PURPOSE_LABELS[d.slot]}`, 'green'));
+      if (d.slot) head.append(tag(t('import.usedFor', { purpose: PURPOSE_LABELS[d.slot] }), 'green'));
 
       const purposeSelect = el('select', { className: 'mw-select' });
       purposeSelect.dataset.control = `purpose-${String(d.index)}`;
-      purposeSelect.setAttribute('aria-label', `片段 ${String(d.index)} 的用途`);
-      purposeSelect.add(new Option(`自动：${PURPOSE_LABELS[d.recognized]}`, ''));
+      purposeSelect.setAttribute('aria-label', t('import.purposeOf', { index: String(d.index) }));
+      purposeSelect.add(new Option(t('import.autoPurpose', { purpose: PURPOSE_LABELS[d.recognized] }), ''));
       for (const p of PURPOSES) purposeSelect.add(new Option(PURPOSE_LABELS[p], p));
       purposeSelect.value = d.purposeSource === 'manual' ? d.purpose : '';
       purposeSelect.disabled = !editable;
@@ -533,14 +537,14 @@ export class ImportPanel {
 
       const playbackSelect = el('select', { className: 'mw-select' });
       playbackSelect.dataset.control = `playback-${String(d.index)}`;
-      playbackSelect.setAttribute('aria-label', `片段 ${String(d.index)} 的播放方式`);
+      playbackSelect.setAttribute('aria-label', t('import.playbackOf', { index: String(d.index) }));
       const autoLabel =
         d.playbackSource === 'manual'
-          ? '自动'
-          : `自动：${PLAYBACK_LABELS[d.playback]}${d.playbackSource === 'inferred' ? '（推断）' : '（明确）'}`;
+          ? t('import.auto')
+          : t('import.autoPlayback', { playback: PLAYBACK_LABELS[d.playback], source: d.playbackSource === 'inferred' ? t('import.inferredParen') : t('import.explicitParen') });
       playbackSelect.add(new Option(autoLabel, ''));
-      playbackSelect.add(new Option('循环', 'loop'));
-      playbackSelect.add(new Option('一次', 'once'));
+      playbackSelect.add(new Option(t('playback.loop'), 'loop'));
+      playbackSelect.add(new Option(t('playback.once'), 'once'));
       playbackSelect.value = d.playbackSource === 'manual' ? d.playback : '';
       playbackSelect.disabled = !editable;
       playbackSelect.addEventListener('change', () => {
@@ -549,23 +553,23 @@ export class ImportPanel {
 
       const controls = el('div', { className: 'clip-controls' });
       const purposeField = el('label', { className: 'clip-field' });
-      purposeField.append(el('span', { text: '用途' }), purposeSelect);
+      purposeField.append(el('span', { text: t('import.purpose') }), purposeSelect);
       const playbackField = el('label', { className: 'clip-field' });
-      playbackField.append(el('span', { text: '播放' }), playbackSelect);
-      if (d.playbackSource === 'inferred') playbackField.append(tag('推断', 'orange'));
+      playbackField.append(el('span', { text: t('import.playback') }), playbackSelect);
+      if (d.playbackSource === 'inferred') playbackField.append(tag(t('import.inferred'), 'orange'));
       controls.append(purposeField, playbackField);
 
       const motion = asset.rootMotion[d.index] ?? { kind: 'none' as const };
       const motionRow = el('div', { className: 'clip-motion' });
       if (motion.kind === 'identified') {
-        motionRow.append(el('span', { text: `${motion.flagged ? '带位移' : '原地'} ${motion.maxHorizontal.toFixed(2)} m` }));
-        const lockLabel = el('label', { className: 'clip-lock', text: '锁定水平位移' });
+        motionRow.append(el('span', { text: `${motion.flagged ? t('import.hasRootMotion') : t('import.inPlace')} ${motion.maxHorizontal.toFixed(2)} m` }));
+        const lockLabel = el('label', { className: 'clip-lock', text: t('import.lockMotion') });
         const lock = el('input');
         lock.type = 'checkbox';
         lock.dataset.control = `lock-${String(d.index)}`;
         lock.checked = asset.isMotionLocked(d.index);
         lock.disabled = !editable;
-        lock.setAttribute('aria-label', `锁定片段 ${String(d.index)} 的水平位移`);
+        lock.setAttribute('aria-label', t('import.lockMotionOf', { index: String(d.index) }));
         lock.addEventListener('change', () => {
           asset.setMotionLocked(d.index, lock.checked);
         });
@@ -576,11 +580,11 @@ export class ImportPanel {
         motionRow.append(el('span', { text: LOCK_UNSUPPORTED_MESSAGE }));
         motionRow.title = motion.reason;
       } else {
-        motionRow.append(el('span', { text: '原地' }));
+        motionRow.append(el('span', { text: t('import.inPlace') }));
       }
 
       li.append(head, controls, motionRow);
-      if (d.notes.length > 0) li.append(el('p', { className: 'clip-note', text: poseWording(d.notes.join('；'), asset.stats.skinnedMeshes > 0) }));
+      if (d.notes.length > 0) li.append(el('p', { className: 'clip-note', text: poseWording(d.notes.join(t('common.semicolon')), asset.stats.skinnedMeshes > 0) }));
       items.push(li);
     }
     list.replaceChildren(...items);

@@ -9,6 +9,7 @@
 // - 恢复失败（available = false）的人物不出场。
 
 import { ROLE_LABELS, ROSTER_LIMITS, isGuardRole, isPlayerRole, type Role } from './config';
+import { t } from '../i18n';
 
 export interface CastMember {
   readonly id: string;
@@ -47,19 +48,27 @@ export interface LevelCastOptions {
 export const STAND_IN_PREFIX = 'stand-in:';
 
 function names(members: readonly CastMember[]): string {
-  return members.map((m) => `“${m.name}”`).join('、');
+  return members.map((m) => t('common.quoted', { name: m.name })).join(t('common.listSep'));
+}
+
+/**
+ * 这条提示是不是“用默认替身代替”的那一类（F6：以前按中文原文判断，现在按当前语言的说法 cast.standInMarker；
+ * 各语言里这两条提示都包含它，单元测试核对）。
+ */
+export function isStandInNotice(notice: string): boolean {
+  return notice.includes(t('cast.standInMarker'));
 }
 
 export function assignCast(members: readonly CastMember[], guardCount: number, capacity: number): Cast {
   const notices: string[] = [];
   const ready = members.filter((m) => m.available);
   const unavailable = members.filter((m) => !m.available && m.role !== 'none');
-  if (unavailable.length > 0) notices.push(`${names(unavailable)} 没有恢复，不出场`);
+  if (unavailable.length > 0) notices.push(t('cast.unrestored', { names: names(unavailable) }));
   let free = Math.max(0, capacity);
   const dropped: CastMember[] = [];
 
   const players = ready.filter((m) => isPlayerRole(m.role));
-  if (players.length > 1) notices.push(`主角只能有一个：${names(players.slice(1))} 不作为主角出场`);
+  if (players.length > 1) notices.push(t('cast.onePlayer', { names: names(players.slice(1)) }));
   const playerMember = players[0] ?? null;
   let player: string | null = null;
   if (playerMember) {
@@ -84,7 +93,7 @@ export function assignCast(members: readonly CastMember[], guardCount: number, c
   });
   const extraGuards = guardMembers.slice(guards.length);
   if (extraGuards.length > 0) {
-    notices.push(`关卡里只有 ${String(guards.length)} 个守卫：${names(extraGuards)} 不出场`);
+    notices.push(t('cast.tooManyGuards', { count: String(guards.length), names: names(extraGuards) }));
   }
 
   const companionMembers = ready.filter((m) => m.role === 'companion');
@@ -100,10 +109,10 @@ export function assignCast(members: readonly CastMember[], guardCount: number, c
   });
   const extraCompanions = companionMembers.slice(ROSTER_LIMITS.maxCompanions);
   if (extraCompanions.length > 0) {
-    notices.push(`${ROLE_LABELS.companion}最多 ${String(ROSTER_LIMITS.maxCompanions)} 个：${names(extraCompanions)} 不出场`);
+    notices.push(t('cast.tooManyCompanions', { role: ROLE_LABELS.companion, max: String(ROSTER_LIMITS.maxCompanions), names: names(extraCompanions) }));
   }
   if (dropped.length > 0) {
-    notices.push(`同屏的导入实例最多 ${String(capacity)} 个：${names(dropped)} 不出场`);
+    notices.push(t('cast.capacity', { max: String(capacity), names: names(dropped) }));
   }
   return { player, guards, companions, notices };
 }
@@ -129,7 +138,7 @@ export function assignLevelCast(
   const usable = (id: string) => byId.get(id)?.available === true;
   const missing = (id: string) => {
     const known = byId.get(id);
-    notices.push(known ? `出场人物“${known.name}”没有恢复，用默认替身代替` : `出场人物（ID ${id.slice(0, 8)}）已不在名册里，用默认替身代替`);
+    notices.push(known ? t('cast.standInUnrestored', { name: known.name }) : t('cast.standInMissing', { id: id.slice(0, 8) }));
   };
   let free = Math.max(0, capacity);
   const dropped: string[] = [];
@@ -155,7 +164,7 @@ export function assignLevelCast(
     }
     if (take(entry.personId)) guards[i] = entry.personId;
   });
-  if (guardEntries.length > guards.length) notices.push(`关卡里只有 ${String(guards.length)} 个守卫：多列出的守卫不出场`);
+  if (guardEntries.length > guards.length) notices.push(t('cast.extraGuards', { count: String(guards.length) }));
 
   const companions: string[] = [];
   const standIns: string[] = [];
@@ -172,6 +181,6 @@ export function assignLevelCast(
       }
       if (take(entry.personId)) companions.push(entry.personId);
     });
-  if (dropped.length > 0) notices.push(`同屏的导入实例最多 ${String(capacity)} 个：${dropped.map((n) => `“${n}”`).join('、')} 不出场`);
+  if (dropped.length > 0) notices.push(t('cast.capacity', { max: String(capacity), names: dropped.map((n) => t('common.quoted', { name: n })).join(t('common.listSep')) }));
   return { player, guards, companions, notices, standIns };
 }

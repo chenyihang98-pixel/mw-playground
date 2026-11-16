@@ -8,10 +8,15 @@ import type { GameState } from '../sim';
 import { button, el, tag, type TagColor } from '../../ui/dom';
 import { icon } from '../../ui/icons';
 import { formatTime } from './format';
+import { t } from '../../i18n';
+import { markRaw } from '../../ui/raw';
+import { langSelect } from '../../ui/langSelect';
 
 /** 关卡开始前说明面板里的开场白和出场人物的台词（P5）。 */
 export interface LevelIntro {
   readonly opening: string;
+  /** 开场白是生成的文字，原样显示（F6；内置关卡的开场白按 id 翻译，不是原样）。 */
+  readonly openingRaw: boolean;
   readonly lines: readonly { readonly name: string; readonly role: string; readonly line: string }[];
   /** 加载时的提示（例如出场人物已被删除，用默认替身代替）。 */
   readonly notices: readonly string[];
@@ -36,11 +41,11 @@ export interface HudActions {
 const LOW_TIME_WARNING_SECONDS = 15;
 
 const CONTROLS_HELP: readonly [string, string][] = [
-  ['W A S D', '按相机方向移动'],
-  ['Shift', '跑'],
-  ['空格', '跳'],
-  ['鼠标 / 方向键', '转视角（点“开始”后锁定指针；锁定不可用时按住左键拖动）'],
-  ['Esc / P', '暂停 / 继续'],
+  ['W A S D', t('help.move')],
+  ['Shift', t('help.run')],
+  [t('help.space'), t('help.jump')],
+  [t('help.mouseArrows'), t('help.look')],
+  ['Esc / P', t('help.pause')],
 ];
 
 /** 操作说明（开始面板和开始界面共用）。 */
@@ -65,8 +70,10 @@ export class Hud {
   private readonly flash = el('div', { id: 'hit-flash' });
   private readonly overlay = el('div', { id: 'game-overlay' });
   private overlayKind: OverlayKind | null = null;
-  private intro: LevelIntro = { opening: '', lines: [], notices: [] };
+  private intro: LevelIntro = { opening: '', openingRaw: false, lines: [], notices: [] };
   private badges: LevelBadges | null = null;
+  /** 显示的关卡名（F6）：内置关卡是按 id 翻译的名字；其他关卡是保存的标题（原样显示，raw 为 true）。没设时用布局里的名字。 */
+  private title: { readonly text: string; readonly raw: boolean } | null = null;
   private seenHits = 0;
   private suppressed = false;
   private hudVisible = true;
@@ -86,7 +93,7 @@ export class Hud {
     const row = el('div', { className: 'hud-row' });
     row.append(timeCard, collectCard);
     this.level.dataset.role = 'level-name';
-    this.hint.textContent = 'Esc 暂停';
+    this.hint.textContent = t('hud.escPause');
     this.root.append(row, this.penalty, this.level, this.hint);
     this.overlay.setAttribute('role', 'dialog');
     this.overlay.setAttribute('aria-modal', 'false');
@@ -110,19 +117,20 @@ export class Hud {
 
   /** 每帧调用：刷新数字，发现新的扣时就闪一下。返回这一帧有没有新的扣时（给音效用）。 */
   update(state: GameState): boolean {
-    this.time.textContent = `剩余 ${formatTime(state.timeLeft)}`;
+    this.time.textContent = t('hud.timeLeft', { time: formatTime(state.timeLeft) });
     this.time.classList.toggle('cooldown', state.hitCooldown > 0);
     this.time.classList.toggle('low', state.hitCooldown === 0 && state.timeLeft <= LOW_TIME_WARNING_SECONDS);
-    this.collect.textContent = `收集 ${String(state.collected.length)} / ${String(state.level.target)}`;
+    this.collect.textContent = t('hud.collected', { count: String(state.collected.length), target: String(state.level.target) });
     this.progress.style.width = `${String(Math.min(100, (state.collected.length / Math.max(1, state.level.target)) * 100))}%`;
-    this.level.textContent = state.level.name;
+    this.level.textContent = this.title?.text ?? state.level.name;
+    markRaw(this.level, this.title?.raw ?? false);
     // 关卡名和暂停提示只在游玩中显示（其余时候顶栏和开始面板上都有）
     this.level.hidden = state.phase !== 'playing';
     this.hint.hidden = state.phase !== 'playing';
     let hit = false;
     if (state.hits.length > this.seenHits) {
       this.restartAnimation(this.flash, 'active');
-      this.penalty.textContent = `−${String(state.rules.penaltySeconds)} 秒`;
+      this.penalty.textContent = t('hud.penalty', { seconds: String(state.rules.penaltySeconds) });
       this.restartAnimation(this.penalty, 'pop');
       hit = true;
     }
@@ -189,6 +197,11 @@ export class Hud {
     this.badges = badges;
   }
 
+  /** 设置显示的关卡名（F6）。raw 为 true 时是用户数据或生成的文字，原样显示。 */
+  setTitle(text: string, raw: boolean): void {
+    this.title = { text, raw };
+  }
+
   /**
    * 把焦点放到覆盖层的主按钮上（键盘可以直接按 Enter）。暂停菜单例外：暂停常常来自浏览器退出指针锁定的 Esc，
    * 焦点留在原处，P / Esc 照常由游戏处理（继续）；要用按钮时按 Tab 进入菜单。
@@ -220,16 +233,16 @@ export class Hud {
     };
     if (kind === 'start') {
       const head = el('div', { className: 'overlay-head' });
-      head.append(icon('map', 'mw-icon overlay-icon'), el('h1', { text: state.level.name }));
+      head.append(icon('map', 'mw-icon overlay-icon'), markRaw(el('h1', { text: this.title?.text ?? state.level.name }), this.title?.raw ?? false));
       const meta = el('div', { className: 'overlay-meta' });
       meta.append(
-        tag(`${String(state.level.timeLimit)} 秒`, 'blue', 'clock'),
-        tag(`${String(state.level.target)} 个宝石`, 'gold', 'gem'),
-        tag(state.level.guards.length > 0 ? `${String(state.level.guards.length)} 个守卫` : '没有守卫', state.level.guards.length > 0 ? 'red' : 'default', 'shield'),
+        tag(t('common.seconds', { seconds: String(state.level.timeLimit) }), 'blue', 'clock'),
+        tag(t('hud.gems', { count: String(state.level.target) }), 'gold', 'gem'),
+        tag(state.level.guards.length > 0 ? t('hud.guards', { count: String(state.level.guards.length) }) : t('hud.noGuards'), state.level.guards.length > 0 ? 'red' : 'default', 'shield'),
       );
       if (this.badges) {
         meta.append(tag(this.badges.source.text, this.badges.source.color, 'layers'));
-        if (this.badges.difficulty) meta.append(tag(`难度估计：${this.badges.difficulty}`, 'purple', 'star'));
+        if (this.badges.difficulty) meta.append(tag(t('level.difficultyTag', { difficulty: this.badges.difficulty }), 'purple', 'star'));
       }
       panel.append(
         head,
@@ -237,14 +250,15 @@ export class Hud {
         el('p', {
           className: 'overlay-goal',
           text:
-            `在 ${String(state.level.timeLimit)} 秒内收集 ${String(state.level.target)} 个宝石。` +
-            (state.level.guards.length > 0 ? `小心巡逻的守卫：碰到会扣 ${String(state.rules.penaltySeconds)} 秒。` : ''),
+            t('hud.goal', { seconds: String(state.level.timeLimit), count: String(state.level.target) }) +
+            (state.level.guards.length > 0 ? t('hud.guardWarning', { seconds: String(state.rules.penaltySeconds) }) : ''),
         }),
       );
-      if (this.intro.opening) panel.append(el('p', { id: 'intro-opening', className: 'overlay-opening', text: this.intro.opening }));
+      // 开场白和台词是生成的文字，人物名是名册里的名字：原样显示（F6 不翻译，F7 处理生成的文字）
+      if (this.intro.opening) panel.append(markRaw(el('p', { id: 'intro-opening', className: 'overlay-opening', text: this.intro.opening }), this.intro.openingRaw));
       for (const l of this.intro.lines) {
-        const line = el('p', { className: 'intro-line' });
-        line.append(el('strong', { text: `${l.name}（${l.role}）` }), document.createTextNode(`：${l.line}`));
+        const line = markRaw(el('p', { className: 'intro-line' }));
+        line.append(el('strong', { text: t('intro.speaker', { name: l.name, role: l.role }) }), document.createTextNode(t('intro.line', { line: l.line })));
         panel.append(line);
       }
       for (const n of this.intro.notices) {
@@ -252,54 +266,57 @@ export class Hud {
         panel.append(p);
       }
       const help = el('details', { className: 'overlay-help' });
-      const summary = el('summary', { text: '操作说明' });
+      const summary = el('summary', { text: t('help.title') });
       help.append(summary, controlsHelp());
       panel.append(help);
       const actions = el('div', { className: 'overlay-actions' });
-      actions.append(primary(button('开始', go(() => {
+      actions.append(primary(button(t('common.start'), go(() => {
         this.actions.onStart();
       }), { icon: 'play', variant: 'primary', size: 'lg' })));
       panel.append(actions);
     } else if (kind === 'pause') {
       const head = el('div', { className: 'overlay-head' });
-      head.append(icon('pause', 'mw-icon overlay-icon'), el('h1', { text: '已暂停' }));
+      head.append(icon('pause', 'mw-icon overlay-icon'), el('h1', { text: t('hud.paused') }));
       const actions = el('div', { className: 'overlay-actions overlay-actions--column' });
       actions.append(
-        primary(button('继续', go(() => {
+        primary(button(t('hud.resume'), go(() => {
           this.actions.onResume();
         }), { icon: 'play', variant: 'primary', size: 'lg' })),
-        button('重开', go(() => {
+        button(t('hud.restart'), go(() => {
           this.actions.onRestart();
         }), { icon: 'refresh', size: 'lg' }),
-        button('返回开始界面', go(() => {
+        button(t('hud.backHome'), go(() => {
           this.actions.onHome();
         }), { icon: 'home', size: 'lg' }),
       );
-      panel.append(head, el('p', { className: 'overlay-goal', text: '按 Esc 或 P 继续' }), actions);
+      // 语言选择（F6）：切换会刷新页面、回到开始界面；只在暂停菜单和开始界面里提供
+      const lang = el('div', { className: 'overlay-lang' });
+      lang.append(langSelect('pause-lang'), el('p', { className: 'mw-subtle', text: t('lang.reloadHint') }));
+      panel.append(head, el('p', { className: 'overlay-goal', text: t('hud.pauseHint') }), actions, lang);
     } else {
       const won = kind === 'won';
       const head = el('div', { className: 'overlay-head' });
-      head.append(icon(won ? 'trophy' : 'hourglass', 'mw-icon overlay-icon'), el('h1', { text: won ? '胜利' : '失败' }));
+      head.append(icon(won ? 'trophy' : 'hourglass', 'mw-icon overlay-icon'), el('h1', { text: won ? t('hud.won') : t('hud.lost') }));
       const stats = el('dl', { className: 'overlay-stats' });
       const stat = (label: string, value: string) => {
         const box = el('div', { className: 'overlay-stat' });
         box.append(el('dt', { text: label }), el('dd', { text: value }));
         stats.append(box);
       };
-      stat('用时', `${state.simTime.toFixed(1)} 秒`);
-      stat('收集', `${String(state.collected.length)} / ${String(state.level.target)}`);
-      stat('被守卫碰到', `${String(state.hits.length)} 次`);
-      stat('剩余时间', formatTime(state.timeLeft));
+      stat(t('hud.timeUsed'), t('common.seconds', { seconds: state.simTime.toFixed(1) }));
+      stat(t('hud.collectedLabel'), `${String(state.collected.length)} / ${String(state.level.target)}`);
+      stat(t('hud.hits'), t('hud.times', { count: String(state.hits.length) }));
+      stat(t('hud.timeLeftLabel'), formatTime(state.timeLeft));
       const actions = el('div', { className: 'overlay-actions' });
       actions.append(
-        primary(button('重开', go(() => {
+        primary(button(t('hud.restart'), go(() => {
           this.actions.onRestart();
         }), { icon: 'refresh', variant: 'primary', size: 'lg' })),
-        button('返回', go(() => {
+        button(t('hud.back'), go(() => {
           this.actions.onHome();
-        }), { icon: 'home', size: 'lg', label: '返回开始界面' }),
+        }), { icon: 'home', size: 'lg', label: t('hud.backHome') }),
       );
-      panel.append(head, el('p', { className: 'overlay-goal', text: won ? '收集完成！' : '时间到了。' }), stats, actions);
+      panel.append(head, el('p', { className: 'overlay-goal', text: won ? t('hud.wonReason') : t('hud.lostReason') }), stats, actions);
     }
     this.overlay.replaceChildren(panel);
     // 只在覆盖层换了一种（新出现）或焦点原来就在覆盖层里时移焦点；名册变化时重画开始面板，不抢走名册里的焦点
