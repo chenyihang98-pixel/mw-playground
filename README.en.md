@@ -11,7 +11,7 @@
 <p align="center"><b>Write one sentence, get a 3D level you can play.</b></p>
 
 <p align="center">
-  <a href="https://youtu.be/nlM76iN8KgE">Demo video</a> ·
+  <a href="https://youtu.be/4zSBDaET-JA">Demo video</a> ·
   <a href="docs/how-it-works.en.md">How the Level Workshop works</a> ·
   <a href="docs/guide.en.md">Playing and settings</a>
 </p>
@@ -24,7 +24,7 @@ Everything runs on your own machine. The game is three.js, the workshop service 
 
 ## Demo
 
-[![Intro video (Japanese captions)](docs/media/video-ja.jpg)](https://youtu.be/nlM76iN8KgE)
+[![Intro video (Japanese captions)](docs/media/video-ja.jpg)](https://youtu.be/4zSBDaET-JA)
 
 A one-minute intro video with Japanese captions: import a character, write a sentence, look at the preview, confirm, play the level.
 
@@ -35,7 +35,7 @@ A one-minute intro video with Japanese captions: import a character, write a sen
 | ![Preview](docs/media/preview.jpg) | ![Level cleared](docs/media/clear.jpg) |
 | Preview first. Nothing is saved until you confirm | All gems collected |
 
-<sub>The interface can be switched between English, Japanese and Chinese. The screenshots and the video above show the Chinese one.</sub>
+<sub>The interface can be switched between English, Japanese and Chinese. The screenshots and the video above show the Japanese one.</sub>
 
 ## What it does
 

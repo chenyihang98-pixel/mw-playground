@@ -11,7 +11,7 @@
 <p align="center"><b>一文で、遊べる 3D ステージを。</b></p>
 
 <p align="center">
-  <a href="https://youtu.be/nlM76iN8KgE">デモ動画</a> ·
+  <a href="https://youtu.be/4zSBDaET-JA">デモ動画</a> ·
   <a href="docs/how-it-works.md">レベル工房のしくみ</a> ·
   <a href="docs/guide.md">遊び方と設定</a>
 </p>
@@ -24,7 +24,7 @@
 
 ## デモ
 
-[![紹介動画（日本語字幕）](docs/media/video-ja.jpg)](https://youtu.be/nlM76iN8KgE)
+[![紹介動画（日本語字幕）](docs/media/video-ja.jpg)](https://youtu.be/4zSBDaET-JA)
 
 1 分ほどの紹介動画です。キャラクターの読み込み、一文での依頼、プレビュー、確定、プレイまでを通しています。
 
@@ -35,7 +35,7 @@
 | ![プレビュー](docs/media/preview.jpg) | ![クリア](docs/media/clear.jpg) |
 | まずプレビュー。確定するまで保存されません | 宝石を全部集めてクリア |
 
-<sub>画面は日本語・英語・中国語に切り替えられます。上のスクリーンショットと動画は中国語の画面です。</sub>
+<sub>画面は日本語・英語・中国語に切り替えられます。上のスクリーンショットと動画は日本語の画面です。</sub>
 
 ## できること
 

@@ -11,7 +11,7 @@
 <p align="center"><b>写一句话，生成一关能玩的 3D 关卡。</b></p>
 
 <p align="center">
-  <a href="https://youtu.be/nlM76iN8KgE">演示视频</a> ·
+  <a href="https://youtu.be/4zSBDaET-JA">演示视频</a> ·
   <a href="docs/how-it-works.zh.md">关卡工坊怎么做的</a> ·
   <a href="docs/guide.zh.md">玩法和设置</a>
 </p>
@@ -24,7 +24,7 @@
 
 ## 演示
 
-[![介绍视频（日语字幕）](docs/media/video-ja.jpg)](https://youtu.be/nlM76iN8KgE)
+[![介绍视频（日语字幕）](docs/media/video-ja.jpg)](https://youtu.be/4zSBDaET-JA)
 
 一分钟左右的介绍视频（日语字幕）：导入角色、写一句话、看预览、确认、玩完一关。
 
@@ -35,7 +35,7 @@
 | ![预览](docs/media/preview.jpg) | ![过关](docs/media/clear.jpg) |
 | 先看预览，确认了才保存 | 宝石收齐，过关 |
 
-<sub>界面可以切换中文、日语、英语。上面的截图和视频里是中文界面。</sub>
+<sub>界面可以切换中文、日语、英语。上面的截图和视频里是日语界面。</sub>
 
 ## 能做什么
 
