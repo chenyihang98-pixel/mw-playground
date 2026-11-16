@@ -7,6 +7,9 @@ import { DEFAULT_PORT } from './port';
 
 /** 只监听这个地址（不能配置）。 */
 export const HOST = '127.0.0.1';
+
+/** 加载模型时限的默认值（毫秒）。没设 MW_WORKSHOP_PREPARE_TIMEOUT_MS 时，取它和整个请求时限中较小的（F5）。 */
+export const DEFAULT_PREPARE_TIMEOUT_MS = 150_000;
 export { DEFAULT_PORT };
 
 export interface WorkshopConfig {
@@ -34,7 +37,10 @@ export interface WorkshopConfig {
     readonly callTimeoutMs: number;
     /** 整个生成请求的超时（毫秒）。 */
     readonly requestTimeoutMs: number;
-    /** 加载模型的超时（毫秒，F2）：不小于 1000，不大于整个生成请求的超时。 */
+    /**
+     * 加载模型的超时（毫秒，F2）。设了 MW_WORKSHOP_PREPARE_TIMEOUT_MS 时：不小于 1000，不大于整个生成请求的超时。
+     * 没设时（F5）：取 DEFAULT_PREPARE_TIMEOUT_MS 和整个生成请求的超时中较小的，这个推出来的值可以小于 1000。
+     */
     readonly prepareTimeoutMs: number;
   };
   /** 统计文件（JSONL，每个请求一行）。 */
@@ -58,14 +64,15 @@ const envObject = z.object({
   MW_WORKSHOP_MAX_BODY_BYTES: int(1024, 1_000_000).default(32 * 1024),
   MW_WORKSHOP_CALL_TIMEOUT_MS: int(100, 600_000).default(60_000),
   MW_WORKSHOP_REQUEST_TIMEOUT_MS: int(200, 1_800_000).default(180_000),
-  MW_WORKSHOP_PREPARE_TIMEOUT_MS: int(1000, 1_800_000).default(150_000),
+  // 没设时的值在 loadConfig 里按整个请求时限推出来（F5），所以这里不给默认值
+  MW_WORKSHOP_PREPARE_TIMEOUT_MS: int(1000, 1_800_000).optional(),
   MW_WORKSHOP_STATS: z.string().min(1).default('.local/workshop-stats.jsonl'),
   MW_FAKE_DELAY_MS: int(0, 600_000).default(0),
 });
 
-// 加载模型算在整个生成请求里，所以它的超时不能比整个请求的超时还长
+// 加载模型算在整个生成请求里，所以设了的加载时限不能比整个请求的超时还长
 const envSchema = envObject.superRefine((e, ctx) => {
-  if (e.MW_WORKSHOP_PREPARE_TIMEOUT_MS > e.MW_WORKSHOP_REQUEST_TIMEOUT_MS) {
+  if (e.MW_WORKSHOP_PREPARE_TIMEOUT_MS !== undefined && e.MW_WORKSHOP_PREPARE_TIMEOUT_MS > e.MW_WORKSHOP_REQUEST_TIMEOUT_MS) {
     ctx.addIssue({ code: 'custom', path: ['MW_WORKSHOP_PREPARE_TIMEOUT_MS'], message: '不能大于 MW_WORKSHOP_REQUEST_TIMEOUT_MS' });
   }
 });
@@ -100,7 +107,8 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): C
         maxBodyBytes: e.MW_WORKSHOP_MAX_BODY_BYTES,
         callTimeoutMs: e.MW_WORKSHOP_CALL_TIMEOUT_MS,
         requestTimeoutMs: e.MW_WORKSHOP_REQUEST_TIMEOUT_MS,
-        prepareTimeoutMs: e.MW_WORKSHOP_PREPARE_TIMEOUT_MS,
+        // 没设（未定义或空白）时取默认值和整个请求时限中较小的（F5）：只调小整个请求时限时服务照常启动
+        prepareTimeoutMs: e.MW_WORKSHOP_PREPARE_TIMEOUT_MS ?? Math.min(DEFAULT_PREPARE_TIMEOUT_MS, e.MW_WORKSHOP_REQUEST_TIMEOUT_MS),
       },
       statsPath: e.MW_WORKSHOP_STATS,
       fakeDelayMs: e.MW_FAKE_DELAY_MS,

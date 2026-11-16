@@ -147,7 +147,7 @@
 - 生成时，检查模型可用之后、跑流程之前，先调用一次提供方的 `prepare`：
   - Ollama 发上面那个加载请求。请求体只有 `{ model, stream: false, options: { num_ctx } }`，num_ctx 和 ChatOllama 用同一份配置（`MW_OLLAMA_NUM_CTX`），不带 keep_alive；
   - OpenAI 兼容接口什么都不发。
-- 加载有自己的超时 `MW_WORKSHOP_PREPARE_TIMEOUT_MS`（默认 150 秒，不能大于整个请求的超时）。加载的时间算在整个请求里，不算在单次模型调用的超时里。
+- 加载有自己的超时 `MW_WORKSHOP_PREPARE_TIMEOUT_MS`（默认 150 秒，没设时取 150 秒和整个请求的超时两者中较小的；设了时不能大于整个请求的超时）。加载的时间算在整个请求里，不算在单次模型调用的超时里。
 - 健康检查不加载模型：只请求 `/api/tags`。只打开工坊面板、不生成关卡的人，不会被占掉约 6 GB 显存。
 - 统计的 `timingsMs.prepare` 记加载用了多少毫秒；`npm run workshop-acceptance` 每一行输出加载模型的毫秒数。
 

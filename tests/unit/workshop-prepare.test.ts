@@ -3,7 +3,8 @@
 //   num_ctx 和 ChatOllama 用的相同；各种失败能分清类别；signal 中止时 fetch 收到中止。OpenAiCompatibleProvider.prepare 不发请求。
 // - Workshop（用假模型，超时都用很短的值）：prepare 在第一次模型调用之前、每个请求一次；加载慢于单次调用超时但没到加载超时时照常成功；
 //   加载超时、加载失败、加载期间取消、加载期间整个请求超时、加载期间来第二个请求；health 不加载模型。
-// - 配置：MW_WORKSHOP_PREPARE_TIMEOUT_MS 的默认值和校验。统计：timingsMs.prepare，新旧记录都能汇总。
+// - 配置：MW_WORKSHOP_PREPARE_TIMEOUT_MS 的默认值和校验（F5：没设时取默认值和整个请求时限中较小的）。
+//   统计：timingsMs.prepare，新旧记录都能汇总。
 // 不连真实的 Ollama。
 
 import { describe, expect, it } from 'vitest';
@@ -295,14 +296,30 @@ describe('Workshop：生成前先加载模型', () => {
 });
 
 describe('配置：MW_WORKSHOP_PREPARE_TIMEOUT_MS', () => {
-  it('默认 150000 毫秒', () => {
+  it('两个都没设：加载时限 150000 毫秒，整个请求时限 180000 毫秒', () => {
     const loaded = loadConfig({});
     if (!loaded.ok) throw new Error(loaded.problems.join('；'));
     expect(loaded.config.limits.prepareTimeoutMs).toBe(150_000);
     expect(loaded.config.limits.requestTimeoutMs).toBe(180_000);
   });
 
-  it('等于整个请求的超时可以；小于 1000、不是整数、大于整个请求的超时都报配置错误（只说哪个变量不对）', () => {
+  it('F5：没设加载时限（未定义或空白）时取 150000 和整个请求时限中较小的；推出来的值不受“不小于 1000”的限制', () => {
+    for (const [env, request, prepare] of [
+      [{ MW_WORKSHOP_REQUEST_TIMEOUT_MS: '60000' }, 60_000, 60_000],
+      [{ MW_WORKSHOP_REQUEST_TIMEOUT_MS: '300' }, 300, 300],
+      [{ MW_WORKSHOP_REQUEST_TIMEOUT_MS: '200000' }, 200_000, 150_000],
+      [{ MW_WORKSHOP_REQUEST_TIMEOUT_MS: '150000' }, 150_000, 150_000],
+      [{ MW_WORKSHOP_REQUEST_TIMEOUT_MS: '300', MW_WORKSHOP_PREPARE_TIMEOUT_MS: '   ' }, 300, 300],
+      [{ MW_WORKSHOP_PREPARE_TIMEOUT_MS: '' }, 180_000, 150_000],
+    ] as const) {
+      const loaded = loadConfig(env);
+      if (!loaded.ok) throw new Error(`${JSON.stringify(env)}：${loaded.problems.join('；')}`);
+      expect(loaded.config.limits.requestTimeoutMs, JSON.stringify(env)).toBe(request);
+      expect(loaded.config.limits.prepareTimeoutMs, JSON.stringify(env)).toBe(prepare);
+    }
+  });
+
+  it('设了加载时限：规则不变——等于整个请求的超时可以；小于 1000、不是整数、大于整个请求的超时都报配置错误（只说哪个变量不对）', () => {
     const ok = loadConfig({ MW_WORKSHOP_PREPARE_TIMEOUT_MS: '1000', MW_WORKSHOP_REQUEST_TIMEOUT_MS: '1000' });
     expect(ok.ok && ok.config.limits.prepareTimeoutMs).toBe(1000);
     for (const [env, what] of [
@@ -311,7 +328,7 @@ describe('配置：MW_WORKSHOP_PREPARE_TIMEOUT_MS', () => {
       [{ MW_WORKSHOP_PREPARE_TIMEOUT_MS: 'soon' }, '不是数字'],
       [{ MW_WORKSHOP_PREPARE_TIMEOUT_MS: '180001' }, '大于默认的整个请求超时'],
       [{ MW_WORKSHOP_PREPARE_TIMEOUT_MS: '5000', MW_WORKSHOP_REQUEST_TIMEOUT_MS: '4000' }, '大于整个请求超时'],
-      [{ MW_WORKSHOP_REQUEST_TIMEOUT_MS: '60000' }, '默认的 150000 大于整个请求超时'],
+      [{ MW_WORKSHOP_PREPARE_TIMEOUT_MS: '999', MW_WORKSHOP_REQUEST_TIMEOUT_MS: '300' }, '小于 1000（整个请求时限也很小时照样报错）'],
     ] as const) {
       const loaded = loadConfig(env);
       expect(loaded.ok, what).toBe(false);
@@ -320,6 +337,23 @@ describe('配置：MW_WORKSHOP_PREPARE_TIMEOUT_MS', () => {
         for (const value of Object.values(env)) expect(loaded.problems.join('；'), what).not.toContain(value);
       }
     }
+    // 设了的值照常生效
+    const set = loadConfig({ MW_WORKSHOP_PREPARE_TIMEOUT_MS: '1000' });
+    expect(set.ok && set.config.limits.prepareTimeoutMs).toBe(1000);
+  });
+
+  it('F5：只把整个请求时限设成 300（不设加载时限），用假模型生成一次，照常出预览', async () => {
+    const loaded = loadConfig({ MW_LLM_PROVIDER: 'fake', MW_WORKSHOP_REQUEST_TIMEOUT_MS: '300' });
+    if (!loaded.ok) throw new Error(loaded.problems.join('；'));
+    expect(loaded.config.limits.prepareTimeoutMs).toBe(300);
+    const provider = new FakeProvider({});
+    const stats = new MemoryStats();
+    const workshop = new Workshop({ config: loaded.config, provider, stats, log: createLogger(new Redactor([]), () => undefined), newSeed: () => 'f5-seed' });
+    const res = await workshop.generate(request());
+    expect(res.status).toBe('preview');
+    expect(provider.prepareCalls).toBe(1);
+    expect(stats.records.map((r) => r.outcome)).toEqual(['model-first']);
+    expect(stats.records[0]?.timingsMs).toHaveProperty('prepare');
   });
 });
 

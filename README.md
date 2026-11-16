@@ -233,7 +233,7 @@ MW_ASSET_DIR=<项目外放真实资产的目录> npm run e2e -- tests/e2e/real-a
 | `MW_WORKSHOP_MAX_BODY_BYTES` | `32768` | 请求体上限 |
 | `MW_WORKSHOP_CALL_TIMEOUT_MS` | `60000` | 单次模型调用的超时（不含生成前加载模型的时间） |
 | `MW_WORKSHOP_REQUEST_TIMEOUT_MS` | `180000` | 整个生成请求的超时（含加载模型的时间） |
-| `MW_WORKSHOP_PREPARE_TIMEOUT_MS` | `150000` | 生成前加载模型的超时（F2）。必须是不小于 1000 的整数，并且不大于 `MW_WORKSHOP_REQUEST_TIMEOUT_MS`，否则服务报配置错误；把整个请求的超时调到 150000 以下时，这一项要一起调小 |
+| `MW_WORKSHOP_PREPARE_TIMEOUT_MS` | 没设时取 `150000` 和 `MW_WORKSHOP_REQUEST_TIMEOUT_MS` 中较小的 | 生成前加载模型的超时（F2）。设了时必须是不小于 1000 的整数，并且不大于 `MW_WORKSHOP_REQUEST_TIMEOUT_MS`，否则服务报配置错误；只把整个请求的超时调到 150000 以下、不设这一项时，服务照常启动，加载的超时跟着取整个请求的超时（F5） |
 | `MW_WORKSHOP_STATS` | `.local/workshop-stats.jsonl` | 统计文件（每个请求一行，不进仓库） |
 
 密钥只在服务进程里使用：不写日志，不进错误信息，不返回给浏览器，不进统计。健康检查只告诉浏览器提供方和模型名。
