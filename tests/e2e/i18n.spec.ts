@@ -1,15 +1,5 @@
-// 界面语言（F6）的端到端测试。浏览器语言固定为 zh-CN（playwright.config.ts），在开始界面的语言选择里切换。
-// - ja、en 各走一遍完整流程（工坊用假模型）：开始界面 → 导入夹具角色 → 设为主角 → 加入名册 → 关卡工坊生成 → 预览 → 确认
-//   → 开始面板 → HUD → 暂停菜单 → 胜利面板（测试小关 A 按住 W）→ 刷新后语言保持；
-//   每个画面检查界面文字（en：没有汉字和假名；ja：没有和日语不同的中文界面文字），检查按钮、标签不溢出、面板没有横向滚动，
-//   并截图到 test-results/i18n/（不提交）。用户数据和生成的文字所在的元素标了 data-i18n-raw，检查时跳过。
-// - 切换：开始界面 zh → ja → en，界面跟着变，刷新后保持；名册、已保存的关卡、静音设置都还在；暂停菜单里也能切换。
-// - 第 1 轮审查后补的：
-//   - 名册、已保存关卡的写入还没做完时切换语言：等写入做完才刷新，刷新后改动都在（测试在页面里开一个读写事务占住对象仓库，
-//     让游戏的写入排在后面，模拟存储慢）；
-//   - navigator.languages 是空列表时，入口按 en 处理（不看 navigator.language）；
-//   - 版面检查也查原生下拉框有没有被压窄、截断选项的文字。
-// 夹具写到系统临时目录，测试结束后删除。只读测试钩子，不改状态。
+// 界面语言（F6）：浏览器语言固定 zh-CN，在语言选择里切换。ja、en 完整流程每个画面查文字和版面并截图到 test-results/i18n/
+// （跳过 data-i18n-raw）；切换后数据都在；写入没做完时切换；空的 navigator.languages。夹具在系统临时目录，测试后删除。
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -69,7 +59,7 @@ async function switchOnHome(page: Page, lang: Lang) {
   await expect(page.locator('html')).toHaveAttribute('lang', LANG_TAGS[lang]);
 }
 
-/** 日语界面里不该出现的中文：中文词典里和日语不同的那些文字（按占位拆开，只留含汉字、至少两个字、日语词典里也没有的片段）。 */
+/** 日语界面不该有的中文：和日语不同的中文词条按占位拆开，留含汉字、至少两字、日语词典里没有的片段。 */
 function forbiddenForJa(): string[] {
   const zh = messagesOf('zh');
   const ja = messagesOf('ja');
@@ -132,7 +122,7 @@ function layoutProblems(page: Page): Promise<string[]> {
         bad.push(`横向滚动 ${name(el)} ${String(el.scrollWidth)} > ${String(el.clientWidth)}：${over.join(' | ')}`);
       }
     }
-    // 原生下拉框：比它自然的宽度（容得下最长的选项）窄，就是有选项的文字被截断了
+    // 原生下拉框比自然宽度（容得下最长的选项）窄，就有选项被截断
     for (const select of document.querySelectorAll('select')) {
       if (!shown(select) || hasRaw(select)) continue;
       const clone = select.cloneNode(true) as HTMLSelectElement;
@@ -175,14 +165,13 @@ test.afterEach(() => {
 });
 
 for (const lang of ['ja', 'en'] as const) {
-  test(`${lang}：开始界面 → 导入 → 主角 → 名册 → 关卡工坊 → 预览 → 确认 → 开始面板 → HUD → 暂停 → 胜利 → 刷新后语言保持`, async ({ page }) => {
+  test(`${lang}：完整流程，每个画面的文字和版面`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 720 });
     const m = messagesOf(lang);
     const forbidden = lang === 'ja' ? forbiddenForJa() : [];
     if (lang === 'ja') expect(forbidden.length).toBeGreaterThan(100);
     let n = 0;
 
-    // 开始界面（浏览器语言是 zh-CN），在语言选择里切换
     await page.goto('/');
     await ready(page);
     await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
@@ -192,19 +181,16 @@ for (const lang of ['ja', 'en'] as const) {
     await expect(page.locator('#mw-home h1')).toHaveText(m['app.title']);
     await screen(page, lang, ++n, 'home', forbidden);
 
-    // 导入夹具角色：卡片
     await page.locator('#import-file').setInputFiles(files['hero.glb'] ?? '');
     await expect.poll(async () => (await read(page)).import.card?.fileName).toBe('hero.glb');
     await screen(page, lang, ++n, 'import-card', forbidden);
 
-    // 设为主角；再导入一个，加入名册
     await page.getByRole('button', { name: m['import.setPlayer'], exact: true }).click();
     await expect.poll(async () => (await read(page)).player.model).toBe('imported');
     await page.locator('#import-file').setInputFiles(files['friend.glb'] ?? '');
     await expect.poll(async () => (await read(page)).import.card?.fileName).toBe('friend.glb');
     await page.getByRole('button', { name: m['import.addPerson'], exact: true }).click();
     await expect.poll(async () => (await read(page)).roster.entries.length).toBe(2);
-    // 从开始界面打开的导入卡片关掉后回到开始界面，再打开名册
     await page.getByRole('button', { name: m['common.close'], exact: true }).filter({ visible: true }).first().click();
     await expect.poll(async () => (await read(page)).ui.panel).toBeNull();
     await page.getByRole('button', { name: m['common.roster'], exact: true }).filter({ visible: true }).first().click();
@@ -212,7 +198,6 @@ for (const lang of ['ja', 'en'] as const) {
     await expect.poll(async () => (await read(page)).roster.saving).toBe(false);
     await screen(page, lang, ++n, 'roster', forbidden);
 
-    // 选择关卡（关卡工坊在右栏）：先关掉名册回到开始界面
     await page.getByRole('button', { name: m['roster.close'], exact: true }).click();
     await expect.poll(async () => (await read(page)).ui.panel).toBeNull();
     await page.getByRole('button', { name: m['levels.choose'] }).filter({ visible: true }).first().click();
@@ -220,7 +205,7 @@ for (const lang of ['ja', 'en'] as const) {
     await expect.poll(async () => (await read(page)).levels.workshop.health.kind, { timeout: 10_000 }).not.toBe('checking');
     await screen(page, lang, ++n, 'levels', forbidden);
 
-    // 关卡工坊：生成中（假模型每次调用前等 800 毫秒）→ 预览
+    // 假模型每次调用前等 800 毫秒
     await page.getByRole('textbox', { name: m['workshop.inputLabel'] }).fill(lang === 'en' ? 'A rainy night with gems on the platforms' : '雨の夜、宝石は高台の上');
     await page.getByRole('button', { name: m['workshop.generate'], exact: true }).click();
     await expect.poll(async () => (await read(page)).levels.workshop.view).toBe('running');
@@ -229,7 +214,6 @@ for (const lang of ['ja', 'en'] as const) {
     await expect.poll(async () => (await read(page)).levels.workshop.view, { timeout: 15_000 }).toBe('preview');
     await screen(page, lang, ++n, 'workshop-preview', forbidden);
 
-    // 确认：保存并加载这一关，显示开始面板
     const hash = (await read(page)).levels.workshop.previewHash;
     await page.getByRole('button', { name: m['workshop.confirmLabel'], exact: true }).click();
     await expect.poll(async () => (await read(page)).level.key).toBe(`saved:${String(hash)}`);
@@ -238,7 +222,6 @@ for (const lang of ['ja', 'en'] as const) {
     expect((await read(page)).level.sourceLabel).toBe(m['source.model']);
     await screen(page, lang, ++n, 'start-panel', forbidden);
 
-    // 开始：HUD；暂停菜单（里面也有语言选择）
     await page.getByRole('button', { name: m['common.start'], exact: true }).filter({ visible: true }).click();
     await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
     await page.waitForTimeout(300);
@@ -251,7 +234,7 @@ for (const lang of ['ja', 'en'] as const) {
     await page.getByRole('button', { name: m['hud.resume'], exact: true }).click();
     await expect.poll(async () => (await read(page)).game.phase).toBe('playing');
 
-    // 胜利面板：测试小关 A，按住 W 走到收集点（语言来自保存的选择）
+    // 胜利面板：测试小关 A 按住 W（语言来自保存的选择）
     await page.goto('/?level=test-a');
     await ready(page);
     await expect(page.locator('html')).toHaveAttribute('lang', LANG_TAGS[lang]);
@@ -263,7 +246,6 @@ for (const lang of ['ja', 'en'] as const) {
     await expect(page.getByRole('dialog').filter({ hasText: m['hud.won'] })).toBeVisible();
     await screen(page, lang, ++n, 'won', forbidden);
 
-    // 刷新后语言保持
     await page.reload();
     await ready(page);
     await expect(page.locator('html')).toHaveAttribute('lang', LANG_TAGS[lang]);
@@ -272,9 +254,8 @@ for (const lang of ['ja', 'en'] as const) {
   });
 }
 
-test('切换：开始界面 zh → ja → en，界面跟着变，刷新后保持；名册、已保存的关卡、静音设置都还在；暂停菜单里也能切换', async ({ page }) => {
+test('切换 zh → ja → en 后刷新保持，数据都在；暂停菜单也能切换', async ({ page }) => {
   const zh = messagesOf('zh');
-  // 准备数据：名册里一个人物、一关已保存的随机关卡、静音
   await page.goto('/');
   await ready(page);
   await page.locator('#import-file').setInputFiles(files['friend.glb'] ?? '');
@@ -310,13 +291,12 @@ test('切换：开始界面 zh → ja → en，界面跟着变，刷新后保持
     expect(s.audio.muted).toBe(true);
   }
 
-  // 刷新后保持 en
   await page.reload();
   await ready(page);
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(home.getByRole('button', { name: messagesOf('en')['common.start'], exact: true })).toBeVisible();
 
-  // 暂停菜单里切回中文：刷新后在这一关的开始面板，界面是中文，数据都还在
+  // 暂停菜单里切回中文
   await page.goto('/?level=test-a');
   await ready(page);
   await page.getByRole('button', { name: messagesOf('en')['common.start'], exact: true }).filter({ visible: true }).click();
@@ -334,10 +314,7 @@ test('切换：开始界面 zh → ja → en，界面跟着变，刷新后保持
   expect(after.audio.muted).toBe(true);
 });
 
-/**
- * 在页面里占住一个对象仓库：开一个读写事务，不停地发请求，ms 毫秒后才结束。游戏之后对这个仓库的写入会排在它后面，
- * 用来模拟存储慢（写入还没做完）。等这个事务真的开始了才返回。
- */
+/** 开一个读写事务占住对象仓库 ms 毫秒，游戏之后的写入排在后面（模拟写入还没做完）。事务开始后返回。 */
 async function holdStore(page: Page, db: string, store: string, ms: number) {
   await page.evaluate(
     ({ db, store, ms }) =>
@@ -372,7 +349,7 @@ async function holdStore(page: Page, db: string, store: string, ms: number) {
   );
 }
 
-test('名册的写入还没做完时在开始界面切换语言：等写入做完才刷新，刷新后改动还在', async ({ page }) => {
+test('名册写入没做完时在开始界面切换：刷新后改动还在', async ({ page }) => {
   const zh = messagesOf('zh');
   await page.goto('/');
   await ready(page);
@@ -384,20 +361,18 @@ test('名册的写入还没做完时在开始界面切换语言：等写入做�
   await page.getByRole('button', { name: zh['common.roster'], exact: true }).filter({ visible: true }).first().click();
   await expect.poll(async () => (await read(page)).ui.panel).toBe('roster');
 
-  // 占住名册的对象仓库 2.5 秒：改分工后的写入排在后面，还没做完
   await holdStore(page, 'mw-playground', 'roster', 2500);
   await page.getByRole('combobox', { name: zh['roster.roleOf'].replace('{name}', 'friend.glb') }).selectOption('companion');
   await page.getByRole('button', { name: zh['roster.close'], exact: true }).click();
   expect((await read(page)).roster.saving).toBe(true);
 
-  // 这时切换语言：等写入做完才刷新
   await Promise.all([page.waitForEvent('load', { timeout: 20_000 }), page.locator('#home-lang').selectOption('en')]);
   await ready(page);
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   expect((await read(page)).roster.entries.map((e) => [e.fileName, e.role, e.status])).toEqual([['friend.glb', 'companion', 'ready']]);
 });
 
-test('已保存关卡的写入还没做完时在暂停菜单里切换语言：等写入做完才刷新，刷新后这一关还在', async ({ page }) => {
+test('关卡写入没做完时在暂停菜单切换：刷新后这一关还在', async ({ page }) => {
   const zh = messagesOf('zh');
   await page.goto('/?level=test-a');
   await ready(page);
@@ -405,7 +380,6 @@ test('已保存关卡的写入还没做完时在暂停菜单里切换语言：�
   await page.getByRole('button', { name: zh['levels.random'], exact: true }).filter({ visible: true }).click();
   await expect.poll(async () => (await read(page)).levels.select.random.kind, { timeout: 20_000 }).toBe('preview');
 
-  // 占住已保存关卡的对象仓库 2.5 秒：确认后的写入排在后面
   await holdStore(page, 'mw-playground-levels', 'levels', 2500);
   await page.getByRole('button', { name: zh['random.confirmLabel'], exact: true }).click();
   await expect.poll(async () => (await read(page)).levels.saved.length).toBe(1);
@@ -421,7 +395,7 @@ test('已保存关卡的写入还没做完时在暂停菜单里切换语言：�
   expect((await read(page)).levels.saved.map((e) => [e.id, e.status])).toEqual([[savedId, 'ready']]);
 });
 
-test('navigator.languages 是空列表时（没有 ?lang=、没有保存的选择），按 en 处理，不看 navigator.language', async ({ page }) => {
+test('navigator.languages 为空时入口按 en，不看 navigator.language', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(Navigator.prototype, 'languages', { get: () => [] });
     Object.defineProperty(Navigator.prototype, 'language', { get: () => 'ja-JP' });

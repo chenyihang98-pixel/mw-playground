@@ -1,5 +1,4 @@
-// 界面固定文字的多语言（F6）：词典、语言的决定顺序、内置关卡的名字、随机一关的文字、服务端错误码、按说法判断的几处逻辑。
-// 不用浏览器：语言的决定和存储读写都是纯函数（存储用假的对象，可以让它抛错）。
+// 多语言（F6）：词典、语言的决定和切换、内置关卡的名字、随机一关的文字、检查器、错误码、按说法判断的逻辑。纯函数，不用浏览器。
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { assignLevelCast, isStandInNotice, type CastMember } from '../../src/roster/cast';
@@ -25,7 +24,7 @@ const placeholders = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1
 const CJK = /[぀-ヿ㐀-鿿豈-﫿]/;
 
 describe('词典', () => {
-  it('三种语言的键完全相同、没有空值，每个键的占位名一致', () => {
+  it('键、占位名一致，没有空值', () => {
     const zh = messagesOf('zh');
     const keys = Object.keys(zh).sort();
     expect(keys.length).toBeGreaterThan(400);
@@ -45,7 +44,7 @@ describe('词典', () => {
     expect(Object.entries(en).filter(([, v]) => CJK.test(v))).toEqual([]);
   });
 
-  it('t() 按当前语言取文字，填进同名的占位；Node 里默认是中文', () => {
+  it('t() 按当前语言填占位；Node 里默认中文', () => {
     expect(currentLang()).toBe('zh');
     expect(t('hud.timeLeft', { time: '0:30.0' })).toBe('剩余 0:30.0');
     setLang('en');
@@ -54,7 +53,7 @@ describe('词典', () => {
     expect(t('common.seconds', { seconds: 5 })).toBe('5 秒');
   });
 
-  it('用词：关卡工坊、名册、主角、同伴、守卫、确认在日语和英语里的说法', () => {
+  it('用词', () => {
     const expected: [MessageKey, string, string][] = [
       ['levels.workshop', 'レベル工房', 'Level Workshop'],
       ['common.roster', '名簿', 'Roster'],
@@ -77,14 +76,14 @@ describe('词典', () => {
 describe('语言的决定顺序', () => {
   const sources = (search: string, stored: string | null, languages: string[]) => ({ search, stored, languages });
 
-  it('?lang= 优先；其次是保存的选择；再次是浏览器语言', () => {
+  it('?lang= → 保存的选择 → 浏览器语言', () => {
     expect(resolveLang(sources('?lang=ja', 'en', ['zh-CN']))).toBe('ja');
     expect(resolveLang(sources('?level=test-a&lang=en', 'ja', ['zh-CN']))).toBe('en');
     expect(resolveLang(sources('', 'en', ['zh-CN']))).toBe('en');
     expect(resolveLang(sources('', null, ['ja-JP', 'en-US']))).toBe('ja');
   });
 
-  it('浏览器语言：zh-CN、zh-TW 取 zh，ja-JP 取 ja，fr、空列表取 en；按列表顺序取第一个能用的', () => {
+  it('浏览器语言：zh-CN、zh-TW → zh，ja-JP → ja，fr、空列表 → en', () => {
     expect(langFromBrowser(['zh-CN'])).toBe('zh');
     expect(langFromBrowser(['zh-TW'])).toBe('zh');
     expect(langFromBrowser(['ja-JP'])).toBe('ja');
@@ -94,14 +93,14 @@ describe('语言的决定顺序', () => {
     expect(langFromBrowser(['en-US', 'zh-Hans-CN'])).toBe('zh');
   });
 
-  it('无效的 ?lang= 和无效的保存值都被忽略', () => {
+  it('无效的 ?lang= 和保存值都忽略', () => {
     expect(resolveLang(sources('?lang=fr', 'ja', ['zh-CN']))).toBe('ja');
     expect(resolveLang(sources('?lang=', null, ['ja-JP']))).toBe('ja');
     expect(resolveLang(sources('?lang=ZH', 'de', ['fr']))).toBe('en');
     expect(resolveLang(sources('', 'japanese', ['zh-TW']))).toBe('zh');
   });
 
-  it('localStorage 抛错时按没有保存过处理，不报错；写失败返回 false', () => {
+  it('localStorage 抛错按没保存过处理', () => {
     const throwing = () => {
       throw new DOMException('denied', 'SecurityError');
     };
@@ -116,14 +115,14 @@ describe('语言的决定顺序', () => {
     expect(resolveLang({ search: '', stored: readStoredLang(throwing), languages: ['ja-JP'] })).toBe('ja');
   });
 
-  it('启动时：navigator.languages 是空列表就取 en（不再看别的浏览器设置）', () => {
+  it('启动时 navigator.languages 为空取 en', () => {
     const empty = () => ({ getItem: () => null });
     expect(detectLang({ search: '', languages: [], storage: empty })).toBe('en');
     expect(detectLang({ search: '', languages: ['ja-JP'], storage: empty })).toBe('ja');
     expect(detectLang({ search: '?lang=zh', languages: [], storage: empty })).toBe('zh');
   });
 
-  it('切换：等排队的写入做完才刷新；等的时候出错也照样切换；保存不下来时改用 ?lang=', async () => {
+  it('切换：写入做完才刷新，出错照切，存不下用 ?lang=', async () => {
     const map = new Map<string, string>();
     const storage = () => ({
       setItem: (k: string, v: string) => {
@@ -179,7 +178,7 @@ describe('语言的决定顺序', () => {
 });
 
 describe('内置关卡的名字', () => {
-  it('翻译表覆盖所有内置关卡 id；中文词条和数据里的名字、开场白完全一样', () => {
+  it('翻译表覆盖所有内置关卡，中文和数据一样', () => {
     const ids = builtinEntries().map((e) => e.id);
     expect(ids.length).toBe(6);
     for (const id of ids) expect(BUILTIN_TITLE_KEYS[id], id).toBeDefined();
@@ -190,7 +189,7 @@ describe('内置关卡的名字', () => {
     }
   });
 
-  it('内置关卡按 id 显示当前语言的名字（不是原样）；冻结的数据不变', () => {
+  it('按 id 显示当前语言的名字，冻结数据不变', () => {
     const pkg = builtinPackage('gen-1');
     if (!pkg) throw new Error('没有 gen-1');
     const hash = pkg.layoutHash;
@@ -222,14 +221,14 @@ describe('随机一关的文字', () => {
     { seed: 'f6-seed-6', title: '宝石小径', opening: '宝石散落在各处，赶在时间用完之前把它们都找回来。', lines: ['我跟着你，别走太快。', '一起去找宝石吧！'] },
   ];
 
-  it('中文下固定种子的标题、开场白、台词和 F6 之前逐字一致', () => {
+  it('中文下固定种子的文字和 F6 之前一样', () => {
     for (const row of BEFORE_F6) {
       const brief = randomBrief(row.seed, people);
       expect({ seed: row.seed, title: brief.title, opening: brief.opening, lines: brief.cast.map((c) => c.line) }).toEqual(row);
     }
   });
 
-  it('日语、英语下生成的文字来自对应语言的词典；同一个种子的数值和组合与中文相同；都通过说明书的校验', () => {
+  it('日语、英语的文字来自对应词典，数值和中文相同，通过校验', () => {
     const textKeys = (lang: Lang, prefix: string) =>
       Object.entries(messagesOf(lang))
         .filter(([k]) => k.startsWith(prefix))
@@ -257,8 +256,8 @@ describe('随机一关的文字', () => {
   });
 });
 
-describe('检查器的说明（第 1 轮审查后翻译）', () => {
-  it('同一个走不到的布局：中文是原来的说法；英语、日语按当前语言（英语里没有汉字）', () => {
+describe('检查器的说明', () => {
+  it('中文是原来的说法，英语、日语按当前语言', () => {
     const layout = handmade({ boxes: wallWithGap(0.3) });
     const zh = checkLevel(layout).problems.find((p) => p.code === 'unreachable');
     expect(zh?.message).toMatch(/^从出生点走不到的收集点：/);
@@ -273,7 +272,7 @@ describe('检查器的说明（第 1 轮审查后翻译）', () => {
 });
 
 describe('服务端错误码', () => {
-  it('protocol.ts 的每个错误码在三种语言里都有翻译；中文照旧显示服务端的原文，日语和英语按错误码', () => {
+  it('每个错误码三种语言都有；中文用服务端原文', () => {
     const codes = Object.values(ERROR_CODES);
     expect(Object.keys(SERVER_ERROR_KEYS).sort()).toEqual([...codes].sort());
     for (const lang of LANGS) {
@@ -289,10 +288,10 @@ describe('服务端错误码', () => {
   });
 });
 
-describe('按说法判断的几处逻辑（各语言都成立）', () => {
+describe('按说法判断的逻辑（各语言）', () => {
   const member = (id: string, role: CastMember['role']): CastMember => ({ id, name: id, role, available: true });
 
-  it('“用默认替身代替”的提示在各语言里都含 cast.standInMarker，isStandInNotice 认得出；其他提示不会被认成它', () => {
+  it('isStandInNotice 认得出默认替身的提示', () => {
     for (const lang of LANGS) {
       setLang(lang);
       const cast = assignLevelCast([member('p', 'player'), { ...member('u', 'none'), available: false }], [
@@ -306,7 +305,7 @@ describe('按说法判断的几处逻辑（各语言都成立）', () => {
     }
   });
 
-  it('没有骨骼的模型把“绑定姿态”说成“静止姿态”：各语言里用到它的提示都含 pose.bind 的原词', () => {
+  it('poseWording 把绑定姿态换成静止姿态', () => {
     for (const lang of LANGS) {
       setLang(lang);
       const notice = t('clip.noIdleBind');
