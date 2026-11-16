@@ -3,8 +3,17 @@
 // - describeCallError：把模型调用的异常归成几类（取消、超时、HTTP 错误、连不上、其他），只给出安全的说明，
 //   不把提供方返回的原文交给浏览器。
 // - Redactor：日志和统计里的任何文字都先经过它，把密钥替换掉。
+// - F7：给玩家看的说明（超时、模型调用出错、加载失败）按请求的语言写：这些错误带 say(tr)，按指定的语言说；
+//   message 一直是中文（日志、统计、错误响应用它）。
 
+import { translator, type Translate } from '../src/i18n';
 import { ERROR_CODES, type ErrorCode } from '../src/workshop/protocol';
+
+/** 一句可以按语言说出来的话。 */
+export type Say = (tr: Translate) => string;
+
+/** 中文：发给模型的内容、日志和统计都用它（不靠全局的当前语言）。 */
+export const ZH: Translate = translator('zh');
 
 const STATUS: Readonly<Record<ErrorCode, number>> = {
   [ERROR_CODES.busy]: 409,
@@ -37,10 +46,21 @@ export class CancelledByUser extends Error {
   }
 }
 
+function timeoutText(tr: Translate, what: Say, ms: number): string {
+  return tr('callError.timeout', { what: what(tr), seconds: String(Math.round(ms / 1000)) });
+}
+
 export class CallTimeout extends Error {
-  constructor(readonly what: string, readonly ms: number) {
-    super(`${what}超时（${String(Math.round(ms / 1000))} 秒）`);
+  constructor(
+    private readonly what: Say,
+    readonly ms: number,
+  ) {
+    super(timeoutText(ZH, what, ms));
     this.name = 'CallTimeout';
+  }
+
+  say(tr: Translate): string {
+    return timeoutText(tr, this.what, this.ms);
   }
 }
 
@@ -51,12 +71,16 @@ export type PrepareFailureKind = 'network' | 'http' | 'response';
 export class PrepareError extends Error {
   constructor(
     readonly kind: PrepareFailureKind,
-    message: string,
+    private readonly text: Say,
     /** HTTP 状态码（kind 为 http 时）。 */
     readonly status: number | null = null,
   ) {
-    super(message);
+    super(text(ZH));
     this.name = 'PrepareError';
+  }
+
+  say(tr: Translate): string {
+    return this.text(tr);
   }
 }
 
@@ -78,30 +102,30 @@ function chain(error: unknown): unknown[] {
   return out;
 }
 
-/** 把模型调用的异常归类。signalReason 是这次调用的 AbortSignal 的原因（取消或超时）。 */
-export function describeCallError(error: unknown, signalReason?: unknown): CallErrorInfo {
+/** 把模型调用的异常归类。signalReason 是这次调用的 AbortSignal 的原因（取消或超时）。tr：说明用的语言（默认中文）。 */
+export function describeCallError(error: unknown, signalReason?: unknown, tr: Translate = ZH): CallErrorInfo {
   const reasons = [signalReason, ...chain(error)];
   for (const r of reasons) {
-    if (r instanceof CancelledByUser) return { kind: 'cancelled', message: '已取消' };
-    if (r instanceof CallTimeout) return { kind: 'timeout', message: r.message };
+    if (r instanceof CancelledByUser) return { kind: 'cancelled', message: tr('callError.cancelled') };
+    if (r instanceof CallTimeout) return { kind: 'timeout', message: r.say(tr) };
   }
   for (const r of chain(error)) {
     if (typeof r !== 'object' || r === null) continue;
     // openai 的错误带 status，ollama 的 ResponseError 带 status_code
     const status = (r as { status?: unknown }).status ?? (r as { status_code?: unknown }).status_code;
-    if (typeof status === 'number' && status >= 400) return { kind: 'http', message: `模型服务返回错误（HTTP ${String(status)}）` };
+    if (typeof status === 'number' && status >= 400) return { kind: 'http', message: tr('callError.http', { status: String(status) }) };
     const name = (r as { name?: unknown }).name;
     const code = (r as { code?: unknown }).code;
-    if (name === 'TimeoutError') return { kind: 'timeout', message: '模型调用超时' };
+    if (name === 'TimeoutError') return { kind: 'timeout', message: tr('callError.timedOut') };
     if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ECONNRESET' || code === 'UND_ERR_CONNECT_TIMEOUT') {
-      return { kind: 'network', message: '连不上模型服务' };
+      return { kind: 'network', message: tr('callError.network') };
     }
     const message = (r as { message?: unknown }).message;
-    if (typeof message === 'string' && /fetch failed|ECONNREFUSED|connect/i.test(message)) return { kind: 'network', message: '连不上模型服务' };
+    if (typeof message === 'string' && /fetch failed|ECONNREFUSED|connect/i.test(message)) return { kind: 'network', message: tr('callError.network') };
     const statusInMessage = typeof message === 'string' ? /\b([45]\d\d)\b/.exec(message) : null;
-    if (statusInMessage) return { kind: 'http', message: `模型服务返回错误（HTTP ${statusInMessage[1] ?? ''}）` };
+    if (statusInMessage) return { kind: 'http', message: tr('callError.http', { status: statusInMessage[1] ?? '' }) };
   }
-  return { kind: 'other', message: '模型调用出错' };
+  return { kind: 'other', message: tr('callError.other') };
 }
 
 /** 脱敏：把密钥（以及它的常见变形）从文字里去掉。 */

@@ -15,7 +15,6 @@ const WHOLE: readonly { readonly path: string; readonly reason: string }[] = [
   { path: 'src/dev/', reason: '开发工具，只在开发和测试模式下有，任务要求保持中文' },
   { path: 'src/asset/fixtures/', reason: '测试夹具（生成的 GLB 和夹具预览的说明），只用于测试和开发工具' },
   { path: 'src/asset/inspect/', reason: '命令行 inspect-asset 也用（保持中文）；浏览器只用到它的错误，precheck.ts 按错误码翻译' },
-  { path: 'src/workshop/diff.ts', reason: '只在服务端用；它写的差别说明在浏览器里原样显示（data-i18n-raw）' },
   { path: 'src/game/level/builtin.ts', reason: 'P2 手工地图的布局数据（不改）；界面上的名字按 id 查 levels/titles.ts' },
   { path: 'src/game/level/generatedLevels.ts', reason: 'P5 冻结的关卡数据（不改）；界面上的名字和开场白按 id 查翻译表' },
   { path: 'src/game/spec.ts', reason: '玩法规格的自检说明，只在单元测试里用，不显示在界面上' },

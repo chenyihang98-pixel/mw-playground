@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { briefSchema, visualPresetSchema } from '../game/level/gen/brief';
 import { t } from '../i18n';
+import { LANGS } from '../i18n/lang';
 
 /** 错误码。 */
 export const ERROR_CODES = {
@@ -65,6 +66,8 @@ export const generateRequestSchema = z.strictObject({
     .array(rosterPersonSchema)
     .max(HARD_LIMITS.roster)
     .refine((list) => new Set(list.map((p) => p.id)).size === list.length, t('protocol.dupPeople')),
+  /** 界面的语言（F7）：给玩家看的说明和模型写的文字用它。没给时按 zh。 */
+  lang: z.enum(LANGS).optional(),
 });
 export type GenerateRequest = z.output<typeof generateRequestSchema>;
 

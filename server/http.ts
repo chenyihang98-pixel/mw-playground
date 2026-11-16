@@ -3,6 +3,7 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { z } from 'zod';
+import { parseLang } from '../src/i18n/lang';
 import {
   ERROR_CODES,
   confirmRequestSchema,
@@ -102,7 +103,8 @@ export function createWorkshopServer(workshop: Workshop, options: ServerOptions,
     const route = url.pathname.startsWith(PREFIX) ? url.pathname.slice(PREFIX.length) : null;
     const method = req.method ?? 'GET';
     if (route === 'health' && method === 'GET') {
-      sendValid(res, healthResponseSchema, await workshop.health());
+      // F7：?lang= 是界面的语言（不能用的原因按它写）；没给或不认识时按 zh
+      sendValid(res, healthResponseSchema, await workshop.health(parseLang(url.searchParams.get('lang')) ?? 'zh'));
       return;
     }
     if (method === 'POST' && route === 'generate') {

@@ -2106,3 +2106,93 @@ Codex 第 2 轮审查（候选 915eae3）提出 1 项阻塞问题（要求 2）�
 
 - 主包超过 1,000 kB 的构建提示：以后可以把日语、英语词典拆成按需加载。
 - 已保存的随机关卡的标题、开场白、程序调整的说明是保存时那种语言的文字（保存格式没变），换语言后原样显示。
+
+## F7：模型写的文字和工坊服务的说明按界面的语言
+
+### 内容
+
+没有改游戏规则、生成逻辑、工坊流程（两步、修复次数、回退）、保存数据的字段和取值、说明书 schema、冻结关卡，也没有改 `docs/evidence/`、`tests/data/workshop-requests.json` 和依赖。
+
+- 请求带语言：
+  - `generateRequestSchema` 加了可选的 `lang`（zh / ja / en），没给时按 zh；无效值和其他无效字段一样返回 400（bad-request）。浏览器发当前界面的语言。
+  - 健康检查：界面不是中文时浏览器带 `?lang=`；没给或不认识时按 zh。
+- 不切换服务端的全局语言：
+  - `src/i18n` 加了纯函数 `translate(lang, key, params)`、`translator(lang)` 和类型 `Translate`；`t` 不变。
+  - 需要它的模块把它当参数接收，没给时用 `t`（浏览器里不变）或中文（服务端）：
+    - 说明书校验（`parseBrief`、`briefProblems`）、布局规则（`layoutProblems`）、检查器（`checkLevel` 的 `tr`）、时间推算（`decideTimeLimit`）、流水线（`produceLevel` 的 `tr`、`adjustBrief`）、随机说明书（`randomBrief` 的 `tr`）；
+    - `src/workshop/diff.ts`、`server/roster.ts` 的 `roleProblems`、`server/errors.ts` 的 `describeCallError`、各提供方的 `availability`。
+  - 超时、模型调用出错、加载失败的错误带 `say(tr)`：`message` 仍是中文（日志、统计、错误响应用），`say` 按指定的语言说。
+- 发给模型的内容（`server/prompts.ts`）：
+  - zh 请求和起点逐字节相同。
+  - ja、en 请求只改写说明书的系统提示里的两处：title 那一行写成用日语或英语写标题（en 的长度单位写成“字符”）；cast 那一行后面加一行“title、opening 和 cast 里每个 line 都用日语（英语）写。”。
+  - 理解请求的提示、用户消息、修复时附上的问题（中文）、工具说明都不变。说明书 schema、长度上限、组合规则都不改，也不另加语言检查。
+- 给玩家看的说明按请求的语言写，zh 下和起点逐字一致：
+  - 程序调整的 change 和 message（预览里和关卡数据里两处）、主要差别、修复记录、回退原因（含超时、模型调用出错、加载失败、内部错误）、回退的主要差别（回退关卡的名字按 id 取翻译）。
+  - 同一个检查用中文（交回模型）和请求的语言（给玩家看）各说一遍：修复记录里同一次尝试的问题按请求的语言显示，交回模型的仍是中文。流水线是确定的：ja、en 请求失败时用中文再做一遍，得到交回模型的原因；zh 请求只做一遍。
+  - 健康检查里不能用的原因按 `?lang=` 的语言写（Ollama、OpenAI 兼容接口、off、假模型）。
+  - 统计和日志里的原因仍是中文，字段不变；命令行脚本不变。
+- 假模型：从写说明书的系统提示里认出语言，默认说明书的标题和开场白取那种语言的随机一关词条（同一个种子选同一条）；zh 的输出和起点一样。加载失败的说法也改成取词典。
+- 词典：三份各加 57 个键（共 560 个），键和占位名一致。F6 已有的词条直接复用：说明书错误、检查器、布局规则、流水线、时间推算的说明，地图档位、障碍、分布、巡逻、难度、视觉的叫法，`preview.count`、分工的叫法、分隔符、内置关卡的名字。检查器里路径和说明之间的冒号也改成取词典（`common.pathMessage`）。
+- `src/workshop/diff.ts` 改成取词典，从源码扫描的白名单里去掉了。
+- 界面：工坊面板、开始面板里这些文字仍标 `data-i18n-raw`（里面可能有名册里的名字和模型写的文字），只改了注释。
+- 文档：`README.md`、`README.zh.md`、`README.en.md` 的“已知问题”，`docs/guide*.md` 的“语言”一节最后一条，`docs/conventions.md`。`docs/how-it-works*.md` 和现在的内容不冲突，没有改。
+
+### 真实模型抽查
+
+- 环境：2026-11-16，Windows 11，Ollama 0.40.16（127.0.0.1），默认配置的模型 qwen3.5:9b-q4_K_M。
+- 做法：在系统临时目录写了一次性脚本（不提交），直接用工坊服务的代码（`Workshop` + 默认配置的提供方）跑 ja 3 条、en 3 条；统计放在内存里，没有写文件；每条出预览后放弃。
+- 结果（耗时是整个请求；第 1 条含加载模型 7.2 秒）：
+
+| 语言 | 请求 | 名册 | 结果 | 修复 | 耗时 | title | opening | line | 目标语言 |
+|---|---|---|---|---|---|---|---|---|---|
+| ja | 雨の夜、小さめのマップで、宝石は高台の上に置いて。守衛は少なめで | 无 | model-first | 0 | 10.2 秒 | 雨夜の宝石高台 | （空） | — | 是 |
+| ja | ハナを仲間にして、ゴローを守衛にして。二人にひとことずつセリフを言わせて | ハナ、ゴロー | model-first | 0 | 2.3 秒 | 花とゴーロの守り | （空） | ハナ：ゴローさん、一緒に宝石を探しましょう！ / ゴロー：みんなの安全は俺が守るよ。 | 是 |
+| ja | 雪のステージで宝石をたくさん。ちょっと難しめにして | 无 | model-repaired | 1 | 3.2 秒 | 雪原の宝石探索 | （空） | — | 是 |
+| en | A foggy dusk on sand, gems scattered around, two guards patrolling | 无 | model-first | 0 | 2.0 秒 | Foggy Sand Run | （空） | — | 是 |
+| en | Milo is my companion and Rex guards the gems. Give each of them a short line. | Milo、Rex | model-repaired | 1 | 5.5 秒 | High Gems | Welcome to the Gem Playground! Collect all the gems on the platforms. Milo will help you, but watch out for Rex! | Milo：Let's grab those high-value gems together! / Rex：I'll watch the perimeter while you collect. | 是 |
+| en | A relaxed snowy level with the gems up on the platforms | 无 | model-first | 0 | 2.1 秒 | Snowy Summit | （空） | — | 是 |
+
+- 看到的情况：
+  - 6 条的标题、开场白、台词都是目标语言。
+  - 6 条里 5 条开场白是空的（说明书允许空字符串）。
+  - ja 第 2 条的标题把名册里的名字改了写法（“ハナ”写成“花”，“ゴロー”写成“ゴーロ”）；台词里的名字是对的。
+  - 修复的 2 条都是“宝石只放在高台上时，宝石数超过高台能放的数量”；交回模型的是中文，修复记录按目标语言显示。
+
+### 运行过的检查和结果
+
+环境：Windows 11、Node v24.18.0、Chromium（Playwright 1.65.0，无头）。
+
+- 改代码前，用起点的代码记下 zh 的数据 `tests/data/workshop-texts-zh.json`（约 29 KB）：
+  - 记录的代码在 `tests/helpers/workshopTexts.ts`，当时用一个临时的测试文件调用它，记完删掉了。
+  - 12 种情况：没有名册人物、有名册人物并调用工具、修复两次（坏 JSON、不允许的分工）、三次都是说明书错误、程序调整、三次都放不下、程序缺陷（检查器真实的说明）、单次调用超时、整个请求超时、模型调用出错、加载失败、加载超时。
+  - 记下每次调用模型的全部消息（26 段不同的文字）、工具的名字和说明、schema 的摘要、给玩家看的文字、统计里的原因，以及假模型的默认说明书、“太远”的说明和两种程序调整的说法。
+- `npm run typecheck`、`npm run lint`：通过。
+- `npm test`：38 个测试文件、600 个测试全部通过。新增 `tests/unit/workshop-lang.test.ts`（16 个）：
+  - zh：请求不带 lang、带 lang: zh，记下来的内容和起点的数据逐字节相同；
+  - ja、en：发给模型的内容把写说明书的系统提示换回 zh 的版本后和 zh 完全相同；系统提示和 zh 的差别正好是两处；
+  - ja、en：程序调整、主要差别、修复记录、回退原因（各类）和对应语言的词条一致；没有中文原文（en 除了名册里的名字没有汉字和假名，ja 没有和日语不同的中文片段）；统计里的原因和 zh 相同；
+  - 假模型：ja、en 的标题和开场白取对应语言的同一条词条，其余字段和 zh 相同；
+  - 请求的 lang：schema、接口（无效值 400，en 的请求出英语的预览）；健康检查的 `?lang=`；浏览器带上语言。
+  - F6 的词典测试和源码扫描照常通过（扫描的白名单去掉了 `diff.ts`）。
+- `npm run e2e`：
+  - 不设 `MW_ASSET_DIR`：54 个通过，1 个跳过（真实资产组）。原有的断言没有改。`tests/e2e/i18n.spec.ts` 里：
+    - ja、en 的完整流程加了：工坊预览和开始面板的标题、开场白是对应语言的假模型输出（en 里没有汉字和假名）；
+    - 新增 ja、en 各一个：测试里另起一个按预设回复的工坊服务，程序调整（障碍密度降一档）和回退（三次说明书错误）的说明、主要差别、修复记录都是界面的语言；截图 `test-results/i18n/{ja,en}-f7-*.png`（不提交）。
+  - 设了 `MW_ASSET_DIR`（操作者提供的项目外目录，只读）：60 个全部通过，含真实资产组的 6 个。
+- 公开页面的检查脚本 `check-pages.mjs`（仓库外，只读）：NO PROBLEMS（三种语言的页面结构一致）。
+- `npm run build`：通过，主包约 1,108 kB（Vite 提示超过 1,000 kB），没有测试钩子和 LangChain。
+- `git status` 干净；`git diff --stat 3fc3f93..HEAD` 与加 `--ignore-cr-at-eol` 的结果一致；没有改依赖。
+
+### 未运行或未验证
+
+- 模型照不照指定的语言写：没有另加检查，抽查只跑了 6 条。
+- 抽查直接用服务端的代码，没有在浏览器里接真实的 Ollama 走 ja、en 界面。
+- OpenAI 兼容接口不能用的原因：代码改成按语言写了，只用 zh 的原有测试跑过（ja、en 没有单独的测试，也没接过真的服务商）。
+- 修复记录里 zod 和 JSON 解析器自己的说明（例如 “Too big: expected number to be <=4”）是库的英文原文，三种语言都一样（F7 之前 zh 下也是这样）。
+- 布局 schema 里 id 格式的说明在模块加载时取词典，服务端一直是中文；只会在生成器做出不合格的 id（程序缺陷）时出现，没见过。
+- 译文没有请母语者审读。
+
+### 已知问题和后续项
+
+- 已保存的关卡里的标题、开场白、台词和程序调整的说明，是生成时那种语言的文字，换语言后原样显示（保存格式没变）。
+- 主包又大了约 11 kB（新词条）；词典按需加载留作后续。

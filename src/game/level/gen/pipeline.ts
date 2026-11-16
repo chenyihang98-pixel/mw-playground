@@ -15,7 +15,7 @@ import { GEN_CONFIG, type Density } from './config';
 import { generateLayout } from './generator';
 import { deriveSeed } from './random';
 import { decideTimeLimit, routeTime } from './timing';
-import { t } from '../../../i18n';
+import { t, type Translate } from '../../../i18n';
 
 type GenConfig = typeof GEN_CONFIG;
 
@@ -67,6 +67,8 @@ export interface ProduceOptions {
   readonly adjust?: boolean;
   /** 替换配置（测试用）。 */
   readonly config?: GenConfig;
+  /** 说明（失败原因、程序调整）用的语言（F7，工坊按请求的语言写；没给时用当前语言）。 */
+  readonly tr?: Translate;
 }
 
 type RunResult =
@@ -74,7 +76,7 @@ type RunResult =
   | { readonly ok: false; readonly kind: 'cannot-fit' | 'too-far'; readonly message: string; readonly reasons: readonly string[]; readonly attempts: number }
   | { readonly ok: false; readonly kind: 'rejected'; readonly problems: readonly CheckProblem[]; readonly attempts: number };
 
-function run(brief: Brief, seed: string, config: GenConfig): RunResult {
+function run(brief: Brief, seed: string, config: GenConfig, tr: Translate): RunResult {
   const reasons: string[] = [];
   const total = config.generator.attempts;
   for (let attempt = 0; attempt < total; attempt++) {
@@ -83,18 +85,18 @@ function run(brief: Brief, seed: string, config: GenConfig): RunResult {
       if (!reasons.includes(generated.reason)) reasons.push(generated.reason);
       continue;
     }
-    const report = checkLevel(generated.layout, { brief, grid: config.check.grid, spawnGuardDistance: config.check.spawnGuardDistance });
+    const report = checkLevel(generated.layout, { brief, grid: config.check.grid, spawnGuardDistance: config.check.spawnGuardDistance, tr });
     if (!report.ok) return { ok: false, kind: 'rejected', problems: report.problems, attempts: attempt + 1 };
     const route = routeTime(report);
     if (!route) {
       return {
         ok: false,
         kind: 'rejected',
-        problems: [{ category: 'layout', code: 'route', message: t('pipeline.noRoute') }],
+        problems: [{ category: 'layout', code: 'route', message: tr('pipeline.noRoute') }],
         attempts: attempt + 1,
       };
     }
-    const decision = decideTimeLimit(route.seconds, brief.intent, brief.tier, config);
+    const decision = decideTimeLimit(route.seconds, brief.intent, brief.tier, config, tr);
     if (!decision.ok) return { ok: false, kind: 'too-far', message: decision.message, reasons: [decision.message], attempts: attempt + 1 };
     const layout = parseLevel({ ...generated.layout, timeLimit: decision.timeLimit });
     return { ok: true, layout, timeLimit: decision.timeLimit, routeSeconds: route.seconds, routeDistance: route.distance, attempts: attempt + 1 };
@@ -105,21 +107,21 @@ function run(brief: Brief, seed: string, config: GenConfig): RunResult {
     kind: 'cannot-fit',
     reasons,
     attempts: total,
-    message: t('pipeline.cannotFit', { tier: brief.tier, size: String(tier.size), attempts: String(total) }),
+    message: tr('pipeline.cannotFit', { tier: brief.tier, size: String(tier.size), attempts: String(total) }),
   };
 }
 
 const LOWER_DENSITY: Readonly<Record<Density, Density | null>> = { high: 'mid', mid: 'low', low: null };
 
 /** 程序调整的固定规则；没有可调的时返回 null。 */
-export function adjustBrief(brief: Brief, reason: 'cannot-fit' | 'too-far', config: GenConfig = GEN_CONFIG): { brief: Brief; change: string } | null {
+export function adjustBrief(brief: Brief, reason: 'cannot-fit' | 'too-far', config: GenConfig = GEN_CONFIG, tr: Translate = t): { brief: Brief; change: string } | null {
   const minimum = config.tiers[brief.tier].collectibles.min;
   if (reason === 'cannot-fit') {
     const lower = LOWER_DENSITY[brief.density];
-    if (lower) return { brief: { ...brief, density: lower }, change: t('pipeline.adjustDensity', { from: brief.density, to: lower }) };
+    if (lower) return { brief: { ...brief, density: lower }, change: tr('pipeline.adjustDensity', { from: brief.density, to: lower }) };
   }
   if (brief.collectibles > minimum) {
-    return { brief: { ...brief, collectibles: minimum }, change: t('pipeline.adjustCollectibles', { from: String(brief.collectibles), to: String(minimum) }) };
+    return { brief: { ...brief, collectibles: minimum }, change: tr('pipeline.adjustCollectibles', { from: String(brief.collectibles), to: String(minimum) }) };
   }
   return null;
 }
@@ -127,7 +129,8 @@ export function adjustBrief(brief: Brief, reason: 'cannot-fit' | 'too-far', conf
 /** 从说明书和种子做出一关。 */
 export function produceLevel(input: unknown, seed: string, options: ProduceOptions = {}): ProduceResult {
   const config = options.config ?? GEN_CONFIG;
-  const parsed = parseBrief(input, options.rosterIds);
+  const tr = options.tr ?? t;
+  const parsed = parseBrief(input, options.rosterIds, tr);
   if (!parsed.ok) return { ok: false, kind: 'brief', problems: parsed.problems };
   const requested = parsed.brief;
 
@@ -155,11 +158,11 @@ export function produceLevel(input: unknown, seed: string, options: ProduceOptio
     return { ok: false, kind: result.kind, message: result.message, reasons: result.reasons, attempts, adjustment };
   };
 
-  const first = run(requested, seed, config);
+  const first = run(requested, seed, config, tr);
   if (first.ok || first.kind === 'rejected' || options.adjust === false) return finish(requested, first, null, 0);
-  const adjusted = adjustBrief(requested, first.kind, config);
+  const adjusted = adjustBrief(requested, first.kind, config, tr);
   if (!adjusted) return finish(requested, first, null, 0);
   const adjustment: Adjustment = { reason: first.kind, message: first.message, change: adjusted.change, from: requested, to: adjusted.brief };
-  const second = run(adjusted.brief, deriveSeed(seed, 'adjusted'), config);
+  const second = run(adjusted.brief, deriveSeed(seed, 'adjusted'), config, tr);
   return finish(adjusted.brief, second, adjustment, first.attempts);
 }

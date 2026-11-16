@@ -4,13 +4,16 @@
 // 预设的回复用完以后：理解请求返回一句固定的话，写说明书返回一份由请求文字决定的合法说明书（端到端测试的假模型模式用它）。
 // delayMs：每次调用前等待（可以被中止），用来测取消。
 // F2：prepare（加载模型）默认直接完成；可以设延迟、出错、一直不返回直到被中止。availabilityDelayMs：检查可用性前等待。
+// F7：默认的说明书按请求的语言写标题和开场白：从写说明书的系统提示里认出语言（ja、en 的请求多一行，见 prompts.ts）。
 
 import { AIMessage, type BaseMessage } from '@langchain/core/messages';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import type { Brief } from '../src/game/level/gen/brief';
 import { hash64 } from '../src/game/level/gen/random';
 import { randomBrief } from '../src/game/level/gen/randomBrief';
-import { PrepareError, type PrepareFailureKind } from './errors';
+import { translator, type Lang, type Translate } from '../src/i18n';
+import { PrepareError, ZH, type PrepareFailureKind, type Say } from './errors';
+import { BRIEF_LANG_LINES } from './prompts';
 import type { Availability, LlmProvider } from './providers';
 
 export type FakeUnderstandReply =
@@ -44,15 +47,20 @@ export interface FakeScript {
   readonly availabilityDelayMs?: number;
 }
 
-const FAKE_PREPARE_FAILURES: Readonly<Record<PrepareFailureKind, string>> = {
-  network: '加载模型失败：连不上模型服务',
-  http: '加载模型失败：模型服务返回错误（HTTP 500）',
-  response: '加载模型失败：模型服务返回的内容不对',
+const FAKE_PREPARE_FAILURES: Readonly<Record<PrepareFailureKind, Say>> = {
+  network: (tr) => tr('prepare.failedBecause', { why: tr('callError.network') }),
+  http: (tr) => tr('prepare.failedBecause', { why: tr('callError.http', { status: '500' }) }),
+  response: (tr) => tr('prepare.failedBecause', { why: tr('prepare.badResponse') }),
 };
 
-/** 一份合法的说明书（由请求文字决定，不含出场人物）。 */
-export function defaultBrief(text: string): Brief {
-  return randomBrief(`fake:${hash64(text)}`, []);
+/** 一份合法的说明书（由请求文字决定，不含出场人物）。标题和开场白用 lang（默认中文）。 */
+export function defaultBrief(text: string, lang: Lang = 'zh'): Brief {
+  return randomBrief(`fake:${hash64(text)}`, [], { tr: translator(lang) });
+}
+
+/** 写说明书的系统提示是哪种语言的请求。 */
+function langOf(prompt: string): Lang {
+  return prompt.includes(BRIEF_LANG_LINES.ja) ? 'ja' : prompt.includes(BRIEF_LANG_LINES.en) ? 'en' : 'zh';
 }
 
 function wait(ms: number, signal: AbortSignal): Promise<void> {
@@ -129,7 +137,7 @@ export class FakeProvider implements LlmProvider {
     this.briefIndex++;
     if (!reply) {
       const request = /玩家的一句话：(.*)/.exec(prompt)?.[1] ?? prompt;
-      return JSON.stringify(defaultBrief(request));
+      return JSON.stringify(defaultBrief(request, langOf(prompt)));
     }
     switch (reply.kind) {
       case 'json':
@@ -144,13 +152,13 @@ export class FakeProvider implements LlmProvider {
     }
   }
 
-  async availability(signal?: AbortSignal): Promise<Availability> {
+  async availability(signal?: AbortSignal, tr: Translate = ZH): Promise<Availability> {
     const delay = this.script.availabilityDelayMs ?? 0;
     if (delay > 0) {
       try {
         await wait(delay, signal ?? new AbortController().signal);
       } catch {
-        return { available: false, reason: '检查被中止' };
+        return { available: false, reason: tr('health.aborted') };
       }
     }
     return { available: true, reason: null };

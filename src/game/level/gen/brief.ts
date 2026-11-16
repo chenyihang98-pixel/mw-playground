@@ -25,7 +25,7 @@ import {
   type TimeOfDay,
   type Weather,
 } from './config';
-import { t } from '../../../i18n';
+import { t, type Translate } from '../../../i18n';
 
 export const BRIEF_SCHEMA_VERSION = 1;
 
@@ -89,8 +89,8 @@ export interface BriefProblem {
   readonly message: string;
 }
 
-/** 组合规则。rosterIds 给出时，出场人物必须在名册里。返回所有冲突；空数组表示没有问题。 */
-export function briefProblems(brief: Brief, rosterIds?: ReadonlySet<string>): BriefProblem[] {
+/** 组合规则。rosterIds 给出时，出场人物必须在名册里。返回所有冲突；空数组表示没有问题。tr：说明用的语言（F7）。 */
+export function briefProblems(brief: Brief, rosterIds?: ReadonlySet<string>, tr: Translate = t): BriefProblem[] {
   const problems: BriefProblem[] = [];
   const add = (path: string, message: string) => problems.push({ path, message });
   const tier = GEN_CONFIG.tiers[brief.tier];
@@ -99,19 +99,19 @@ export function briefProblems(brief: Brief, rosterIds?: ReadonlySet<string>): Br
   if (brief.collectibles < range.min || brief.collectibles > range.max) {
     add(
       'collectibles',
-      t('brief.collectiblesRange', { tier: brief.tier, min: String(range.min), max: String(range.max), count: String(brief.collectibles) }),
+      tr('brief.collectiblesRange', { tier: brief.tier, min: String(range.min), max: String(range.max), count: String(brief.collectibles) }),
     );
   }
   if (brief.guards > tier.maxGuards) {
-    add('guards', t('brief.tooManyGuards', { tier: brief.tier, max: String(tier.maxGuards), count: String(brief.guards) }));
+    add('guards', tr('brief.tooManyGuards', { tier: brief.tier, max: String(tier.maxGuards), count: String(brief.guards) }));
   }
   if (brief.distribution === 'elevated') {
     if (brief.platforms === 0) {
-      add('distribution', t('brief.elevatedNoPlatforms'));
+      add('distribution', tr('brief.elevatedNoPlatforms'));
     } else if (brief.collectibles > brief.platforms * MAX_COLLECTIBLES_PER_PLATFORM) {
       add(
         'collectibles',
-        t('brief.elevatedTooMany', { perPlatform: String(MAX_COLLECTIBLES_PER_PLATFORM), platforms: String(brief.platforms), max: String(brief.platforms * MAX_COLLECTIBLES_PER_PLATFORM), count: String(brief.collectibles) }),
+        tr('brief.elevatedTooMany', { perPlatform: String(MAX_COLLECTIBLES_PER_PLATFORM), platforms: String(brief.platforms), max: String(brief.platforms * MAX_COLLECTIBLES_PER_PLATFORM), count: String(brief.collectibles) }),
       );
     }
   }
@@ -119,17 +119,17 @@ export function briefProblems(brief: Brief, rosterIds?: ReadonlySet<string>): Br
   const guardCast = brief.cast.filter((c) => c.role === 'guard').length;
   const companionCast = brief.cast.filter((c) => c.role === 'companion').length;
   if (guardCast > brief.guards) {
-    add('cast', t('brief.castGuards', { cast: String(guardCast), guards: String(brief.guards), max: String(tier.maxGuards) }));
+    add('cast', tr('brief.castGuards', { cast: String(guardCast), guards: String(brief.guards), max: String(tier.maxGuards) }));
   }
   if (companionCast > b.maxCompanions) {
-    add('cast', t('brief.castCompanions', { count: String(companionCast), max: String(b.maxCompanions) }));
+    add('cast', tr('brief.castCompanions', { count: String(companionCast), max: String(b.maxCompanions) }));
   }
   const seen = new Set<string>();
   brief.cast.forEach((c, i) => {
-    if (seen.has(c.personId)) add(`cast.${String(i)}.personId`, t('brief.dupPerson', { id: c.personId }));
+    if (seen.has(c.personId)) add(`cast.${String(i)}.personId`, tr('brief.dupPerson', { id: c.personId }));
     seen.add(c.personId);
     if (rosterIds && !rosterIds.has(c.personId)) {
-      add(`cast.${String(i)}.personId`, t('brief.notInRoster', { id: c.personId }));
+      add(`cast.${String(i)}.personId`, tr('brief.notInRoster', { id: c.personId }));
     }
   });
   return problems;
@@ -138,19 +138,19 @@ export function briefProblems(brief: Brief, rosterIds?: ReadonlySet<string>): Br
 export type BriefResult = { readonly ok: true; readonly brief: Brief } | { readonly ok: false; readonly problems: readonly BriefProblem[] };
 
 /** 解析并校验说明书：先按 schema，再按组合规则。不改值（只去掉文字首尾的空白）。 */
-export function parseBrief(input: unknown, rosterIds?: ReadonlySet<string>): BriefResult {
+export function parseBrief(input: unknown, rosterIds?: ReadonlySet<string>, tr: Translate = t): BriefResult {
   const version = typeof input === 'object' && input !== null ? (input as { schemaVersion?: unknown }).schemaVersion : undefined;
   if (version !== BRIEF_SCHEMA_VERSION) {
-    const shown = typeof version === 'number' || typeof version === 'string' ? String(version) : t('format.missing');
-    return { ok: false, problems: [{ path: 'schemaVersion', message: t('brief.unknownVersion', { shown, version: String(BRIEF_SCHEMA_VERSION) }) }] };
+    const shown = typeof version === 'number' || typeof version === 'string' ? String(version) : tr('format.missing');
+    return { ok: false, problems: [{ path: 'schemaVersion', message: tr('brief.unknownVersion', { shown, version: String(BRIEF_SCHEMA_VERSION) }) }] };
   }
   const parsed = briefSchema.safeParse(input);
   if (!parsed.success) {
     return {
       ok: false,
-      problems: parsed.error.issues.map((issue) => ({ path: issue.path.map(String).join('.') || t('brief.rootPath'), message: issue.message })),
+      problems: parsed.error.issues.map((issue) => ({ path: issue.path.map(String).join('.') || tr('brief.rootPath'), message: issue.message })),
     };
   }
-  const problems = briefProblems(parsed.data, rosterIds);
+  const problems = briefProblems(parsed.data, rosterIds, tr);
   return problems.length > 0 ? { ok: false, problems } : { ok: true, brief: parsed.data };
 }

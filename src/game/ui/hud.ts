@@ -254,7 +254,7 @@ export class Hud {
             (state.level.guards.length > 0 ? t('hud.guardWarning', { seconds: String(state.rules.penaltySeconds) }) : ''),
         }),
       );
-      // 开场白和台词是生成的文字，人物名是名册里的名字：原样显示（F6 不翻译，F7 处理生成的文字）
+      // 开场白和台词是生成的文字（F7 起工坊按界面的语言生成），人物名是名册里的名字：原样显示
       if (this.intro.opening) panel.append(markRaw(el('p', { id: 'intro-opening', className: 'overlay-opening', text: this.intro.opening }), this.intro.openingRaw));
       for (const l of this.intro.lines) {
         const line = markRaw(el('p', { className: 'intro-line' }));

@@ -98,7 +98,7 @@ Keys, import limits and the settings you can change are in [Playing and settings
 
 ## Known issues
 
-- Text written by the model (level title, opening, lines) doesn't follow the interface language yet. It comes out in Chinese
+- The model is only asked to write its text (level title, opening, lines) in the interface language. Nothing checks the language. With the local 9B model it always did in my tries, but it sometimes changed roster names (“ハナ” became “花”). Saved levels keep the language they were made in
 - The workshop is meant to run locally and handles one request at a time
 - An unconfirmed preview lives in the service's memory, so restarting the service loses it and you have to generate again. Confirmed levels are not affected
 - To get past the rules, the model sometimes changes something you asked for explicitly (the "small map" case above). The preview shows how many fixes it took, so look before you save

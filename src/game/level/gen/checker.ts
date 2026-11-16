@@ -33,7 +33,7 @@ import {
 import { layoutProblems, levelLayoutBaseSchema, type LevelLayout } from '../schema';
 import { MAX_COLLECTIBLES_PER_PLATFORM, briefProblems, type Brief } from './brief';
 import { GEN_CONFIG } from './config';
-import { t } from '../../../i18n';
+import { t, type Translate } from '../../../i18n';
 
 /** brief：说明书或参数的问题；layout：检查发现的布局问题。 */
 export type ProblemCategory = 'brief' | 'layout';
@@ -50,6 +50,8 @@ export interface CheckOptions {
   readonly grid?: number;
   /** 出生点和守卫起点、巡逻路线之间的最小距离（米）。 */
   readonly spawnGuardDistance?: number;
+  /** 说明用的语言（F7，工坊按请求的语言写；没给时用当前语言）。 */
+  readonly tr?: Translate;
 }
 
 /** 网格的格子总数上限：防止参数不当时分配过多内存。 */
@@ -398,30 +400,30 @@ function isBackAndForth(route: readonly Point2[]): boolean {
 }
 
 /** 布局和说明书是否一致（档位、数量、分布、巡逻方式）。不一致是布局问题。 */
-function briefMismatches(level: LevelLayout, solids: readonly Solid[], brief: Brief): string[] {
+function briefMismatches(level: LevelLayout, solids: readonly Solid[], brief: Brief, tr: Translate): string[] {
   const out: string[] = [];
   const tier = GEN_CONFIG.tiers[brief.tier];
   if (level.size.width !== tier.size || level.size.depth !== tier.size) {
-    out.push(t('checker.sizeMismatch', { width: String(level.size.width), depth: String(level.size.depth), tier: brief.tier, size: String(tier.size) }));
+    out.push(tr('checker.sizeMismatch', { width: String(level.size.width), depth: String(level.size.depth), tier: brief.tier, size: String(tier.size) }));
   }
-  if (level.platforms.length !== brief.platforms) out.push(t('checker.platformCount', { actual: String(level.platforms.length), expected: String(brief.platforms) }));
-  if (level.collectibles.length !== brief.collectibles) out.push(t('checker.collectibleCount', { actual: String(level.collectibles.length), expected: String(brief.collectibles) }));
-  if (level.guards.length !== brief.guards) out.push(t('checker.guardCount', { actual: String(level.guards.length), expected: String(brief.guards) }));
+  if (level.platforms.length !== brief.platforms) out.push(tr('checker.platformCount', { actual: String(level.platforms.length), expected: String(brief.platforms) }));
+  if (level.collectibles.length !== brief.collectibles) out.push(tr('checker.collectibleCount', { actual: String(level.collectibles.length), expected: String(brief.collectibles) }));
+  if (level.guards.length !== brief.guards) out.push(tr('checker.guardCount', { actual: String(level.guards.length), expected: String(brief.guards) }));
   if (brief.distribution === 'elevated') {
     const platforms = solids.filter((s) => s.kind === 'platform');
     const counts = new Map<string, number>();
     for (const c of level.collectibles) {
       const on = platforms.find((p) => rectContains(p.rect, c.position.x, c.position.z));
-      if (!on) out.push(t('checker.notOnPlatform', { id: c.id }));
+      if (!on) out.push(tr('checker.notOnPlatform', { id: c.id }));
       else counts.set(on.id, (counts.get(on.id) ?? 0) + 1);
     }
     for (const [id, n] of counts) {
-      if (n > MAX_COLLECTIBLES_PER_PLATFORM) out.push(t('checker.platformOverfull', { id, count: String(n), max: String(MAX_COLLECTIBLES_PER_PLATFORM) }));
+      if (n > MAX_COLLECTIBLES_PER_PLATFORM) out.push(tr('checker.platformOverfull', { id, count: String(n), max: String(MAX_COLLECTIBLES_PER_PLATFORM) }));
     }
   }
   if (brief.patrol === 'back-and-forth') {
     for (const g of level.guards) {
-      if (!isBackAndForth(g.route)) out.push(t('checker.patrolNotSymmetric', { id: g.id }));
+      if (!isBackAndForth(g.route)) out.push(tr('checker.patrolNotSymmetric', { id: g.id }));
     }
   }
   return out;
@@ -432,45 +434,46 @@ export function checkLevel(input: unknown, options: CheckOptions = {}): CheckRep
   const problems: CheckProblem[] = [];
   const fail = (category: ProblemCategory, code: string, message: string) => problems.push({ category, code, message });
   const empty = (): CheckReport => ({ ok: false, problems, level: null, navigation: null, spawn: [], reach: [] });
+  const tr = options.tr ?? t;
 
   // 说明书或参数的问题
   const h = options.grid ?? GEN_CONFIG.check.grid;
   const minDistance = options.spawnGuardDistance ?? GEN_CONFIG.check.spawnGuardDistance;
-  if (!Number.isFinite(h) || h <= 0) fail('brief', 'parameter', t('checker.badGrid', { grid: String(h) }));
-  if (!Number.isFinite(minDistance) || minDistance < 0) fail('brief', 'parameter', t('checker.badDistance', { distance: String(minDistance) }));
-  if (options.brief) for (const p of briefProblems(options.brief)) fail('brief', 'brief', t('checker.briefProblem', { path: p.path, message: p.message }));
+  if (!Number.isFinite(h) || h <= 0) fail('brief', 'parameter', tr('checker.badGrid', { grid: String(h) }));
+  if (!Number.isFinite(minDistance) || minDistance < 0) fail('brief', 'parameter', tr('checker.badDistance', { distance: String(minDistance) }));
+  if (options.brief) for (const p of briefProblems(options.brief, undefined, tr)) fail('brief', 'brief', tr('checker.briefProblem', { path: p.path, message: p.message }));
   if (problems.length > 0) return empty();
 
   // 结构和语义（parseLevel 的两部分）
   const base = levelLayoutBaseSchema.safeParse(input);
   if (!base.success) {
-    for (const issue of base.error.issues) fail('layout', 'layout-schema', `${issue.path.map(String).join('.') || t('common.root')}：${issue.message}`);
+    for (const issue of base.error.issues) fail('layout', 'layout-schema', tr('common.pathMessage', { path: issue.path.map(String).join('.') || tr('common.root'), message: issue.message }));
     return empty();
   }
   const level: LevelLayout = base.data;
-  for (const p of layoutProblems(base.data)) fail('layout', 'layout-rules', `${p.path.map(String).join('.') || t('common.root')}：${p.message}`);
+  for (const p of layoutProblems(base.data, tr)) fail('layout', 'layout-rules', tr('common.pathMessage', { path: p.path.map(String).join('.') || tr('common.root'), message: p.message }));
 
   const solids = layoutSolids(level);
   const bounds = mapBounds(level);
   const r = SPEC.capsule.radius;
   const cells = Math.ceil((bounds.maxX - bounds.minX) / h) * Math.ceil((bounds.maxZ - bounds.minZ) / h) * (1 + level.platforms.length);
   if (cells > MAX_CELLS) {
-    fail('brief', 'parameter', t('checker.gridTooFine', { grid: String(h), width: String(level.size.width), depth: String(level.size.depth), cells: String(cells) }));
+    fail('brief', 'parameter', tr('checker.gridTooFine', { grid: String(h), width: String(level.size.width), depth: String(level.size.depth), cells: String(cells) }));
     return { ...empty(), level: null };
   }
 
   // 出生空间：胶囊在地图内、不与障碍重叠
   const spawn = level.spawn;
   if (spawn.x < bounds.minX + r || spawn.x > bounds.maxX - r || spawn.z < bounds.minZ + r || spawn.z > bounds.maxZ - r) {
-    fail('layout', 'spawn', t('checker.spawnOutside'));
+    fail('layout', 'spawn', tr('checker.spawnOutside'));
   }
   for (const s of solids) {
-    if (circleOverlapsRect(spawn.x, spawn.z, r, s.rect)) fail('layout', 'spawn', t('checker.spawnOverlap', { id: s.id }));
+    if (circleOverlapsRect(spawn.x, spawn.z, r, s.rect)) fail('layout', 'spawn', tr('checker.spawnOverlap', { id: s.id }));
   }
 
   // 收集点数量
   if (level.collectibles.length < level.target) {
-    fail('layout', 'collectible-count', t('checker.notEnoughCollectibles', { count: String(level.collectibles.length), target: String(level.target) }));
+    fail('layout', 'collectible-count', tr('checker.notEnoughCollectibles', { count: String(level.collectibles.length), target: String(level.target) }));
   }
 
   // 巡逻路线：整段不穿过障碍（按守卫的胶囊半径），只在地面上；离出生点足够远
@@ -486,35 +489,35 @@ export function checkLevel(input: unknown, options: CheckOptions = {}): CheckRep
           fail(
             'layout',
             'patrol',
-            d === 0 ? t('checker.patrolThrough', { guard: g.id, segment: String(k), solid: s.id }) : t('checker.patrolTooClose', { guard: g.id, segment: String(k), solid: s.id, distance: d.toFixed(2) }),
+            d === 0 ? tr('checker.patrolThrough', { guard: g.id, segment: String(k), solid: s.id }) : tr('checker.patrolTooClose', { guard: g.id, segment: String(k), solid: s.id, distance: d.toFixed(2) }),
           );
         }
       }
       if (pointSegmentDistance(spawn, a, b) < minDistance) {
-        fail('layout', 'spawn-guard-distance', t('checker.spawnNearPatrol', { guard: g.id, segment: String(k), distance: String(minDistance) }));
+        fail('layout', 'spawn-guard-distance', tr('checker.spawnNearPatrol', { guard: g.id, segment: String(k), distance: String(minDistance) }));
       }
     }
     for (const p of g.route) {
       if (p.x < bounds.minX + r || p.x > bounds.maxX - r || p.z < bounds.minZ + r || p.z > bounds.maxZ - r) {
-        fail('layout', 'patrol', t('checker.patrolNearEdge', { guard: g.id, x: String(p.x), z: String(p.z) }));
+        fail('layout', 'patrol', tr('checker.patrolNearEdge', { guard: g.id, x: String(p.x), z: String(p.z) }));
       }
     }
   }
 
-  if (options.brief) for (const m of briefMismatches(level, solids, options.brief)) fail('layout', 'brief-mismatch', t('checker.briefMismatch', { problem: m }));
+  if (options.brief) for (const m of briefMismatches(level, solids, options.brief, tr)) fail('layout', 'brief-mismatch', tr('checker.briefMismatch', { problem: m }));
 
   // 寻路：每个必需的收集点都能从出生点走到
   const navigation = buildNavigation(level, solids, h);
   const sources = spawnSources(navigation, spawn);
   const reach = collectibleReach(navigation, level, solids);
   if (sources.length === 0) {
-    fail('layout', 'spawn', t('checker.noStandingSpace'));
+    fail('layout', 'spawn', tr('checker.noStandingSpace'));
   } else {
     const dist = navigation.distances(sources);
     const reachable = reach.filter((c) => c.nodes.some((n) => Number.isFinite(dist[n] ?? Infinity)));
     if (reachable.length < level.target) {
       const missing = reach.filter((c) => !reachable.includes(c)).map((c) => c.id);
-      fail('layout', 'unreachable', t('checker.unreachable', { ids: missing.join(t('common.listSep')), reachable: String(reachable.length), target: String(level.target) }));
+      fail('layout', 'unreachable', tr('checker.unreachable', { ids: missing.join(tr('common.listSep')), reachable: String(reachable.length), target: String(level.target) }));
     }
   }
 

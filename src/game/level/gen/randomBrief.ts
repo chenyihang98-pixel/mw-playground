@@ -6,7 +6,7 @@
 import { MAX_COLLECTIBLES_PER_PLATFORM, BRIEF_SCHEMA_VERSION, parseBrief, type Brief, type BriefCast } from './brief';
 import { DENSITIES, DISTRIBUTIONS, GEN_CONFIG, INTENTS, PATROLS, THEMES, TIERS, TIMES_OF_DAY, WEATHERS, type Distribution, type Tier } from './config';
 import { Rng } from './random';
-import { t as tr, type MessageKey } from '../../../i18n';
+import { t as current, type MessageKey, type Translate } from '../../../i18n';
 
 export interface RosterPerson {
   readonly id: string;
@@ -30,8 +30,9 @@ const OPENINGS: readonly (MessageKey | null)[] = ['randomText.opening0', 'random
 const COMPANION_LINES: readonly MessageKey[] = ['randomText.companionLine0', 'randomText.companionLine1', 'randomText.companionLine2', 'randomText.companionLine3'];
 const GUARD_LINES: readonly MessageKey[] = ['randomText.guardLine0', 'randomText.guardLine1', 'randomText.guardLine2', 'randomText.guardLine3'];
 
-/** 由种子做一份随机的、合法的说明书。tier 给出时固定档位。 */
-export function randomBrief(seed: string, people: readonly RosterPerson[] = [], options: { tier?: Tier } = {}): Brief {
+/** 由种子做一份随机的、合法的说明书。tier 给出时固定档位；tr 是标题、开场白、台词的语言（F7，没给时用当前语言）。 */
+export function randomBrief(seed: string, people: readonly RosterPerson[] = [], options: { tier?: Tier; tr?: Translate } = {}): Brief {
+  const tr = options.tr ?? current;
   const rng = new Rng(seed);
   const tier = options.tier ?? rng.pick(TIERS);
   const t = GEN_CONFIG.tiers[tier];
@@ -66,7 +67,7 @@ export function randomBrief(seed: string, people: readonly RosterPerson[] = [], 
     intent: rng.pick(INTENTS),
     visual: { theme: rng.pick(THEMES), time: rng.pick(TIMES_OF_DAY), weather: rng.pick(WEATHERS) },
     title: tr(rng.pick(TITLES)),
-    opening: textOf(rng.pick(OPENINGS)),
+    opening: textOf(rng.pick(OPENINGS), tr),
     cast,
   };
   // 只产出合法的组合：按同样的规则校验一遍（不合法就是这里的规则写错了，直接报错暴露出来）
@@ -75,6 +76,6 @@ export function randomBrief(seed: string, people: readonly RosterPerson[] = [], 
   return checked.brief;
 }
 
-function textOf(key: MessageKey | null): string {
+function textOf(key: MessageKey | null, tr: Translate): string {
   return key === null ? '' : tr(key);
 }

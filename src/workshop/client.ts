@@ -86,7 +86,9 @@ export class WorkshopClient {
 
   async health(): Promise<HealthResult> {
     try {
-      const res = await this.fetchImpl(`${this.base}/health`, { signal: AbortSignal.timeout(5000) });
+      // F7：界面不是中文时带上界面的语言，模型不能用的原因按它写（中文时和以前一样，服务端没给时按中文）
+      const lang = currentLang();
+      const res = await this.fetchImpl(`${this.base}/health${lang === 'zh' ? '' : `?lang=${lang}`}`, { signal: AbortSignal.timeout(5000) });
       const parsed = healthResponseSchema.safeParse(await readJson(res));
       return parsed.success ? { kind: 'ok', health: parsed.data } : { kind: 'unreachable', reason: SERVICE_UNREACHABLE };
     } catch {
@@ -117,7 +119,8 @@ export class WorkshopClient {
     this.current = { id, controller };
     onStart?.(id);
     try {
-      const { status, body } = await this.post('generate', { generationId: id, text, roster }, controller.signal);
+      // F7：带上界面的语言，给玩家看的说明和模型写的文字用它
+      const { status, body } = await this.post('generate', { generationId: id, text, roster, lang: currentLang() }, controller.signal);
       if (!this.isCurrent(id)) return { kind: 'stale' };
       if (status === 200) {
         const parsed = generateResponseSchema.safeParse(body);

@@ -11,13 +11,14 @@ import { AIMessage, HumanMessage } from '@langchain/core/messages';
 import type { StructuredToolInterface } from '@langchain/core/tools';
 import { ChatOllama } from '@langchain/ollama';
 import { ChatOpenAICompletions } from '@langchain/openai';
+import type { Translate } from '../src/i18n';
 import type { ProviderName } from '../src/workshop/protocol';
 import { modelNameOf, type WorkshopConfig } from './config';
-import { PrepareError, describeCallError } from './errors';
+import { PrepareError, ZH, describeCallError, type Say } from './errors';
 
 export interface Availability {
   readonly available: boolean;
-  /** 不能用的原因（给浏览器看）。 */
+  /** 不能用的原因（给浏览器看；按 availability 收到的语言写）。 */
   readonly reason: string | null;
 }
 
@@ -28,8 +29,8 @@ export interface LlmProvider {
   chat(messages: readonly BaseMessage[], tools: readonly StructuredToolInterface[], signal: AbortSignal): Promise<AIMessage>;
   /** 结构化输出：schema 是 JSON Schema。返回模型输出的文本。 */
   structured(messages: readonly BaseMessage[], schema: Record<string, unknown>, signal: AbortSignal): Promise<string>;
-  /** 模型能不能用。不加载模型。 */
-  availability(signal: AbortSignal): Promise<Availability>;
+  /** 模型能不能用。不加载模型。tr：不能用的原因用的语言（F7，默认中文）。 */
+  availability(signal: AbortSignal, tr?: Translate): Promise<Availability>;
   /**
    * 在第一次调用模型之前把模型加载好（F2）。失败时抛 PrepareError（能分清连不上、HTTP 状态码、返回的内容不对）；
    * signal 被中止时抛中止的错误（由调用方按 signal 的原因区分取消和超时）。
@@ -98,16 +99,16 @@ export class OllamaProvider implements LlmProvider {
   }
 
   /** 只请求 /api/tags，不加载模型（打开工坊面板时会调用，不能占用显存）。 */
-  async availability(signal: AbortSignal): Promise<Availability> {
+  async availability(signal: AbortSignal, tr: Translate = ZH): Promise<Availability> {
     try {
       const res = await this.fetchImpl(`${this.config.baseUrl}/api/tags`, { signal });
-      if (!res.ok) return { available: false, reason: `Ollama 返回错误（HTTP ${String(res.status)}）` };
+      if (!res.ok) return { available: false, reason: tr('health.ollamaHttp', { status: String(res.status) }) };
       const body = (await res.json()) as { models?: { name?: unknown; model?: unknown }[] };
       const names = (body.models ?? []).flatMap((m) => [m.name, m.model]).filter((n): n is string => typeof n === 'string');
-      if (!names.includes(this.config.model)) return { available: false, reason: `Ollama 里没有模型 ${this.config.model}（本服务不会自动拉取模型）` };
+      if (!names.includes(this.config.model)) return { available: false, reason: tr('health.ollamaNoModel', { model: this.config.model }) };
       return { available: true, reason: null };
     } catch {
-      return { available: false, reason: `连不上 Ollama（${this.config.baseUrl}）` };
+      return { available: false, reason: tr('health.ollamaNetwork', { url: this.config.baseUrl }) };
     }
   }
 
@@ -128,18 +129,20 @@ export class OllamaProvider implements LlmProvider {
       });
     } catch (error) {
       if (signal.aborted) throw error;
-      throw new PrepareError('network', `加载模型失败：连不上 Ollama（${this.config.baseUrl}）`);
+      const url = this.config.baseUrl;
+      throw new PrepareError('network', (tr) => tr('prepare.failedBecause', { why: tr('health.ollamaNetwork', { url }) }));
     }
-    if (res.status !== 200) throw new PrepareError('http', `加载模型失败：Ollama 返回错误（HTTP ${String(res.status)}）`, res.status);
+    const status = String(res.status);
+    if (res.status !== 200) throw new PrepareError('http', (tr) => tr('prepare.failedBecause', { why: tr('health.ollamaHttp', { status }) }), res.status);
     let reply: unknown;
     try {
       reply = await res.json();
     } catch (error) {
       if (signal.aborted) throw error;
-      throw new PrepareError('response', '加载模型失败：Ollama 返回的内容不是 JSON');
+      throw new PrepareError('response', (tr) => tr('prepare.failedBecause', { why: tr('prepare.notJson') }));
     }
     if (typeof reply !== 'object' || reply === null || (reply as { done?: unknown }).done !== true) {
-      throw new PrepareError('response', '加载模型失败：Ollama 的回复里没有 done: true');
+      throw new PrepareError('response', (tr) => tr('prepare.failedBecause', { why: tr('prepare.notDone') }));
     }
   }
 }
@@ -163,7 +166,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   readonly name = 'openai' as const;
   readonly model: string | null;
   /** 最近一次对话调用失败的类别和原因（连不上、密钥被拒、找不到模型）；调用成功后清掉。 */
-  private lastFailure: { readonly kind: 'network' | 'access'; readonly reason: string } | null = null;
+  private lastFailure: { readonly kind: 'network' | 'access'; readonly reason: Say } | null = null;
 
   constructor(
     private readonly config: WorkshopConfig['openai'],
@@ -195,9 +198,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     } catch (error) {
       const info = describeCallError(error);
       const status = info.kind === 'http' ? /HTTP (\d{3})/.exec(info.message)?.[1] : undefined;
-      if (info.kind === 'network') this.lastFailure = { kind: 'network', reason: '连不上 OpenAI 兼容接口' };
-      else if (status === '401' || status === '403') this.lastFailure = { kind: 'access', reason: `OpenAI 兼容接口拒绝了对话请求（HTTP ${status}）` };
-      else if (status === '404') this.lastFailure = { kind: 'access', reason: `OpenAI 兼容接口找不到模型 ${this.model ?? ''} 或对话接口（HTTP 404）` };
+      const model = this.model ?? '';
+      if (info.kind === 'network') this.lastFailure = { kind: 'network', reason: (tr) => tr('health.openaiNetwork') };
+      else if (status === '401' || status === '403') this.lastFailure = { kind: 'access', reason: (tr) => tr('health.openaiRejectedChat', { status }) };
+      else if (status === '404') this.lastFailure = { kind: 'access', reason: (tr) => tr('health.openaiNoModelOrChat', { model }) };
       throw error;
     }
   }
@@ -232,30 +236,30 @@ export class OpenAiCompatibleProvider implements LlmProvider {
   }
 
   /** 模型能不能用。不抛错：出了意外也只报不可用。 */
-  async availability(signal: AbortSignal): Promise<Availability> {
+  async availability(signal: AbortSignal, tr: Translate = ZH): Promise<Availability> {
     try {
-      return await this.check(signal);
+      return await this.check(signal, tr);
     } catch {
-      return { available: false, reason: '检查 OpenAI 兼容接口时出错' };
+      return { available: false, reason: tr('health.openaiCheckFailed') };
     }
   }
 
-  private async check(signal: AbortSignal): Promise<Availability> {
+  private async check(signal: AbortSignal, tr: Translate): Promise<Availability> {
     const { baseUrl, model, apiKey } = this.config;
     const missing = [baseUrl ? null : 'MW_OPENAI_BASE_URL', model ? null : 'MW_OPENAI_MODEL', apiKey ? null : 'MW_OPENAI_API_KEY'].filter((m): m is string => m !== null);
-    if (missing.length > 0 || !baseUrl || !model || !apiKey) return { available: false, reason: `OpenAI 兼容接口的配置不全：缺少 ${missing.join('、')}` };
+    if (missing.length > 0 || !baseUrl || !model || !apiKey) return { available: false, reason: tr('health.openaiConfig', { missing: missing.join(tr('common.listSep')) }) };
     let res: Response;
     try {
       res = await this.fetchImpl(`${baseUrl}/models`, { headers: { authorization: `Bearer ${apiKey}` }, signal });
     } catch {
-      return { available: false, reason: '连不上 OpenAI 兼容接口' };
+      return { available: false, reason: tr('health.openaiNetwork') };
     }
-    if (res.status === 401 || res.status === 403) return { available: false, reason: `OpenAI 兼容接口拒绝了密钥（HTTP ${String(res.status)}）` };
-    if (!res.ok && res.status !== 404) return { available: false, reason: `OpenAI 兼容接口返回错误（HTTP ${String(res.status)}）` };
+    if (res.status === 401 || res.status === 403) return { available: false, reason: tr('health.openaiRejectedKey', { status: String(res.status) }) };
+    if (!res.ok && res.status !== 404) return { available: false, reason: tr('health.openaiHttp', { status: String(res.status) }) };
     if (res.ok) {
       const body = (await res.json().catch(() => null)) as { data?: unknown } | null;
       const ids = Array.isArray(body?.data) ? body.data.map((m: unknown) => (typeof m === 'object' && m !== null ? (m as { id?: unknown }).id : null)).filter((id): id is string => typeof id === 'string') : null;
-      if (ids && !ids.includes(model)) return { available: false, reason: `OpenAI 兼容接口里没有模型 ${model}` };
+      if (ids && !ids.includes(model)) return { available: false, reason: tr('health.openaiNoModel', { model }) };
     }
     // 收到了 HTTP 响应：网络是通的，之前“连不上”的记录作废
     if (this.lastFailure?.kind === 'network') this.lastFailure = null;
@@ -266,7 +270,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
       try {
         await this.remember(this.create(signal, { temperature: 0, maxTokens: 1 }).invoke([new HumanMessage('ping')], { signal }));
       } catch {
-        return { available: false, reason: this.lastFailure?.reason ?? failure.reason };
+        return { available: false, reason: (this.lastFailure?.reason ?? failure.reason)(tr) };
       }
     }
     return { available: true, reason: null };
@@ -287,8 +291,8 @@ export class OffProvider implements LlmProvider {
     return Promise.reject(new Error('工坊没有启用模型'));
   }
 
-  availability(): Promise<Availability> {
-    return Promise.resolve({ available: false, reason: '工坊没有启用模型（MW_LLM_PROVIDER=off）' });
+  availability(_signal?: AbortSignal, tr: Translate = ZH): Promise<Availability> {
+    return Promise.resolve({ available: false, reason: tr('health.off') });
   }
 
   /** 没有模型可以加载（检查可用性时已经报了不可用，不会走到这一步）。 */

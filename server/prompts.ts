@@ -1,8 +1,11 @@
 // 关卡工坊的提示词和给模型的结构化输出 schema（P8）。数值（档位范围、上限）都从 P5 的 GEN_CONFIG 和说明书 schema 取，不另写一份。
 // 模型只填说明书，不摆坐标、不写时间限制；它的输出只经结构化输出和 zod 校验进入流程，其他内容一律不执行。
 // 提示词按第 0 条的实测调整过（docs/workshop-notes.md）：人物用短代号；组合规则写成可以照着算的式子。
+// F7：请求的语言是 ja、en 时，提示词仍用中文，只改写说明书的系统提示里的两处：title 那一行写成用这种语言写标题，
+// 再加一行要求 title、opening 和每个 line 用这种语言写。其余内容（理解请求的提示、用户消息、修复时附上的问题、工具说明）都不变。
 
 import { z } from 'zod';
+import type { Lang } from '../src/i18n';
 import { BRIEF_SCHEMA_VERSION, MAX_COLLECTIBLES_PER_PLATFORM, briefSchema } from '../src/game/level/gen/brief';
 import { DENSITIES, DISTRIBUTIONS, GEN_CONFIG, INTENTS, PATROLS, THEMES, TIERS, TIMES_OF_DAY, WEATHERS } from '../src/game/level/gen/config';
 import { describeRoster, type RosterEntry } from './roster';
@@ -29,8 +32,21 @@ export function understandSystemPrompt(): string {
   ].join('\n');
 }
 
-/** 第 2 步“写说明书”的系统提示：说明每个字段和组合规则。 */
-export function briefSystemPrompt(): string {
+/** ja、en 请求加的那一行：要求标题、开场白和台词用这种语言写。 */
+export const BRIEF_LANG_LINES: Readonly<Record<Exclude<Lang, 'zh'>, string>> = {
+  ja: '- title、opening 和 cast 里每个 line 都用日语写。',
+  en: '- title、opening 和 cast 里每个 line 都用英语写。',
+};
+
+/** title 那一行（ja、en 写成用这种语言写标题；en 的长度单位是字符）。 */
+function titleLine(lang: Lang, max: number): string {
+  if (lang === 'ja') return `- title：日语标题，1–${String(max)} 个字。`;
+  if (lang === 'en') return `- title：英语标题，1–${String(max)} 个字符。`;
+  return `- title：中文标题，1–${String(max)} 个字。`;
+}
+
+/** 第 2 步“写说明书”的系统提示：说明每个字段和组合规则。lang 是请求的语言（F7，默认中文）。 */
+export function briefSystemPrompt(lang: Lang = 'zh'): string {
   const b = GEN_CONFIG.brief;
   const m = MAX_COLLECTIBLES_PER_PLATFORM;
   return [
@@ -47,9 +63,10 @@ export function briefSystemPrompt(): string {
     `- patrol：巡逻方式，${PATROLS.join(' / ')}（loop 绕圈，back-and-forth 来回）。`,
     `- intent：难度意向，${INTENTS.join(' / ')}。`,
     `- visual：{ theme: ${THEMES.join(' / ')}, time: ${TIMES_OF_DAY.join(' / ')}, weather: ${WEATHERS.join(' / ')} }。`,
-    `- title：中文标题，1–${String(b.titleMaxLength)} 个字。`,
+    titleLine(lang, b.titleMaxLength),
     `- opening：开场白，最多 ${String(b.openingMaxLength)} 个字，可以是空字符串。`,
     `- cast：出场人物数组，每项 { personId, role, line }。personId 填名册快照里的人物代号（例如 r1），role 只能是这个人物允许的分工（companion 同伴 / guard 守卫），line 是一句台词（最多 ${String(b.lineMaxLength)} 个字）。玩家没提到人物时用空数组。`,
+    ...(lang === 'zh' ? [] : [BRIEF_LANG_LINES[lang]]),
     '组合规则（必须全部满足，写完先自己核对一遍）：',
     `1. distribution 是 elevated 时：platforms ≥ 1，并且 collectibles ≤ platforms × ${String(m)}。先定 collectibles，再把 platforms 设成至少 collectibles ÷ ${String(m)}（向上取整），不超过 ${String(b.platforms.max)}。`,
     '2. cast 里 role 为 guard 的人数 ≤ guards。守卫不需要都由名册人物来当：没有分到人物的守卫用默认外观，所以 guards 可以比 cast 里的守卫多。',

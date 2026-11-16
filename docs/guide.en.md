@@ -28,7 +28,7 @@ The interface comes in English, Japanese and Chinese.
 - During play, press Esc to pause before switching
 - Add `?lang=en`, `?lang=ja` or `?lang=zh` to the URL to open in that language for that visit only. The saved choice is not changed
 - If you have never picked one, the game follows your browser language: Japanese for Japanese, Chinese for Chinese, English for everything else
-- File names, roster names and the titles of saved levels are shown as you entered them. Text written by the model and explanations returned by the workshop service are still in Chinese for now
+- File names, roster names and the titles of saved levels are shown as you entered them. The Level Workshop asks the model to write in the interface language, and the workshop service's explanations follow it too. Saved levels stay in the language they were made in
 
 ## Importing a character
 

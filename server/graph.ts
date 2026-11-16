@@ -11,18 +11,21 @@
 //   6. preview       预览：interrupt 把预览交给浏览器，等确认或放弃。生成和检查都在这之前完成；
 //                    这个节点在 interrupt 之前只做纯计算（恢复时会从节点开头重新执行）。
 //   7. save          定稿：返回当前预览的那一份关卡（不重新抽种子，不调用模型）。关卡由浏览器保存，服务端不存。
+// F7：请求带语言（lang）。发给模型的内容一律中文，只有写说明书的系统提示按语言改两处（prompts.ts）；
+// 给玩家看的说明（程序调整、主要差别、修复记录、回退原因）按请求的语言写：同一个检查用中文（交回模型）和请求的语言各说一遍。
 
 import { HumanMessage, SystemMessage, ToolMessage, type AIMessage, type BaseMessage } from '@langchain/core/messages';
 import { tool } from '@langchain/core/tools';
 import { Annotation, END, START, StateGraph, interrupt, type BaseCheckpointSaver, type LangGraphRunnableConfig } from '@langchain/langgraph';
 import { z } from 'zod';
 import { parseBrief, type Brief } from '../src/game/level/gen/brief';
-import { produceLevel } from '../src/game/level/gen/pipeline';
+import { produceLevel, type ProduceResult } from '../src/game/level/gen/pipeline';
 import { deriveSeed } from '../src/game/level/gen/random';
 import { packageOfProduced, type LevelPackage } from '../src/game/levels/package';
+import { translator, type Lang, type MessageKey, type Translate } from '../src/i18n';
 import { briefDifferences } from '../src/workshop/diff';
 import type { Preview, WireLevel } from '../src/workshop/protocol';
-import { CallTimeout, describeCallError, type CallErrorInfo } from './errors';
+import { CallTimeout, ZH, describeCallError, type CallErrorInfo, type Say } from './errors';
 import { briefJsonSchema, briefSystemPrompt, briefUserPrompt, understandSystemPrompt } from './prompts';
 import type { LlmProvider } from './providers';
 import { aliasText, describeRoster, resolveAliases, roleProblems, type RosterEntry } from './roster';
@@ -34,35 +37,45 @@ export const MAX_TOOL_ROUNDS = 1;
 
 export type FailureCategory = 'json' | 'brief' | 'cannot-fit' | 'too-far' | 'rejected';
 
-export const FAILURE_LABELS: Readonly<Record<FailureCategory, string>> = {
-  json: '输出不是合法的 JSON',
-  brief: '说明书错误',
-  'cannot-fit': '放不下',
-  'too-far': '太远',
-  rejected: '程序缺陷',
+export const FAILURE_KEYS: Readonly<Record<FailureCategory, MessageKey>> = {
+  json: 'graph.failJson',
+  brief: 'graph.failBrief',
+  'cannot-fit': 'graph.failCannotFit',
+  'too-far': 'graph.failTooFar',
+  rejected: 'graph.failRejected',
 };
 
 export interface AttemptLog {
   readonly attempt: number;
   readonly category: FailureCategory;
+  /** 交回模型的原因（中文）。 */
   readonly problems: readonly string[];
+  /** 同样的原因，按请求的语言（F7，给玩家看）。 */
+  readonly shown: readonly string[];
 }
 
 export interface Terminal {
   readonly outcome: 'fallback' | 'error';
+  /** 中文（日志和统计用）。 */
   readonly reason: string;
+  /** 按请求的语言（F7，给玩家看）。 */
+  readonly shown: string;
 }
 
 export type Decision = 'confirm' | 'discard';
 
-/** 模型调用出错（已经归好类，消息里不含提供方的原文和密钥）。 */
+/** 模型调用出错（已经归好类，消息里不含提供方的原文和密钥）。message 是中文；say 按指定的语言说（F7）。 */
 export class ModelCallError extends Error {
   constructor(
     readonly info: CallErrorInfo,
-    readonly step: string,
+    private readonly text: Say,
   ) {
-    super(`${step}：${info.message}`);
+    super(text(ZH));
     this.name = 'ModelCallError';
+  }
+
+  say(tr: Translate): string {
+    return this.text(tr);
   }
 }
 
@@ -71,6 +84,8 @@ export const WorkshopState = Annotation.Root({
   roster: Annotation<RosterEntry[]>(),
   /** 这次生成的根种子：每次布局尝试由它派生（确认时不重新抽）。 */
   seed: Annotation<string>(),
+  /** 请求的语言（F7）：给玩家看的说明按它写。 */
+  lang: Annotation<Lang>({ reducer: (_a, b) => b, default: () => 'zh' }),
   understanding: Annotation<string>({ reducer: (_a, b) => b, default: () => '' }),
   /** 模型已经写了几次说明书。 */
   attempt: Annotation<number>({ reducer: (_a, b) => b, default: () => 0 }),
@@ -79,7 +94,8 @@ export const WorkshopState = Annotation.Root({
   /** 最近一次通过校验的说明书（回退时用来说明和请求的差别）。 */
   brief: Annotation<Brief | null>({ reducer: (_a, b) => b, default: () => null }),
   lastValidBrief: Annotation<Brief | null>({ reducer: (_a, b) => b ?? _a, default: () => null }),
-  failure: Annotation<{ category: FailureCategory; problems: string[] } | null>({ reducer: (_a, b) => b, default: () => null }),
+  /** problems 交回模型（中文），shown 给玩家看（请求的语言）。 */
+  failure: Annotation<{ category: FailureCategory; problems: string[]; shown: string[] } | null>({ reducer: (_a, b) => b, default: () => null }),
   /** 交回模型的原因（修复时用）。 */
   problems: Annotation<string[]>({ reducer: (_a, b) => b, default: () => [] }),
   history: Annotation<AttemptLog[]>({ reducer: (a, b) => [...a, ...b], default: () => [] }),
@@ -139,20 +155,38 @@ export function previewOf(state: WorkshopStateType, provider: LlmProvider): Prev
   const level = state.level;
   if (!level) throw new Error('没有可以预览的关卡');
   const repairs = Math.max(0, state.attempt - 1);
+  const tr = translator(state.lang);
   return {
     level,
     outcome: state.adjustment ? 'program-adjusted' : repairs > 0 ? 'model-repaired' : 'model-first',
     repairs,
     adjustment: state.adjustment,
     differences: state.differences,
-    history: state.history.map(historyLine),
+    history: state.history.map((log) => historyLine(log, tr)),
     provider: provider.name,
     model: provider.model,
   };
 }
 
-export function historyLine(log: AttemptLog): string {
-  return `第 ${String(log.attempt)} 次（${FAILURE_LABELS[log.category]}）：${log.problems.join('；')}`;
+/** 修复记录的一行，按 tr 的语言（用 shown）。 */
+export function historyLine(log: AttemptLog, tr: Translate): string {
+  return tr('graph.historyLine', { attempt: String(log.attempt), label: tr(FAILURE_KEYS[log.category]), problems: log.shown.join(tr('common.semicolon')) });
+}
+
+/** 一次失败的类别和原因，按 tr 的语言。 */
+function failureOf(result: Exclude<ProduceResult, { ok: true }>, tr: Translate, roster: readonly RosterEntry[]): { category: FailureCategory; problems: string[] } {
+  switch (result.kind) {
+    case 'brief':
+      return { category: 'brief', problems: result.problems.map((p) => aliasText(tr('common.pathMessage', { path: p.path, message: p.message }), roster)) };
+    case 'cannot-fit':
+    case 'too-far': {
+      const attempts = String(result.attempts);
+      const tried = result.adjustment ? tr('graph.triedAdjusted', { attempts, change: result.adjustment.change }) : tr('graph.tried', { attempts });
+      return { category: result.kind, problems: [`${result.message}${tried}`] };
+    }
+    case 'rejected':
+      return { category: 'rejected', problems: result.problems.map((p) => p.message) };
+  }
 }
 
 function textOf(message: AIMessage): string {
@@ -176,21 +210,22 @@ async function timed<T>(deps: GraphDeps, config: LangGraphRunnableConfig, stage:
   }
 }
 
-/** 带超时调用一次模型：超时或取消时中止这次调用（fetch 绑定的 signal 一起中止）。 */
-async function callModel<T>(deps: GraphDeps, config: LangGraphRunnableConfig, stage: Stage, step: string, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+/** 带超时调用一次模型：超时或取消时中止这次调用（fetch 绑定的 signal 一起中止）。step 是这一步的说法（出错时的说明用）。 */
+async function callModel<T>(deps: GraphDeps, config: LangGraphRunnableConfig, stage: Stage, step: Say, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
   return timed(deps, config, stage, async () => {
     const parent = config.signal;
     parent?.throwIfAborted();
     const timeout = new AbortController();
     const timer = setTimeout(() => {
-      timeout.abort(new CallTimeout(`${step}（单次模型调用）`, deps.callTimeoutMs));
+      timeout.abort(new CallTimeout((tr) => tr('graph.singleCall', { step: step(tr) }), deps.callTimeoutMs));
     }, deps.callTimeoutMs);
     const signal = parent ? AbortSignal.any([parent, timeout.signal]) : timeout.signal;
     deps.onModelCall?.(threadOf(config));
     try {
       return await work(signal);
     } catch (error) {
-      throw new ModelCallError(describeCallError(error, signal.reason), step);
+      const reason: unknown = signal.reason;
+      throw new ModelCallError(describeCallError(error, reason), (tr) => tr('graph.stepFailed', { step: step(tr), message: describeCallError(error, reason, tr).message }));
     } finally {
       clearTimeout(timer);
     }
@@ -209,7 +244,8 @@ export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpoint
       schema: z.object({ query: z.string().optional().describe('想找的人物（可以不填）') }),
     });
     const messages: BaseMessage[] = [new SystemMessage(understandSystemPrompt()), new HumanMessage(`玩家的一句话：${state.text}`)];
-    let reply = await callModel(deps, config, 'understand', '理解请求', (signal) => deps.provider.chat(messages, [lookupRoster], signal));
+    const step: Say = (tr) => tr('graph.stepUnderstand');
+    let reply = await callModel(deps, config, 'understand', step, (signal) => deps.provider.chat(messages, [lookupRoster], signal));
     for (let round = 0; round < MAX_TOOL_ROUNDS && (reply.tool_calls?.length ?? 0) > 0; round++) {
       const calls = reply.tool_calls ?? [];
       messages.push(reply);
@@ -218,7 +254,7 @@ export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpoint
         const content = call.name === 'lookup_roster' ? describeRoster(roster) : `没有工具 ${call.name}，只能用 lookup_roster`;
         messages.push(new ToolMessage({ content, tool_call_id: call.id ?? `call-${String(i)}` }));
       });
-      reply = await callModel(deps, config, 'understand', '理解请求', (signal) => deps.provider.chat(messages, [lookupRoster], signal));
+      reply = await callModel(deps, config, 'understand', step, (signal) => deps.provider.chat(messages, [lookupRoster], signal));
     }
     const understanding = textOf(reply).trim().slice(0, 800);
     return { understanding };
@@ -227,14 +263,15 @@ export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpoint
   const writeBrief = async (state: WorkshopStateType, config: LangGraphRunnableConfig) => {
     const attempt = state.attempt + 1;
     const messages = [
-      new SystemMessage(briefSystemPrompt()),
+      new SystemMessage(briefSystemPrompt(state.lang)),
       new HumanMessage(
         briefUserPrompt({ text: state.text, understanding: state.understanding, roster: state.roster, previous: state.raw, problems: state.problems }),
       ),
     ];
     // 先记下“开始了一次尝试”：这次调用超时或被取消时，统计里也算上
     deps.onBriefAttempt?.(threadOf(config));
-    const raw = await callModel(deps, config, 'brief', `写说明书（第 ${String(attempt)} 次）`, (signal) => deps.provider.structured(messages, schema, signal));
+    const step: Say = (tr) => tr('graph.stepBrief', { attempt: String(attempt) });
+    const raw = await callModel(deps, config, 'brief', step, (signal) => deps.provider.structured(messages, schema, signal));
     return { attempt, raw };
   };
 
@@ -242,20 +279,28 @@ export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpoint
 
   const validateBrief = (state: WorkshopStateType): Partial<WorkshopStateType> => {
     const done = (update: Partial<WorkshopStateType>) => update;
+    // 请求的语言（给玩家看）；中文时和交回模型的是同一份
+    const shownIn = <T>(zh: T, work: (tr: Translate) => T): T => (state.lang === 'zh' ? zh : work(translator(state.lang)));
     let json: unknown;
     try {
       json = JSON.parse(state.raw ?? '');
     } catch (error) {
-      const why = error instanceof Error ? error.message : String(error);
-      return done({ brief: null, failure: { category: 'json', problems: [`输出不是合法的 JSON（${why.slice(0, 120)}）：只输出说明书 JSON 本身`] } });
+      const why = (error instanceof Error ? error.message : String(error)).slice(0, 120);
+      const say = (tr: Translate) => [tr('graph.badJson', { why })];
+      return done({ brief: null, failure: { category: 'json', problems: say(ZH), shown: shownIn(say(ZH), say) } });
     }
     const resolved = resolveAliases(json, state.roster);
-    const parsed = parseBrief(resolved, new Set(state.roster.map((p) => p.id)));
-    const problems = parsed.ok ? roleProblems(parsed.brief, state.roster) : parsed.problems;
-    if (!parsed.ok || problems.length > 0) {
-      return done({ brief: null, failure: { category: 'brief', problems: problems.map((p) => aliasText(`${p.path}：${p.message}`, state.roster)) } });
+    const ids = new Set(state.roster.map((p) => p.id));
+    const check = (tr: Translate) => {
+      const parsed = parseBrief(resolved, ids, tr);
+      const problems = parsed.ok ? roleProblems(parsed.brief, state.roster, tr) : parsed.problems;
+      return { parsed, problems: problems.map((p) => aliasText(tr('common.pathMessage', { path: p.path, message: p.message }), state.roster)) };
+    };
+    const zh = check(ZH);
+    if (!zh.parsed.ok || zh.problems.length > 0) {
+      return done({ brief: null, failure: { category: 'brief', problems: zh.problems, shown: shownIn(zh.problems, (tr) => check(tr).problems) } });
     }
-    return done({ brief: parsed.brief, lastValidBrief: parsed.brief, failure: null });
+    return done({ brief: zh.parsed.brief, lastValidBrief: zh.parsed.brief, failure: null });
   };
 
   const produce = (state: WorkshopStateType, config: LangGraphRunnableConfig) => timed(deps, config, 'produce', () => produceFrom(state, config));
@@ -264,47 +309,46 @@ export function buildWorkshopGraph(deps: GraphDeps, checkpointer: BaseCheckpoint
     const brief = state.brief;
     if (!brief) throw new Error('没有说明书');
     // 每次（模型写的）说明书用由根种子派生的种子：同一次生成里确定，确认时不重新抽
-    const result = (deps.produce ?? produceLevel)(brief, deriveSeed(state.seed, `brief-${String(state.attempt)}`), { rosterIds: new Set(state.roster.map((p) => p.id)) });
+    const seed = deriveSeed(state.seed, `brief-${String(state.attempt)}`);
+    const rosterIds = new Set(state.roster.map((p) => p.id));
+    const run = (tr: Translate) => (deps.produce ?? produceLevel)(brief, seed, { rosterIds, tr });
+    const tr = state.lang === 'zh' ? ZH : translator(state.lang);
+    // 程序调整的说明和主要差别按请求的语言写（给玩家看，也存进关卡数据）
+    const result = run(tr);
     if (result.ok) {
       const pkg = packageOfProduced(result.level);
       const adjustment = result.level.adjustment;
       return {
         level: wireOf(pkg),
         adjustment: adjustment ? { change: adjustment.change, message: adjustment.message } : null,
-        differences: adjustment ? briefDifferences(adjustment.from, adjustment.to) : [],
+        differences: adjustment ? briefDifferences(adjustment.from, adjustment.to, tr) : [],
         failure: null,
       };
     }
-    switch (result.kind) {
-      case 'brief':
-        return { failure: { category: 'brief' as const, problems: result.problems.map((p) => aliasText(`${p.path}：${p.message}`, state.roster)) } };
-      case 'cannot-fit':
-      case 'too-far': {
-        const tried = result.adjustment ? `（程序已经试过 ${String(result.attempts)} 次布局，并调整过一次：${result.adjustment.change}）` : `（程序已经试过 ${String(result.attempts)} 次布局）`;
-        return { failure: { category: result.kind, problems: [`${result.message}${tried}`] } };
-      }
-      case 'rejected': {
-        const problems = result.problems.map((p) => p.message);
-        deps.onDefect?.(threadOf(config), problems);
-        return { failure: { category: 'rejected' as const, problems } };
-      }
-    }
+    // 失败时交回模型的原因用中文：流水线是确定的，用中文再做一遍得到同样的结果
+    const zhResult = state.lang === 'zh' ? result : run(ZH);
+    if (zhResult.ok) throw new Error('同一份说明书和种子的结果不一致');
+    const zh = failureOf(zhResult, ZH, state.roster);
+    const shown = zhResult.kind === result.kind ? failureOf(result, tr, state.roster).problems : zh.problems;
+    if (zh.category === 'rejected') deps.onDefect?.(threadOf(config), zh.problems);
+    return { failure: { ...zh, shown } };
   };
 
   const handleFailure = (state: WorkshopStateType) => {
     const failure = state.failure;
     if (!failure) throw new Error('没有失败原因');
-    const log: AttemptLog = { attempt: state.attempt, category: failure.category, problems: failure.problems };
+    const log: AttemptLog = { attempt: state.attempt, category: failure.category, problems: failure.problems, shown: failure.shown };
+    const tr = translator(state.lang);
+    const join = (tr: Translate, problems: readonly string[]) => problems.join(tr('common.semicolon'));
     if (failure.category === 'rejected') {
       // 程序缺陷：记录为错误，不交给模型
-      return { history: [log], problems: [], terminal: { outcome: 'error' as const, reason: `程序缺陷：检查器拒绝了生成器做出的布局（${failure.problems.join('；')}）` } };
+      const say = (tr: Translate, problems: readonly string[]) => tr('graph.defect', { problems: join(tr, problems) });
+      return { history: [log], problems: [], terminal: { outcome: 'error' as const, reason: say(ZH, failure.problems), shown: say(tr, failure.shown) } };
     }
     if (state.attempt >= MAX_BRIEF_ATTEMPTS) {
-      return {
-        history: [log],
-        problems: [],
-        terminal: { outcome: 'fallback' as const, reason: `模型写了 ${String(state.attempt)} 次说明书都没有得到可用的关卡；最后一次：${FAILURE_LABELS[failure.category]}（${failure.problems.join('；')}）` },
-      };
+      const say = (tr: Translate, problems: readonly string[]) =>
+        tr('graph.gaveUp', { attempts: String(state.attempt), label: tr(FAILURE_KEYS[failure.category]), problems: join(tr, problems) });
+      return { history: [log], problems: [], terminal: { outcome: 'fallback' as const, reason: say(ZH, failure.problems), shown: say(tr, failure.shown) } };
     }
     // 把能照着改的原因交回模型
     return { history: [log], problems: failure.problems, terminal: null };

@@ -1,0 +1,708 @@
+{
+ "texts": [
+  "你是 3D 小游戏“宝石游乐场”的关卡设计助手。玩家用一句话描述想玩的关卡：在限定时间里收集宝石，躲开巡逻的守卫。\n这一步只做理解：用中文写 2–4 句话，概括玩家想要的地图大小、障碍多少、高台、宝石数量和分布、守卫和巡逻方式、难度、视觉（地面主题、时间、天气）和出场人物。\n玩家提到人物，或者你需要知道有哪些人物可以出场时，调用 lookup_roster 工具查名册快照；只能用快照里的人物。\n不要写坐标，不要写时间限制，不要输出 JSON。",
+  "玩家的一句话：雨夜里的高台，宝石不多",
+  "查名册快照：返回这次可以出场的人物（代号、显示名、允许的分工）。",
+  "你是 3D 小游戏“宝石游乐场”的关卡设计助手。根据玩家的一句话，填写一份关卡说明书（JSON）。程序会按说明书生成布局、检查，并估计时间限制。\n只输出说明书 JSON，字段必须正好是下面这些：\n- schemaVersion：固定写 1。\n- tier：地图档位，small / medium / large：\n  - small：边长 24 m，collectibles 2–5，guards 0–1\n  - medium：边长 36 m，collectibles 3–7，guards 0–2\n  - large：边长 48 m，collectibles 4–9，guards 0–3\n- density：障碍密度，low / mid / high。\n- platforms：高台数量，0–4 的整数。\n- collectibles：收集点（宝石）数量，必须在所选档位的范围内。\n- distribution：收集点分布，scattered / edge / elevated / clustered（scattered 分散，edge 靠边，elevated 只放在高台上，clustered 集中）。\n- guards：守卫数量，在所选档位的范围内。\n- patrol：巡逻方式，loop / back-and-forth（loop 绕圈，back-and-forth 来回）。\n- intent：难度意向，relaxed / normal / tense。\n- visual：{ theme: grass / sand / snow, time: day / dusk / night, weather: clear / fog / rain }。\n- title：中文标题，1–24 个字。\n- opening：开场白，最多 160 个字，可以是空字符串。\n- cast：出场人物数组，每项 { personId, role, line }。personId 填名册快照里的人物代号（例如 r1），role 只能是这个人物允许的分工（companion 同伴 / guard 守卫），line 是一句台词（最多 48 个字）。玩家没提到人物时用空数组。\n组合规则（必须全部满足，写完先自己核对一遍）：\n1. distribution 是 elevated 时：platforms ≥ 1，并且 collectibles ≤ platforms × 2。先定 collectibles，再把 platforms 设成至少 collectibles ÷ 2（向上取整），不超过 4。\n2. cast 里 role 为 guard 的人数 ≤ guards。守卫不需要都由名册人物来当：没有分到人物的守卫用默认外观，所以 guards 可以比 cast 里的守卫多。\n3. cast 里 role 为 companion 的人数 ≤ 3。\n4. 每个人物代号在 cast 里最多出现一次：一个人物只能有一个分工，不能既当同伴又当守卫。玩家点名要谁当什么就只给他这个分工，其他人物不必都出场。\n玩家没说清楚的地方，按“好玩、不太难”自己决定。不要写坐标和时间限制。",
+  "玩家的一句话：雨夜里的高台，宝石不多\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n名册快照是空的：这一关没有出场人物，cast 必须是空数组。\n\n现在输出说明书 JSON。",
+  "玩家的一句话：让小兵当守卫，星璇跟着我",
+  "",
+  "- 代号 r1：小兵；允许的分工：companion（同伴）、guard（守卫）\n- 代号 r2：星璇；允许的分工：companion（同伴）",
+  "玩家的一句话：让小兵当守卫，星璇跟着我\n\n对请求的理解：中地图，小兵当守卫，星璇当同伴。\n\n名册快照：\n- 代号 r1：小兵；允许的分工：companion（同伴）、guard（守卫）\n- 代号 r2：星璇；允许的分工：companion（同伴）\n\n现在输出说明书 JSON。",
+  "玩家的一句话：星璇来当守卫",
+  "玩家的一句话：星璇来当守卫\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n- 代号 r1：小兵；允许的分工：companion（同伴）、guard（守卫）\n- 代号 r2：星璇；允许的分工：companion（同伴）\n\n现在输出说明书 JSON。",
+  "玩家的一句话：星璇来当守卫\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n- 代号 r1：小兵；允许的分工：companion（同伴）、guard（守卫）\n- 代号 r2：星璇；允许的分工：companion（同伴）\n\n上一次写的说明书：{\"schemaVersion\": 1, \"tier\": \"medium\",\n\n它没有通过，原因如下，请照着改，其余尽量保持不变：\n- 输出不是合法的 JSON（Expected double-quoted property name in JSON at position 38 (line 1 column 39)）：只输出说明书 JSON 本身\n\n现在输出说明书 JSON。",
+  "玩家的一句话：星璇来当守卫\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n- 代号 r1：小兵；允许的分工：companion（同伴）、guard（守卫）\n- 代号 r2：星璇；允许的分工：companion（同伴）\n\n上一次写的说明书：{\"schemaVersion\":1,\"tier\":\"medium\",\"density\":\"low\",\"platforms\":2,\"collectibles\":4,\"distribution\":\"elevated\",\"guards\":1,\"patrol\":\"loop\",\"intent\":\"normal\",\"visual\":{\"theme\":\"grass\",\"time\":\"night\",\"weather\":\"rain\"},\"title\":\"雨夜高台\",\"opening\":\"宝石都在高台上。\",\"cast\":[{\"personId\":\"r2\",\"role\":\"guard\",\"line\":\"站住！\"}]}\n\n它没有通过，原因如下，请照着改，其余尽量保持不变：\n- cast.0.role：人物 r2（星璇）不能当守卫，允许的分工是：同伴\n\n现在输出说明书 JSON。",
+  "玩家的一句话：高台上全是宝石",
+  "玩家的一句话：高台上全是宝石\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n- 代号 r1：小兵；允许的分工：companion（同伴）、guard（守卫）\n- 代号 r2：星璇；允许的分工：companion（同伴）\n\n现在输出说明书 JSON。",
+  "玩家的一句话：高台上全是宝石\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n- 代号 r1：小兵；允许的分工：companion（同伴）、guard（守卫）\n- 代号 r2：星璇；允许的分工：companion（同伴）\n\n上一次写的说明书：{\"schemaVersion\":1,\"tier\":\"medium\",\"density\":\"low\",\"platforms\":9,\"collectibles\":4,\"distribution\":\"elevated\",\"guards\":1,\"patrol\":\"loop\",\"intent\":\"normal\",\"visual\":{\"theme\":\"grass\",\"time\":\"night\",\"weather\":\"rain\"},\"title\":\"雨夜高台\",\"opening\":\"宝石都在高台上。\",\"cast\":[]}\n\n它没有通过，原因如下，请照着改，其余尽量保持不变：\n- platforms：Too big: expected number to be <=4\n\n现在输出说明书 JSON。",
+  "玩家的一句话：高台上全是宝石\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n- 代号 r1：小兵；允许的分工：companion（同伴）、guard（守卫）\n- 代号 r2：星璇；允许的分工：companion（同伴）\n\n上一次写的说明书：{\"schemaVersion\":1,\"tier\":\"medium\",\"density\":\"low\",\"platforms\":0,\"collectibles\":9,\"distribution\":\"elevated\",\"guards\":9,\"patrol\":\"loop\",\"intent\":\"normal\",\"visual\":{\"theme\":\"grass\",\"time\":\"night\",\"weather\":\"rain\"},\"title\":\"雨夜高台\",\"opening\":\"宝石都在高台上。\",\"cast\":[]}\n\n它没有通过，原因如下，请照着改，其余尽量保持不变：\n- collectibles：medium 地图的收集点数量要在 3–7 之间，现在是 9：改成这个范围里的数，或换一个地图档位\n- guards：medium 地图最多 2 个守卫，现在是 9：减少守卫，或换成更大的地图档位\n- distribution：收集点分布是 elevated（只放在高台上），但高台数量是 0：把高台数量改成 1–4，或换一种分布\n\n现在输出说明书 JSON。",
+  "玩家的一句话：小地图，宝石越多越好，障碍也要多",
+  "玩家的一句话：小地图，宝石越多越好，障碍也要多\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n名册快照是空的：这一关没有出场人物，cast 必须是空数组。\n\n现在输出说明书 JSON。",
+  "玩家的一句话：小地图，宝石越多越好",
+  "玩家的一句话：小地图，宝石越多越好\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n名册快照是空的：这一关没有出场人物，cast 必须是空数组。\n\n现在输出说明书 JSON。",
+  "玩家的一句话：小地图，宝石越多越好\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n名册快照是空的：这一关没有出场人物，cast 必须是空数组。\n\n上一次写的说明书：{\"schemaVersion\":1,\"tier\":\"small\",\"density\":\"high\",\"platforms\":2,\"collectibles\":5,\"distribution\":\"scattered\",\"guards\":1,\"patrol\":\"loop\",\"intent\":\"normal\",\"visual\":{\"theme\":\"grass\",\"time\":\"night\",\"weather\":\"rain\"},\"title\":\"雨夜高台\",\"opening\":\"宝石都在高台上。\",\"cast\":[]}\n\n它没有通过，原因如下，请照着改，其余尽量保持不变：\n- 放不下：small 地图（24 m）试了 0 次都放不下这么多收集点、高台、守卫和障碍，可以减少数量或换成更大的地图档位（程序已经试过 0 次布局，并调整过一次：障碍密度 high → mid）\n\n现在输出说明书 JSON。",
+  "玩家的一句话：普通的一关",
+  "玩家的一句话：普通的一关\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n名册快照是空的：这一关没有出场人物，cast 必须是空数组。\n\n现在输出说明书 JSON。",
+  "玩家的一句话：雨夜",
+  "玩家的一句话：雨夜\n\n对请求的理解：按玩家的一句话做一关：地图大小、宝石和守卫都按描述来。\n\n名册快照：\n名册快照是空的：这一关没有出场人物，cast 必须是空数组。\n\n现在输出说明书 JSON。"
+ ],
+ "scenarios": {
+  "first": {
+   "calls": [
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 1
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 4
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    }
+   ],
+   "shown": {
+    "status": "preview",
+    "outcome": "model-first",
+    "repairs": 0,
+    "title": "高台寻宝",
+    "opening": "守卫在附近巡逻，绕开他们，收集所有宝石。",
+    "lines": [],
+    "adjustment": null,
+    "levelAdjustment": null,
+    "differences": [],
+    "history": []
+   },
+   "statsReason": null
+  },
+  "roster": {
+   "calls": [
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 5
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    },
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 5
+      },
+      {
+       "type": "ai",
+       "content": 6,
+       "toolCalls": [
+        {
+         "id": "call-1",
+         "name": "lookup_roster",
+         "args": {}
+        }
+       ]
+      },
+      {
+       "type": "tool",
+       "content": 7,
+       "toolCallId": "call-1"
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 8
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    }
+   ],
+   "shown": {
+    "status": "preview",
+    "outcome": "model-first",
+    "repairs": 0,
+    "title": "雨夜高台",
+    "opening": "宝石都在高台上。",
+    "lines": [
+     "别想溜过去。",
+     "我跟着你。"
+    ],
+    "adjustment": null,
+    "levelAdjustment": null,
+    "differences": [],
+    "history": []
+   },
+   "statsReason": null
+  },
+  "repair": {
+   "calls": [
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 9
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 10
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 11
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 12
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    }
+   ],
+   "shown": {
+    "status": "preview",
+    "outcome": "model-repaired",
+    "repairs": 2,
+    "title": "雨夜高台",
+    "opening": "宝石都在高台上。",
+    "lines": [
+     "我跟着你。"
+    ],
+    "adjustment": null,
+    "levelAdjustment": null,
+    "differences": [],
+    "history": [
+     "第 1 次（输出不是合法的 JSON）：输出不是合法的 JSON（Expected double-quoted property name in JSON at position 38 (line 1 column 39)）：只输出说明书 JSON 本身",
+     "第 2 次（说明书错误）：cast.0.role：人物 r2（星璇）不能当守卫，允许的分工是：同伴"
+    ]
+   },
+   "statsReason": null
+  },
+  "fallback-brief": {
+   "calls": [
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 13
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 14
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 15
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 16
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    }
+   ],
+   "shown": {
+    "status": "fallback",
+    "outcome": "fallback",
+    "reason": "模型写了 3 次说明书都没有得到可用的关卡；最后一次：说明书错误（cast.0.personId：出场人物 r9 不在名册里：从名册里选人物，或去掉这一项；cast.2.personId：人物 r1 在出场人物里出现了不止一次：每个人物只能出场一次）",
+    "history": [
+     "第 1 次（说明书错误）：platforms：Too big: expected number to be <=4",
+     "第 2 次（说明书错误）：collectibles：medium 地图的收集点数量要在 3–7 之间，现在是 9：改成这个范围里的数，或换一个地图档位；guards：medium 地图最多 2 个守卫，现在是 9：减少守卫，或换成更大的地图档位；distribution：收集点分布是 elevated（只放在高台上），但高台数量是 0：把高台数量改成 1–4，或换一种分布",
+     "第 3 次（说明书错误）：cast.0.personId：出场人物 r9 不在名册里：从名册里选人物，或去掉这一项；cast.2.personId：人物 r1 在出场人物里出现了不止一次：每个人物只能出场一次"
+    ],
+    "differences": [
+     "模型没有写出可用的说明书，回退关卡“晨光草地”不是按你的描述做的"
+    ],
+    "fallbackId": "gen-1"
+   },
+   "statsReason": "模型写了 3 次说明书都没有得到可用的关卡；最后一次：说明书错误（cast.0.personId：出场人物 r9 不在名册里：从名册里选人物，或去掉这一项；cast.2.personId：人物 r1 在出场人物里出现了不止一次：每个人物只能出场一次）"
+  },
+  "adjusted": {
+   "calls": [
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 17
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 18
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    }
+   ],
+   "shown": {
+    "status": "preview",
+    "outcome": "program-adjusted",
+    "repairs": 0,
+    "title": "雨夜高台",
+    "opening": "宝石都在高台上。",
+    "lines": [],
+    "adjustment": {
+     "change": "障碍密度 high → mid",
+     "message": "放不下：small 地图（24 m）试了 8 次都放不下这么多收集点、高台、守卫和障碍，可以减少数量或换成更大的地图档位"
+    },
+    "levelAdjustment": {
+     "reason": "cannot-fit",
+     "change": "障碍密度 high → mid",
+     "message": "放不下：small 地图（24 m）试了 8 次都放不下这么多收集点、高台、守卫和障碍，可以减少数量或换成更大的地图档位"
+    },
+    "differences": [
+     "障碍：多 → 中"
+    ],
+    "history": []
+   },
+   "statsReason": null
+  },
+  "fallback-fit": {
+   "calls": [
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 19
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 20
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 21
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 21
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    }
+   ],
+   "shown": {
+    "status": "fallback",
+    "outcome": "fallback",
+    "reason": "模型写了 3 次说明书都没有得到可用的关卡；最后一次：放不下（放不下：small 地图（24 m）试了 0 次都放不下这么多收集点、高台、守卫和障碍，可以减少数量或换成更大的地图档位（程序已经试过 0 次布局，并调整过一次：收集点数 4 → 2（档位范围的下限）））",
+    "history": [
+     "第 1 次（放不下）：放不下：small 地图（24 m）试了 0 次都放不下这么多收集点、高台、守卫和障碍，可以减少数量或换成更大的地图档位（程序已经试过 0 次布局，并调整过一次：障碍密度 high → mid）",
+     "第 2 次（放不下）：放不下：small 地图（24 m）试了 0 次都放不下这么多收集点、高台、守卫和障碍，可以减少数量或换成更大的地图档位（程序已经试过 0 次布局，并调整过一次：障碍密度 high → mid）",
+     "第 3 次（放不下）：放不下：small 地图（24 m）试了 0 次都放不下这么多收集点、高台、守卫和障碍，可以减少数量或换成更大的地图档位（程序已经试过 0 次布局，并调整过一次：收集点数 4 → 2（档位范围的下限））"
+    ],
+    "differences": [
+     "不是按你的描述生成的关卡，换成了内置的“晨光草地”",
+     "高台：2 个 → 1 个",
+     "宝石：4 个 → 3 个",
+     "宝石分布：只放在高台上 → 分散",
+     "巡逻：绕圈 → 来回",
+     "难度：普通 → 轻松",
+     "视觉：草地 · 夜晚 · 雨 → 草地 · 白天 · 晴"
+    ],
+    "fallbackId": "gen-1"
+   },
+   "statsReason": "模型写了 3 次说明书都没有得到可用的关卡；最后一次：放不下（放不下：small 地图（24 m）试了 0 次都放不下这么多收集点、高台、守卫和障碍，可以减少数量或换成更大的地图档位（程序已经试过 0 次布局，并调整过一次：收集点数 4 → 2（档位范围的下限）））"
+  },
+  "defect": {
+   "calls": [
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 22
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 23
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    }
+   ],
+   "shown": {
+    "status": "fallback",
+    "outcome": "error",
+    "reason": "程序缺陷：检查器拒绝了生成器做出的布局（target：收集目标数 8 大于收集点数量 7；收集点只有 7 个，少于目标数 8；布局与说明书不符：收集点有 7 个，说明书要 8 个；从出生点走不到的收集点：（能走到 7 个，目标 8 个））",
+    "history": [
+     "第 1 次（程序缺陷）：target：收集目标数 8 大于收集点数量 7；收集点只有 7 个，少于目标数 8；布局与说明书不符：收集点有 7 个，说明书要 8 个；从出生点走不到的收集点：（能走到 7 个，目标 8 个）"
+    ],
+    "differences": [
+     "不是按你的描述生成的关卡，换成了内置的“晨光草地”",
+     "地图：大地图 → 小地图",
+     "障碍：多 → 少",
+     "高台：3 个 → 1 个",
+     "宝石：8 个 → 3 个",
+     "守卫：2 个 → 1 个",
+     "巡逻：绕圈 → 来回"
+    ],
+    "fallbackId": "gen-1"
+   },
+   "statsReason": "程序缺陷：检查器拒绝了生成器做出的布局（target：收集目标数 8 大于收集点数量 7；收集点只有 7 个，少于目标数 8；布局与说明书不符：收集点有 7 个，说明书要 8 个；从出生点走不到的收集点：（能走到 7 个，目标 8 个））"
+  },
+  "call-timeout": {
+   "calls": [
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 24
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    },
+    {
+     "step": "structured",
+     "messages": [
+      {
+       "type": "system",
+       "content": 3
+      },
+      {
+       "type": "human",
+       "content": 25
+      }
+     ],
+     "schema": "a3f842514a9dbce31cada5c88cd395d9f21c90924b409b16f75d44fb3c08b95a"
+    }
+   ],
+   "shown": {
+    "status": "fallback",
+    "outcome": "error",
+    "reason": "写说明书（第 1 次）：写说明书（第 1 次）（单次模型调用）超时（1 秒）",
+    "history": [],
+    "differences": [
+     "模型没有写出可用的说明书，回退关卡“晨光草地”不是按你的描述做的"
+    ],
+    "fallbackId": "gen-1"
+   },
+   "statsReason": "写说明书（第 1 次）：写说明书（第 1 次）（单次模型调用）超时（1 秒）"
+  },
+  "request-timeout": {
+   "calls": [
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 24
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    }
+   ],
+   "shown": {
+    "status": "fallback",
+    "outcome": "error",
+    "reason": "整个生成请求超时（1 秒）",
+    "history": [],
+    "differences": [
+     "模型没有写出可用的说明书，回退关卡“晨光草地”不是按你的描述做的"
+    ],
+    "fallbackId": "gen-1"
+   },
+   "statsReason": "整个生成请求超时（1 秒）"
+  },
+  "model-error": {
+   "calls": [
+    {
+     "step": "chat",
+     "messages": [
+      {
+       "type": "system",
+       "content": 0
+      },
+      {
+       "type": "human",
+       "content": 24
+      }
+     ],
+     "tools": [
+      {
+       "name": "lookup_roster",
+       "description": 2,
+       "schema": "9561464b9dddff22158af4dd58b1a87a0f293f469523ce1ebd92c4cabafef1b5"
+      }
+     ]
+    }
+   ],
+   "shown": {
+    "status": "fallback",
+    "outcome": "error",
+    "reason": "理解请求：模型调用出错",
+    "history": [],
+    "differences": [
+     "模型没有写出可用的说明书，回退关卡“晨光草地”不是按你的描述做的"
+    ],
+    "fallbackId": "gen-1"
+   },
+   "statsReason": "理解请求：模型调用出错"
+  },
+  "prepare-failed": {
+   "calls": [],
+   "shown": {
+    "status": "fallback",
+    "outcome": "error",
+    "reason": "加载模型失败：连不上模型服务",
+    "history": [],
+    "differences": [
+     "模型没有写出可用的说明书，回退关卡“晨光草地”不是按你的描述做的"
+    ],
+    "fallbackId": "gen-1"
+   },
+   "statsReason": "加载模型失败：连不上模型服务"
+  },
+  "prepare-timeout": {
+   "calls": [],
+   "shown": {
+    "status": "fallback",
+    "outcome": "error",
+    "reason": "加载模型超时（1 秒）",
+    "history": [],
+    "differences": [
+     "模型没有写出可用的说明书，回退关卡“晨光草地”不是按你的描述做的"
+    ],
+    "fallbackId": "gen-1"
+   },
+   "statsReason": "加载模型超时（1 秒）"
+  }
+ },
+ "direct": {
+  "defaultBriefs": [
+   {
+    "title": "雪地小镇",
+    "opening": "这片地方的路有些曲折，看清方向再出发。"
+   },
+   {
+    "title": "箱子迷宫",
+    "opening": "这片地方的路有些曲折，看清方向再出发。"
+   },
+   {
+    "title": "石阶之间",
+    "opening": "守卫在附近巡逻，绕开他们，收集所有宝石。"
+   }
+  ],
+  "tooFar": "太远：路线时间约 10000.0 秒，按最紧的难度系数 1.5 加余量 20 秒需要约 15020 秒，超过 small 地图的时间上限 120 秒：减少收集点、降低障碍密度，或换成更大的地图档位",
+  "adjustCollectibles": "收集点数 6 → 3（档位范围的下限）",
+  "adjustDensity": "障碍密度 high → mid"
+ }
+}

@@ -202,7 +202,7 @@ export class WorkshopPanel {
     this.unavailable.hidden = !showUnavailable;
     if (showUnavailable) {
       const list = el('ul', { className: 'mw-notices' });
-      // 原因可能是服务端健康检查的原文（没有错误码），原样显示
+      // 原因是服务端健康检查写的（F7 起按界面的语言），原样显示
       list.append(richNotice('warning', tNodes('workshop.unavailableNotice', { reason: rawSpan(usable.reason) })));
       this.unavailable.replaceChildren(
         list,
@@ -274,7 +274,7 @@ export class WorkshopPanel {
   private fallbackParts(fallback: Fallback, title: string): HTMLElement[] {
     const list = el('ul', { className: 'mw-notices' });
     list.append(
-      // 回退的原因和差别是服务端写的原文（没有错误码），原样显示
+      // 回退的原因和差别是服务端按请求的语言写的（F7），可能带名册里的名字，原样显示
       richNotice(fallback.outcome === 'error' ? 'error' : 'warning', tNodes('workshop.fellBack', { title, reason: rawSpan(fallback.reason) })),
       ...fallback.differences.map((d) => rawNotice('info', d)),
     );
@@ -287,7 +287,7 @@ export class WorkshopPanel {
     const box = el('details', { className: 'ws-history' });
     box.append(el('summary', { text: t('workshop.historyTitle', { count: String(history.length) }) }));
     const list = el('ol');
-    // 修复记录是服务端写的原文，原样显示
+    // 修复记录是服务端按请求的语言写的（F7），可能带名册里的名字，原样显示
     for (const h of history) list.append(markRaw(el('li', { text: h })));
     box.append(list);
     return box;
@@ -297,7 +297,7 @@ export class WorkshopPanel {
     const { preview, pkg } = view;
     const brief = pkg.brief;
     const head = el('div', { className: 'ws-preview-head' });
-    // 标题、开场白、台词是模型写的，原样显示（F7 处理）
+    // 标题、开场白、台词是模型写的（F7 起提示词要求用界面的语言），原样显示
     head.append(markRaw(el('strong', { className: 'ws-title', text: pkg.title })));
     const tags = el('div', { className: 'level-tags' });
     tags.append(
@@ -341,7 +341,7 @@ export class WorkshopPanel {
     }
     if (preview.adjustment) {
       const list = el('ul', { className: 'mw-notices' });
-      // 调整的说明和差别是服务端写的原文，原样显示
+      // 调整的说明和差别是服务端按请求的语言写的（F7），原样显示
       list.append(
         richNotice('warning', tNodes('workshop.adjusted', { change: rawSpan(preview.adjustment.change), message: rawSpan(preview.adjustment.message) })),
         ...preview.differences.map((d) => richNotice('info', tNodes('workshop.mainChange', { change: rawSpan(d) }))),

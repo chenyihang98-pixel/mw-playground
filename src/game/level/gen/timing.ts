@@ -7,7 +7,7 @@
 import { SPEC } from '../../spec';
 import type { CheckReport } from './checker';
 import { GEN_CONFIG, INTENTS, type Intent, type Tier } from './config';
-import { t } from '../../../i18n';
+import { t, type Translate } from '../../../i18n';
 
 type GenConfig = typeof GEN_CONFIG;
 
@@ -58,7 +58,7 @@ export function tightestFactor(config: GenConfig = GEN_CONFIG): number {
 }
 
 /** 按路线时间决定时间限制，或判定“太远”。config 可以替换（测试用；已保存的关卡不再调用这里）。 */
-export function decideTimeLimit(routeSeconds: number, intent: Intent, tier: Tier, config: GenConfig = GEN_CONFIG): TimeDecision {
+export function decideTimeLimit(routeSeconds: number, intent: Intent, tier: Tier, config: GenConfig = GEN_CONFIG, tr: Translate = t): TimeDecision {
   const bounds = config.tiers[tier].timeLimit;
   const margin = config.timing.margin;
   const needed = routeSeconds * tightestFactor(config) + margin;
@@ -69,7 +69,7 @@ export function decideTimeLimit(routeSeconds: number, intent: Intent, tier: Tier
       routeSeconds,
       needed,
       message:
-        t('timing.tooFar', { route: routeSeconds.toFixed(1), factor: String(tightestFactor(config)), margin: String(margin), needed: needed.toFixed(0), tier, max: String(bounds.max) }),
+        tr('timing.tooFar', { route: routeSeconds.toFixed(1), factor: String(tightestFactor(config)), margin: String(margin), needed: needed.toFixed(0), tier, max: String(bounds.max) }),
     };
   }
   const raw = routeSeconds * config.timing.intent[intent] + margin;

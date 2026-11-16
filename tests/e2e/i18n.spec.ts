@@ -1,5 +1,7 @@
 // 界面语言（F6）：浏览器语言固定 zh-CN，在语言选择里切换。ja、en 完整流程每个画面查文字和版面并截图到 test-results/i18n/
 // （跳过 data-i18n-raw）；切换后数据都在；写入没做完时切换；空的 navigator.languages。夹具在系统临时目录，测试后删除。
+// F7：完整流程里工坊预览和开始面板的标题、开场白是这种语言的假模型输出；程序调整和回退的说明按界面的语言
+// （测试里另起一个按预设回复的工坊服务，把 /api/workshop 转过去，由测试关闭）。
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,12 +10,21 @@ import { expect, test, type Page } from '@playwright/test';
 import { buildFixture } from '../../src/asset/fixtures';
 import type { MwGameTestHooks } from '../../src/dev/gameTestHooks';
 import type { GameAppSnapshot } from '../../src/game/appTypes';
-import { messagesOf, type MessageKey } from '../../src/i18n';
+import { messagesOf, translate, type MessageKey } from '../../src/i18n';
 import { LANG_STORAGE_KEY, LANG_TAGS, type Lang } from '../../src/i18n/lang';
+import { loadConfig } from '../../server/config';
+import { Redactor } from '../../server/errors';
+import { FakeProvider, defaultBrief, type FakeScript } from '../../server/fakeProvider';
+import { createWorkshopServer, listen } from '../../server/http';
+import { createLogger } from '../../server/log';
+import { MemoryStats } from '../../server/stats';
+import { Workshop } from '../../server/workshop';
+import { CROWDED, adjustSeed } from '../helpers/workshopTexts';
 
 type Hooks = MwGameTestHooks<GameAppSnapshot>;
 
 const SHOTS = join(process.cwd(), 'test-results', 'i18n');
+const CJK = /[぀-ヿ㐀-鿿豈-﫿]/;
 let dir: string;
 const files: Record<string, string> = {};
 
@@ -206,12 +217,18 @@ for (const lang of ['ja', 'en'] as const) {
     await screen(page, lang, ++n, 'levels', forbidden);
 
     // 假模型每次调用前等 800 毫秒
-    await page.getByRole('textbox', { name: m['workshop.inputLabel'] }).fill(lang === 'en' ? 'A rainy night with gems on the platforms' : '雨の夜、宝石は高台の上');
+    const request = lang === 'en' ? 'A rainy night with gems on the platforms' : '雨の夜、宝石は高台の上';
+    // F7：假模型按请求的语言写标题和开场白
+    const fake = defaultBrief(request, lang);
+    if (lang === 'en') expect(`${fake.title}${fake.opening}`).not.toMatch(CJK);
+    await page.getByRole('textbox', { name: m['workshop.inputLabel'] }).fill(request);
     await page.getByRole('button', { name: m['workshop.generate'], exact: true }).click();
     await expect.poll(async () => (await read(page)).levels.workshop.view).toBe('running');
     await expect(page.getByText(m['workshop.runningHint'])).toBeVisible();
     await screen(page, lang, ++n, 'workshop-running', forbidden);
     await expect.poll(async () => (await read(page)).levels.workshop.view, { timeout: 15_000 }).toBe('preview');
+    await expect(page.locator('.ws-result .ws-title')).toHaveText(fake.title);
+    await expect(page.locator('.ws-result .random-opening')).toHaveText(fake.opening ? [fake.opening] : []);
     await screen(page, lang, ++n, 'workshop-preview', forbidden);
 
     const hash = (await read(page)).levels.workshop.previewHash;
@@ -220,6 +237,8 @@ for (const lang of ['ja', 'en'] as const) {
     await expect.poll(async () => (await read(page)).overlay).toBe('start');
     await expect.poll(async () => (await read(page)).ui.panel).toBeNull();
     expect((await read(page)).level.sourceLabel).toBe(m['source.model']);
+    await expect(page.getByRole('dialog').getByRole('heading', { level: 1 })).toHaveText(fake.title);
+    await expect(page.locator('#intro-opening')).toHaveText(fake.opening ? [fake.opening] : []);
     await screen(page, lang, ++n, 'start-panel', forbidden);
 
     await page.getByRole('button', { name: m['common.start'], exact: true }).filter({ visible: true }).click();
@@ -421,3 +440,76 @@ test('navigator.languages 为空时入口按 en，不看 navigator.language', as
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('#mw-home').getByRole('button', { name: messagesOf('en')['common.start'], exact: true })).toBeVisible();
 });
+
+/** 起一个按预设回复的工坊服务（只监听 127.0.0.1 的随机端口），把页面的 /api/workshop 转过去。由测试关闭。 */
+async function scriptedService(page: Page, script: FakeScript, seed: string) {
+  const loaded = loadConfig({ MW_LLM_PROVIDER: 'fake', MW_WORKSHOP_PORT: '0' });
+  if (!loaded.ok) throw new Error(loaded.problems.join('；'));
+  const log = createLogger(new Redactor([]), () => undefined);
+  const workshop = new Workshop({ config: loaded.config, provider: new FakeProvider(script), stats: new MemoryStats(), log, newSeed: () => seed });
+  const server = createWorkshopServer(workshop, { maxBodyBytes: loaded.config.limits.maxBodyBytes }, log);
+  const port = await listen(server, 0);
+  await page.route('**/api/workshop/**', async (route) => {
+    const url = new URL(route.request().url());
+    url.host = `127.0.0.1:${String(port)}`;
+    await route.fulfill({ response: await route.fetch({ url: url.toString() }) });
+  });
+  return {
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => {
+          resolve();
+        });
+      }),
+  };
+}
+
+for (const lang of ['ja', 'en'] as const) {
+  test(`${lang}：程序调整和回退时工坊的说明按界面的语言写（F7）`, async ({ page }) => {
+    const m = messagesOf(lang);
+    const tr = (key: MessageKey, params?: Record<string, string>) => translate(lang, key, params);
+    const bad = { kind: 'json' as const, value: { ...CROWDED, distribution: 'elevated', platforms: 0 } };
+    const service = await scriptedService(page, { briefs: [{ kind: 'json', value: CROWDED }, bad, bad, bad] }, adjustSeed());
+    try {
+      await page.goto(`/?lang=${lang}`);
+      await ready(page);
+      await page.getByRole('button', { name: m['levels.choose'] }).filter({ visible: true }).first().click();
+      await expect.poll(async () => (await read(page)).levels.workshop.health.kind, { timeout: 10_000 }).toBe('ok');
+      const raw = () => page.locator('.ws-result [data-i18n-raw]').allInnerTexts();
+
+      // 程序调整：放不下，障碍密度降一档
+      await page.getByRole('textbox', { name: m['workshop.inputLabel'] }).fill(lang === 'en' ? 'A tiny map packed with gems' : '小さなマップに宝石をたくさん');
+      await page.getByRole('button', { name: m['workshop.generate'], exact: true }).click();
+      await expect.poll(async () => (await read(page)).levels.workshop.view, { timeout: 15_000 }).toBe('preview');
+      const message = tr('pipeline.cannotFit', { tier: 'small', size: '24', attempts: '8' });
+      await expect(page.locator('.ws-result')).toContainText(tr('workshop.adjusted', { change: tr('pipeline.adjustDensity', { from: 'high', to: 'mid' }), message }));
+      await expect(page.locator('.ws-result')).toContainText(tr('workshop.mainChange', { change: tr('diff.change', { label: tr('diff.obstacles'), from: tr('density.high'), to: tr('density.mid') }) }));
+      const adjusted = (await raw()).filter((t) => t !== CROWDED.title && t !== CROWDED.opening);
+      expect(adjusted.length).toBeGreaterThanOrEqual(3);
+      if (lang === 'en') expect(adjusted.filter((t) => CJK.test(t))).toEqual([]);
+      await page.screenshot({ path: join(SHOTS, `${lang}-f7-adjusted.png`) });
+      await page.getByRole('button', { name: m['workshop.discardLabel'] }).click();
+      await expect.poll(async () => (await read(page)).levels.workshop.view).not.toBe('preview');
+
+      // 回退：模型写了 3 次都不合规
+      await page.getByRole('button', { name: m['workshop.generate'], exact: true }).click();
+      await expect.poll(async () => (await read(page)).levels.workshop.view, { timeout: 15_000 }).toBe('fallback');
+      const problem = tr('common.pathMessage', { path: 'distribution', message: tr('brief.elevatedNoPlatforms') });
+      const reason = tr('graph.gaveUp', { attempts: '3', label: tr('graph.failBrief'), problems: problem });
+      const title = tr('levelName.gen1');
+      await expect(page.locator('.ws-result')).toContainText(tr('workshop.fellBack', { title, reason }));
+      await expect(page.locator('.ws-result')).toContainText(tr('diff.noBrief', { title }));
+      await page.locator('.ws-history summary').click();
+      await expect(page.locator('.ws-history li')).toHaveText([1, 2, 3].map((i) => tr('graph.historyLine', { attempt: String(i), label: tr('graph.failBrief'), problems: problem })));
+      const fallback = await raw();
+      expect(fallback.length).toBeGreaterThanOrEqual(5);
+      if (lang === 'en') expect(fallback.filter((t) => CJK.test(t))).toEqual([]);
+      else expect(fallback.filter((t) => forbiddenForJa().some((f) => t.includes(f)))).toEqual([]);
+      await page.screenshot({ path: join(SHOTS, `${lang}-f7-fallback.png`) });
+    } finally {
+      await page.unroute('**/api/workshop/**');
+      await service.close();
+    }
+  });
+}

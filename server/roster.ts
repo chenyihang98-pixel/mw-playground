@@ -4,7 +4,9 @@
 // 模型只能分配快照里的人物、只能用快照允许的分工；这两条在说明书校验时检查。
 
 import type { Brief, BriefProblem } from '../src/game/level/gen/brief';
+import type { MessageKey, Translate } from '../src/i18n';
 import type { PersonRole, RosterPersonSnapshot } from '../src/workshop/protocol';
+import { ZH } from './errors';
 
 export interface RosterEntry {
   readonly alias: string;
@@ -18,6 +20,7 @@ export function rosterEntries(snapshot: readonly RosterPersonSnapshot[]): Roster
 }
 
 const ROLE_WORDS: Readonly<Record<PersonRole, string>> = { companion: '同伴', guard: '守卫' };
+const ROLE_KEYS: Readonly<Record<PersonRole, MessageKey>> = { companion: 'role.companion', guard: 'role.guard' };
 
 /** 名册快照的文字说明（工具的返回值，也放进写说明书的提示里）。 */
 export function describeRoster(entries: readonly RosterEntry[]): string {
@@ -41,15 +44,15 @@ export function resolveAliases(raw: unknown, entries: readonly RosterEntry[]): u
   return { ...(raw as Record<string, unknown>), cast };
 }
 
-/** 出场人物的分工必须是快照允许的。 */
-export function roleProblems(brief: Brief, entries: readonly RosterEntry[]): BriefProblem[] {
+/** 出场人物的分工必须是快照允许的。tr：说明用的语言（F7，默认中文）。 */
+export function roleProblems(brief: Brief, entries: readonly RosterEntry[], tr: Translate = ZH): BriefProblem[] {
   const problems: BriefProblem[] = [];
   brief.cast.forEach((c, i) => {
     const person = entries.find((e) => e.id === c.personId);
     if (person && !person.roles.includes(c.role)) {
       problems.push({
         path: `cast.${String(i)}.role`,
-        message: `人物 ${person.id}（${person.name}）不能当${ROLE_WORDS[c.role]}，允许的分工是：${person.roles.map((r) => ROLE_WORDS[r]).join('、')}`,
+        message: tr('graph.roleNotAllowed', { id: person.id, name: person.name, role: tr(ROLE_KEYS[c.role]), roles: person.roles.map((r) => tr(ROLE_KEYS[r])).join(tr('common.listSep')) }),
       });
     }
   });

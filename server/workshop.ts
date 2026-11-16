@@ -7,11 +7,14 @@
 // - 确认：从预览节点恢复，进入保存节点，返回当前预览的那一份关卡（不重新抽种子，不再调用模型）。
 //   同一个生成标识只定稿一次：重复确认返回同一份结果。关卡由浏览器保存，服务端不存。
 // - 检查点只用内存里的（MemorySaver）：服务重启后，未确认的预览失效。
+// - F7：请求带语言（lang，没给时按 zh）。回退的原因、修复记录、主要差别按请求的语言写；统计和日志里的原因照旧是中文。
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { Command, MemorySaver } from '@langchain/langgraph';
 import { fallbackPackage } from '../src/game/levels/catalog';
+import { BUILTIN_TITLE_KEYS } from '../src/game/levels/titles';
 import { FALLBACK_LEVEL_ID } from '../src/game/level/generatedLevels';
+import { translator, type Lang, type Translate } from '../src/i18n';
 import { fallbackDifferences } from '../src/workshop/diff';
 import {
   ERROR_CODES,
@@ -25,7 +28,7 @@ import {
   type Preview,
 } from '../src/workshop/protocol';
 import type { WorkshopConfig } from './config';
-import { CallTimeout, CancelledByUser, PrepareError, WorkshopError } from './errors';
+import { CallTimeout, CancelledByUser, PrepareError, WorkshopError, ZH } from './errors';
 import { MAX_BRIEF_ATTEMPTS, ModelCallError, buildWorkshopGraph, historyLine, type AttemptLog, type GraphDeps, type WorkshopGraph, type WorkshopStateType } from './graph';
 import type { Logger } from './log';
 import type { Availability, LlmProvider } from './providers';
@@ -121,8 +124,9 @@ export class Workshop {
     return this.running !== null;
   }
 
-  async health(): Promise<HealthResponse> {
-    const availability = await this.deps.provider.availability(AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS));
+  /** lang：不能用的原因用的语言（F7，浏览器带上界面的语言）。 */
+  async health(lang: Lang = 'zh'): Promise<HealthResponse> {
+    const availability = await this.deps.provider.availability(AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS), translator(lang));
     return {
       ok: true,
       serviceId: this.serviceId,
@@ -151,7 +155,7 @@ export class Workshop {
     const start = this.now();
     const thread = { configurable: { thread_id: id } };
     const timer = setTimeout(() => {
-      controller.abort(new CallTimeout('整个生成请求', config.limits.requestTimeoutMs));
+      controller.abort(new CallTimeout((tr) => tr('callError.wholeRequest'), config.limits.requestTimeoutMs));
     }, config.limits.requestTimeoutMs);
     try {
       let availability: Availability;
@@ -159,7 +163,7 @@ export class Workshop {
         availability = await provider.availability(AbortSignal.any([controller.signal, AbortSignal.timeout(AVAILABILITY_TIMEOUT_MS)]));
       } catch {
         // 检查本身出了意外（提供方本应不抛错）：按不可用处理；下面先看是不是被取消或超时
-        availability = { available: false, reason: '检查模型能不能用时出错' };
+        availability = { available: false, reason: ZH('health.checkFailed') };
       }
       // 先看这次请求是不是已经被取消或超时：检查被中止时提供方也会报“不可用”，那不是模型的问题
       if (controller.signal.aborted) return await this.finishFailure(request, EMPTY_STATE, controller.signal.reason, controller.signal.reason, this.now() - start);
@@ -175,7 +179,7 @@ export class Workshop {
       let failure: unknown = null;
       try {
         await this.graph.invoke(
-          { text: request.text, roster: rosterEntries(request.roster), seed: this.newSeed() },
+          { text: request.text, roster: rosterEntries(request.roster), seed: this.newSeed(), lang: langOf(request) },
           { ...thread, signal: controller.signal, recursionLimit: 40 },
         );
       } catch (error) {
@@ -192,9 +196,9 @@ export class Workshop {
         log.info('出预览', { generationId: id, outcome: preview.outcome, repairs: preview.repairs });
         return { ok: true, status: 'preview', generationId: id, version, serviceId: this.serviceId, preview };
       }
-      const terminal = state.terminal ?? { outcome: 'error' as const, reason: '流程没有给出结果' };
+      const terminal = state.terminal ?? { outcome: 'error' as const, reason: ZH('graph.noResult'), shown: trOf(request)('graph.noResult') };
       await this.dropThread(id);
-      return await this.fallback(request, state, terminal.outcome, terminal.reason, total);
+      return await this.fallback(request, state, terminal.outcome, terminal, total);
     } finally {
       clearTimeout(timer);
       this.running = null;
@@ -233,10 +237,11 @@ export class Workshop {
     if (requestSignal.aborted && signal.reason === requestSignal.reason) {
       return this.finishFailure(request, EMPTY_STATE, failure, requestSignal.reason, total);
     }
-    if (signal.aborted) return this.finishFailure(request, EMPTY_STATE, failure, new CallTimeout('加载模型', limitMs), total);
-    const reason = failure instanceof PrepareError ? failure.message : '加载模型失败';
+    if (signal.aborted) return this.finishFailure(request, EMPTY_STATE, failure, new CallTimeout((tr) => tr('callError.prepare'), limitMs), total);
+    const say = (tr: Translate) => (failure instanceof PrepareError ? failure.say(tr) : tr('prepare.failed'));
+    const reason = say(ZH);
     log.warn('加载模型失败，回退到内置关卡', { generationId: id, reason, kind: failure instanceof PrepareError ? failure.kind : 'unknown' });
-    return this.fallback(request, EMPTY_STATE, 'error', reason, total);
+    return this.fallback(request, EMPTY_STATE, 'error', { reason, shown: say(trOf(request)) }, total);
   }
 
   /** 读这次生成的状态。还没有检查点（刚受理就被取消、出错）时用空的状态。 */
@@ -267,28 +272,31 @@ export class Workshop {
       this.deps.log.info('已取消', { generationId: id });
       return { ok: true, status: 'cancelled', generationId: id, serviceId: this.serviceId };
     }
-    let reason: string;
-    if (signalReason instanceof CallTimeout) reason = signalReason.message;
-    else if (error instanceof ModelCallError) reason = error.message;
-    else reason = '工坊服务内部错误';
+    const say = (tr: Translate) => (signalReason instanceof CallTimeout ? signalReason.say(tr) : error instanceof ModelCallError ? error.say(tr) : tr('callError.internal'));
+    const reason = say(ZH);
     this.deps.log.warn('生成出错，回退到内置关卡', { generationId: id, reason, error: error instanceof ModelCallError ? error.info.kind : error instanceof Error ? error.name : 'unknown' });
-    return this.fallback(request, state, 'error', reason, total);
+    return this.fallback(request, state, 'error', { reason, shown: say(trOf(request)) }, total);
   }
 
-  /** 回退到内置关卡（P5 的第 1 关），说明来源、原因和与请求的主要差别。 */
-  private async fallback(request: GenerateRequest, state: StateView, outcome: 'fallback' | 'error', reason: string, total: number): Promise<GenerateResponse> {
+  /**
+   * 回退到内置关卡（P5 的第 1 关），说明来源、原因和与请求的主要差别。
+   * why.reason 是中文（记进统计），why.shown 是请求的语言（给玩家看）。
+   */
+  private async fallback(request: GenerateRequest, state: StateView, outcome: 'fallback' | 'error', why: { reason: string; shown: string }, total: number): Promise<GenerateResponse> {
     const pkg = fallbackPackage();
     if (!pkg.brief) throw new Error('回退关卡没有说明书');
+    const tr = trOf(request);
+    const titleKey = BUILTIN_TITLE_KEYS[FALLBACK_LEVEL_ID];
     const fallback: Fallback = {
       outcome,
-      reason,
-      history: state.history.map(historyLine),
-      differences: fallbackDifferences(state.lastValidBrief, pkg.brief, pkg.title),
+      reason: why.shown,
+      history: state.history.map((log) => historyLine(log, tr)),
+      differences: fallbackDifferences(state.lastValidBrief, pkg.brief, titleKey ? tr(titleKey) : pkg.title, tr),
       fallbackId: FALLBACK_LEVEL_ID,
       provider: this.deps.provider.name,
       model: this.deps.provider.model,
     };
-    await this.record(request, outcome, reason, total);
+    await this.record(request, outcome, why.reason, total);
     return { ok: true, status: 'fallback', generationId: request.generationId, serviceId: this.serviceId, fallback };
   }
 
@@ -386,6 +394,15 @@ export class Workshop {
       // 删不掉检查点只是多占一点内存
     }
   }
+}
+
+/** 请求的语言（没给时按 zh）。 */
+function langOf(request: GenerateRequest): Lang {
+  return request.lang ?? 'zh';
+}
+
+function trOf(request: GenerateRequest): Translate {
+  return translator(langOf(request));
 }
 
 function roundTimings(timings: Record<string, number>): Record<string, number> {
