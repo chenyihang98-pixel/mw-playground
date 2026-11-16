@@ -1,0 +1,31 @@
+{
+  "note": "真实模型的一次修复。第一次说明书违反“小地图最多 1 个守卫”，程序把字段和能照着改的原因交回模型；模型第二次把地图改成中等、保留 2 个守卫，通过检查。这说明“程序检查通过”不等于“用户的话都被满足”：用户要的是小地图。",
+  "text": "小地图，两个守卫，宝石越多越好。",
+  "first_brief": {
+    "tier": "small",
+    "guards": 2,
+    "collectibles": 5,
+    "platforms": 2,
+    "distribution": "scattered",
+    "title": "宝石乐园初体验"
+  },
+  "problem_returned_to_model": [
+    "第 1 次（说明书错误）：guards：small 地图最多 1 个守卫，现在是 2：减少守卫，或换成更大的地图档位"
+  ],
+  "second_brief": {
+    "tier": "medium",
+    "guards": 2,
+    "collectibles": 7,
+    "platforms": 2,
+    "distribution": "scattered",
+    "title": "宝石乐园初体验"
+  },
+  "outcome": "model-repaired",
+  "repairs": 1,
+  "preview_hash": "fc8e54f12a8488d9",
+  "final_hash": "fc8e54f12a8488d9",
+  "model_calls": {
+    "before_confirm": 3,
+    "after_confirm": 3
+  }
+}

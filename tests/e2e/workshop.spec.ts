@@ -178,9 +178,18 @@ test('取消：结束这次请求，不回退，也不换关卡；之后可以�
   await openWorkshop(page);
   await page.getByRole('textbox', { name: '一句话描述想玩的关卡' }).fill('雪地黄昏的大地图');
   await page.getByRole('button', { name: '生成关卡' }).click();
+  // F4：生成进行时的等待提示和下面的说明（假模型每次调用前等 800 毫秒，这时还在生成）
+  const waiting = page.locator('#level-workshop').getByText('正在准备模型并写说明书，程序随后生成并检查布局…');
+  const loadingHint = page.locator('#level-workshop').getByText('第一次生成要先把模型加载进显卡；长时间没用之后可能要等几十秒。');
+  await expect(waiting).toBeVisible();
+  await expect(loadingHint).toBeVisible();
+  expect((await read(page)).levels.workshop.view).toBe('running');
   await page.getByRole('button', { name: '停止生成' }).click();
   await expect.poll(async () => (await read(page)).levels.workshop.view).toBe('cancelled');
   await expect(page.locator('#level-workshop')).toContainText('已取消这次生成');
+  // 只在生成进行时显示
+  await expect(waiting).toHaveCount(0);
+  await expect(loadingHint).toHaveCount(0);
   // 等过假模型的两次调用：迟到的响应也不会改变界面，不回退，不换关卡
   await page.waitForTimeout(2200);
   const after = await read(page);

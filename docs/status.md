@@ -1825,3 +1825,130 @@ Codex 第 3 轮审查（候选 e301046）提出 1 项阻塞问题（要求 5、7
 ### 已知问题和后续项
 
 - 工坊关卡的开始面板没有专门提示“名册里的同伴、守卫这一关不出场”。只有工坊面板里的说明行讲了这条规则。
+
+
+## F4：求职展示版本收尾（文档、证据、生成中的等待提示）
+
+### 内容
+
+这一轮只整理文档和证据，不加功能。证据由操作者在 45c1255 的导出副本上取得，原始记录不在仓库里；本任务没有重跑，只核对文字和代码、几份文件之间是否一致。
+
+- README：开头从“# mw-playground”到“界面和视觉的约定见 docs/design.md”那一行，整段换成操作者写的 README-top.md（按下面第 3 条改了一处）。“## 环境要求”及以后不动。
+  - 新的开头写了项目用途、曾用名、和 Modelwright 的关系、当前进度（F4）、快速开始和几点说明。
+  - 本文顶部没有“当前进度”，所以不用改；当前进度只写在 README 开头。
+- 复制进仓库（相对路径不变）：
+  - `docs/JOB_READY_20261116.md`：收尾报告；
+  - `docs/WORKSHOP_OVERVIEW.ja.md`：日文一页概要；
+  - `docs/evidence/workshop-20261116/`：5 个 JSON 和 4 张截图，原样复制，数字和截图都没有改。
+- 生成中的等待提示（`src/game/ui/workshopPanel.ts`）：
+  - 文字从“模型正在写说明书，程序随后生成并检查布局…（N 秒）”改成“正在准备模型并写说明书，程序随后生成并检查布局…（N 秒）”；
+  - 下面加一行说明（`mw-subtle` 样式，沿用已有的 `ws-note` 类，没有改 CSS）：“第一次生成要先把模型加载进显卡；长时间没用之后可能要等几十秒。”
+  - 只在生成进行时显示，没有加新的状态，没有改服务端。
+- `tests/e2e/workshop.spec.ts`：在已有的“取消”那一项里，生成进行时断言两段文字都可见，取消之后都不在了。
+
+### 核对：文字和代码
+
+对照 45c1255 的代码，逐项核对了任务列出的内容，都和代码一致：
+
+- 说明书最多 3 次、修复最多 2 次：`MAX_BRIEF_ATTEMPTS = 3`（server/graph.ts 第 31 行），`handleFailure`（第 294 行）在 `attempt >= MAX_BRIEF_ATTEMPTS` 时结束。
+- 工具调用最多 1 轮：`MAX_TOOL_ROUNDS = 1`（第 33 行）。
+- `lookup_roster` 只读，参数 `query` 不参与筛选：工具和执行处都只调用 `describeRoster(roster)`（第 206–219 行），返回这次请求带来的整个名册快照；返回的文字格式和报告 6.3 节引用的一致（server/roster.ts 第 23 行）。
+- interrupt 和 `Command({ resume })`：
+  - 预览节点（第 313 行）在 interrupt 之前只调用纯函数 `previewOf`；
+  - 确认时 `finalize` 用 `new Command({ resume: { action: 'confirm' } })` 恢复（server/workshop.ts 第 343 行），保存节点只返回 `state.level`（server/graph.ts 第 319 行），不调用模型；
+  - 同一个生成标识只定稿一次（`confirm`，第 327 行）。
+- MemorySaver 和服务重启后预览失效：server/workshop.ts 第 79 行；服务标识不同时返回“工坊服务重启过，未确认的预览已失效”（第 366 行）。
+- 加载模型：`prepare` 在可用性检查之后、流程之前（第 213 行），有自己的时限（默认 150 秒）；`health` 只查可用性，不加载模型。
+- 工坊关卡没勾选的人不出场：F3（`assignLevelCast` 的 `castIsExplicit`）。
+- 报告第 6、8、9 节写的文件名、函数名和行号（server/graph.ts 第 31、206–219、294、313、319、322–336 行；server/workshop.ts 第 139、213、343 行；brief.ts `briefProblems` 第 92 行；server/roster.ts `resolveAliases` 第 31 行、`roleProblems`；pipeline.ts `produceLevel`）都对得上。
+- 第 7 节列出的测试名在 tests/ 里都找得到；单元测试 560 个、端到端 46 个通过加 1 个跳过，和 45c1255 上的结果一致。
+- 另外核对了快速开始里要点的按钮：开始界面有“选关”，工坊预览有“确认”，开始面板有“开始”。
+
+### 改过的文字（原文 → 改后 → 依据）
+
+和代码的说法没有发现不一致。下面几处是几份文件之间对不上，或者说得比记录宽，按第 3 条改了文字：
+
+1. 收尾报告第 1 节：
+   - 原文：“功能代码只改了生成中的一行提示文字（第 3 节）。生成相关的代码从 P8 之后没有变过。”
+   - 改后：“功能代码只改了生成中的等待提示（改一行文字、加一行说明，第 3 节）。LangGraph 图、提示词和生成器（第 2 节列出的文件）从 P8 之后没有变过；生成前先加载模型是 F2 在服务里加的（第 3 节末尾）。”
+   - 依据：`git log -- server/graph.ts server/prompts.ts src/game/level/gen` 最后一次是 68d42a2（P8）；server/workshop.ts 的 `generate` 在 58def6c（F2）加了 `prepare`（第 213 行）；本任务对 `src/game/ui/workshopPanel.ts` 的改动是改一行、加一行。
+2. 收尾报告第 2 节“收尾提交”一行：
+   - 原文：“加了文档、证据和一行等待提示”
+   - 改后：“加了文档、证据，并改了生成中的等待提示”
+   - 依据：同上。
+3. 收尾报告第 4 节“角色到游戏的完整路径”一行：
+   - 原文：“按住 WASD 在 5.9 秒内收集 3/3 获胜”
+   - 改后：“按住 WASD 收集 3/3 获胜，结算画面的用时是 5.9 秒（游戏内计时；05-ui-path-U1.json 的 play.seconds 是 6.1，计时口径不同）”
+   - 依据：
+     - 证据 05-ui-path-U1.json 的 `play.seconds` 是 6.1；
+     - 截图 shot-4-result.png 的结算画面是“用时 5.9 秒”“剩余 0:27.1”；
+     - 时间限制是 33 秒（shot-3-start.png），33 − 27.05（JSON 的 `time_left`）≈ 5.9。
+   - 两个数字都不改，只写明各自是什么。
+4. 收尾报告 6.1 节第 7 步：
+   - 原文：“键盘玩 5.9 秒收集 3/3，获胜。”
+   - 改后：“键盘操作收集 3/3，获胜；结算画面的用时是 5.9 秒（游戏内计时，见第 4 节）。”
+   - 依据：同上。
+5. 收尾报告 5.2 节：
+   - 原文：“跑过 6 遍”，表里没有 F2 任务内那一遍。
+   - 改后：“跑过 7 遍”，表里加一行“11-16，F2 任务内（生成代码同 58def6c），Claude｜8｜2｜0｜0”。
+   - 依据：本文 F2 一节“本机模型验收（2026-11-16，本机实测）”：8 条首次通过、2 条修复后通过。
+6. 收尾报告 5.2 节：
+   - 原文：“之后再没有重现，最慢一次 5.9 秒”
+   - 改后：“之后再没有重现，加载模型最慢的一次是 5.9 秒（N01）”
+   - 依据：证据 02-results.json 的 N01，`prepare` 5944 ms、`total` 8226 ms。5.9 秒是加载时间，不是请求总耗时；原文容易被读成第 1 条请求最多 5.9 秒。
+7. README 开头（README-top.md）“几点说明”：
+   - 原文：“实测 4–6 秒”
+   - 改后：“实测 3–6 秒”
+   - 依据：docs/workshop-notes.md 的“冷启动（F2）”记的冷加载是 3.3 秒、3.4 秒（操作者测）和 3,623 ms（F2 任务内）；本轮是 4.2 秒和 5.9 秒（收尾报告 5.1 节）。
+   - 收尾报告和日文概要里的“4.2–5.9 秒”“4〜6 秒”说的是本轮的结果，没有改。
+8. 日文概要“担当範囲と AI との協業”：
+   - 原文：“公開前の確認と承認”
+   - 改后：“プッシュ前の確認と承認”
+   - 依据：收尾报告第 10 节记的是“每次推送前由本人同意”；仓库是私有的（第 2 节、第 11 节），没有公开过。
+
+### 复制进仓库的文件的 SHA-256
+
+和清单（deliver-manifest.sha256.txt）一致的 9 个（证据目录，原样复制）：
+
+| 文件 | SHA-256 |
+|---|---|
+| docs/evidence/workshop-20261116/01-frozen-requests.json | 4cfcdcd883a5e88aa72ba38929c02103c85a38e29748984d0e49d2648e6662ee |
+| docs/evidence/workshop-20261116/02-results.json | 27e5dec424f4644c4f171b34b897d19ffbe618cf49458ef78821bcec200af82a |
+| docs/evidence/workshop-20261116/03-case-tool-call-N04.json | 179affbe1a76ffb7f8af44e4451826158b27e97de486e32be1d4accf56d34cdc |
+| docs/evidence/workshop-20261116/04-case-repair-R1.json | 4f1d66e16dd31c0d60530a5520e5b9e21756901b8f0fbcff859a3f49ad4ad050 |
+| docs/evidence/workshop-20261116/05-ui-path-U1.json | 96ea75857fa289376fa169b1eddbae71d0a009293b04f71f47de5a30424c0342 |
+| docs/evidence/workshop-20261116/shot-1-request.png | a133d605d64d65e048dfceb3b5dc44133774fc0381ee67a23ebbc55e53c34d2f |
+| docs/evidence/workshop-20261116/shot-2-preview.png | b2f7b169f1ad5727ee6c65bf4caf518a5fc4b7342650f303ba16b15c07f075c4 |
+| docs/evidence/workshop-20261116/shot-3-start.png | 783a5b300092c92d5ac7208b59785790081eba9c0e3a21466d56c133a99c32e1 |
+| docs/evidence/workshop-20261116/shot-4-result.png | 8723d3b89b320d927bf947d8923649efecd5f981b8dd87d66db5f7e354f1c77b |
+
+按上面的第 1–8 处改过、所以和清单不同的：
+
+- `docs/JOB_READY_20261116.md`（第 1–6 处）；
+- `docs/WORKSHOP_OVERVIEW.ja.md`（第 8 处）；
+- README-top.md 的内容（第 7 处）。它没有作为单独的文件复制，而是放进了 `README.md` 的开头。
+
+这三份改后的 SHA-256 写在送审说明里：提交之后再算，避免本节写进的值和最终文件对不上。
+
+### 运行过的检查和结果
+
+环境：Windows 11、Node v24.18.0、Chromium（Playwright 1.65.0，无头）。
+
+- 复制前核对过：交付目录里的 12 个文件和清单的 SHA-256 全部一致，都是 LF、没有 BOM。
+- `npm run typecheck`、`npm run lint`：通过。
+- `npm test`：35 个测试文件、560 个测试全部通过（本任务没有加单元测试）。
+- `npm run e2e`：
+  - 不设 `MW_ASSET_DIR`：46 个通过，1 个跳过（真实资产组）。
+  - 设了 `MW_ASSET_DIR`（操作者提供的项目外目录，只读）：52 个全部通过，含真实资产组的 6 个。
+  - “取消”那一项：生成进行时两段文字都可见，取消之后都不在了。
+- 代码和测试里已经没有旧的等待文字“模型正在写说明书”（文档里只在说明旧截图时引用）。
+- `npm run build`：通过，构建产物里没有测试钩子和 LangChain。
+- 测试跑完后 `git status` 干净；`git diff --stat 45c1255..HEAD` 与加 `--ignore-cr-at-eol` 的结果一致。没有改依赖和锁文件。
+
+### 未运行或未验证
+
+- 证据里的运行数字（耗时、哈希、结果）来自操作者本机的真实运行，原始记录不在仓库里。本任务没有重跑，也核对不了。
+- 05-ui-path-U1.json 的 `play.seconds`（6.1）具体按什么计时，证据里没有写。只能确定它和结算画面的游戏内计时（5.9 秒）不是同一个口径。
+- 截图 shot-1-request.png 是在 45c1255 上拍的，等待提示还是旧文字（报告 6.1 节已注明）。新的等待提示只在端到端测试（假模型）里看过，没有在真实模型上截图。
+- README 的“快速开始”没有在一台干净的机器上从头照着做一遍。
+- 收尾报告第 10 节的“待本人确认”各项，要等本人确认后补。

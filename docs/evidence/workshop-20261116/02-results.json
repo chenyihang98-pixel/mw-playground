@@ -1,0 +1,670 @@
+{
+  "note": "本轮真实模型请求（取证脚本直接调用项目的 Workshop，和服务端的生成代码相同）。R1 是修复案例，它的“小地图、两个守卫”本身超出上限，request_satisfied 记为 null（不计入判断）；按事先的关键要求它没有满足“小地图”。",
+  "version": "45c1255",
+  "model": "Ollama 0.40.16, qwen3.5:9b-q4_K_M, num_ctx 8192, think false",
+  "rows": [
+    {
+      "id": "N01",
+      "text": "来一张小地图，四颗宝石分散在地面上，没有守卫。",
+      "people_checked": [],
+      "started_at": "2026-11-15T19:44:30.812Z",
+      "outcome": "model-first",
+      "first_attempt_valid": true,
+      "repairs": 0,
+      "program_adjusted": null,
+      "history": [],
+      "brief": {
+        "tier": "small",
+        "density": "low",
+        "platforms": 0,
+        "collectibles": 4,
+        "distribution": "scattered",
+        "guards": 0,
+        "patrol": "loop",
+        "intent": "relaxed",
+        "visual": {
+          "theme": "grass",
+          "time": "day",
+          "weather": "clear"
+        },
+        "cast": [],
+        "title": "草地上的四颗宝石"
+      },
+      "layout": {
+        "collectibles": 4,
+        "onPlatforms": 0,
+        "platforms": 0,
+        "guards": 0,
+        "target": 4
+      },
+      "layout_check_passed": true,
+      "key_requirements": [
+        {
+          "what": "地图是小地图",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.tier",
+              "expected": "small",
+              "actual": "small"
+            }
+          ]
+        },
+        {
+          "what": "一共 4 颗宝石，都不在高台上",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.collectibles",
+              "expected": 4,
+              "actual": 4
+            },
+            {
+              "item": "说明书.distribution 不是",
+              "expected": "elevated",
+              "actual": "scattered"
+            },
+            {
+              "item": "布局.collectibles",
+              "expected": 4,
+              "actual": 4
+            }
+          ]
+        },
+        {
+          "what": "没有守卫",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.guards",
+              "expected": 0,
+              "actual": 0
+            },
+            {
+              "item": "布局.guards",
+              "expected": 0,
+              "actual": 0
+            }
+          ]
+        }
+      ],
+      "request_satisfied": true,
+      "preview_hash": "d6811a585af96236",
+      "final_hash": "d6811a585af96236",
+      "preview_final_match": true,
+      "model_calls": {
+        "before_confirm": 2,
+        "after_confirm": 2
+      },
+      "tool_calls": [],
+      "timings_ms": {
+        "prepare": 5944,
+        "understand": 830,
+        "brief": 1388,
+        "validate": 1,
+        "produce": 18,
+        "total": 8226,
+        "confirm": 5
+      }
+    },
+    {
+      "id": "N02",
+      "text": "沙漠的黄昏，起雾，中等大小的地图。",
+      "people_checked": [],
+      "started_at": "2026-11-15T19:44:39.049Z",
+      "outcome": "model-first",
+      "first_attempt_valid": true,
+      "repairs": 0,
+      "program_adjusted": null,
+      "history": [],
+      "brief": {
+        "tier": "medium",
+        "density": "mid",
+        "platforms": 2,
+        "collectibles": 5,
+        "distribution": "scattered",
+        "guards": 1,
+        "patrol": "loop",
+        "intent": "normal",
+        "visual": {
+          "theme": "sand",
+          "time": "dusk",
+          "weather": "fog"
+        },
+        "cast": [],
+        "title": "迷雾沙海寻宝记"
+      },
+      "layout": {
+        "collectibles": 5,
+        "onPlatforms": 0,
+        "platforms": 2,
+        "guards": 1,
+        "target": 5
+      },
+      "layout_check_passed": true,
+      "key_requirements": [
+        {
+          "what": "沙漠主题",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.visual.theme",
+              "expected": "sand",
+              "actual": "sand"
+            }
+          ]
+        },
+        {
+          "what": "黄昏、起雾",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.visual.time",
+              "expected": "dusk",
+              "actual": "dusk"
+            },
+            {
+              "item": "说明书.visual.weather",
+              "expected": "fog",
+              "actual": "fog"
+            }
+          ]
+        },
+        {
+          "what": "中等地图",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.tier",
+              "expected": "medium",
+              "actual": "medium"
+            }
+          ]
+        }
+      ],
+      "request_satisfied": true,
+      "preview_hash": "f23c619948fbe4a3",
+      "final_hash": "f23c619948fbe4a3",
+      "preview_final_match": true,
+      "model_calls": {
+        "before_confirm": 2,
+        "after_confirm": 2
+      },
+      "tool_calls": [],
+      "timings_ms": {
+        "prepare": 11,
+        "understand": 784,
+        "brief": 1393,
+        "validate": 0,
+        "produce": 30,
+        "total": 2249,
+        "confirm": 2
+      }
+    },
+    {
+      "id": "N03",
+      "text": "让星璇当我的同伴，草地，白天。",
+      "people_checked": [
+        "星璇"
+      ],
+      "started_at": "2026-11-15T19:44:41.305Z",
+      "outcome": "model-first",
+      "first_attempt_valid": true,
+      "repairs": 0,
+      "program_adjusted": null,
+      "history": [],
+      "brief": {
+        "tier": "medium",
+        "density": "mid",
+        "platforms": 2,
+        "collectibles": 5,
+        "distribution": "scattered",
+        "guards": 1,
+        "patrol": "loop",
+        "intent": "normal",
+        "visual": {
+          "theme": "grass",
+          "time": "day",
+          "weather": "clear"
+        },
+        "cast": [
+          {
+            "person": "星璇",
+            "role": "companion"
+          }
+        ],
+        "title": "星璇的草地寻宝之旅"
+      },
+      "layout": {
+        "collectibles": 5,
+        "onPlatforms": 0,
+        "platforms": 2,
+        "guards": 1,
+        "target": 5
+      },
+      "layout_check_passed": true,
+      "key_requirements": [
+        {
+          "what": "星璇作为同伴出场，且只出场一次",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.cast 里 星璇（companion）的次数",
+              "expected": 1,
+              "actual": 1
+            }
+          ]
+        },
+        {
+          "what": "草地、白天",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.visual.theme",
+              "expected": "grass",
+              "actual": "grass"
+            },
+            {
+              "item": "说明书.visual.time",
+              "expected": "day",
+              "actual": "day"
+            }
+          ]
+        }
+      ],
+      "request_satisfied": true,
+      "preview_hash": "24248ea11ce9cdda",
+      "final_hash": "24248ea11ce9cdda",
+      "preview_final_match": true,
+      "model_calls": {
+        "before_confirm": 2,
+        "after_confirm": 2
+      },
+      "tool_calls": [],
+      "timings_ms": {
+        "prepare": 4,
+        "understand": 738,
+        "brief": 1788,
+        "validate": 0,
+        "produce": 24,
+        "total": 2571,
+        "confirm": 3
+      }
+    },
+    {
+      "id": "N04",
+      "text": "让装甲女兵来当守卫，一个守卫就够了，中等大小的地图。",
+      "people_checked": [
+        "装甲女兵"
+      ],
+      "started_at": "2026-11-15T19:44:43.884Z",
+      "outcome": "model-first",
+      "first_attempt_valid": true,
+      "repairs": 0,
+      "program_adjusted": null,
+      "history": [],
+      "brief": {
+        "tier": "medium",
+        "density": "mid",
+        "platforms": 2,
+        "collectibles": 5,
+        "distribution": "scattered",
+        "guards": 1,
+        "patrol": "loop",
+        "intent": "normal",
+        "visual": {
+          "theme": "grass",
+          "time": "day",
+          "weather": "clear"
+        },
+        "cast": [
+          {
+            "person": "装甲女兵",
+            "role": "guard"
+          }
+        ],
+        "title": "装甲女兵巡逻任务"
+      },
+      "layout": {
+        "collectibles": 5,
+        "onPlatforms": 0,
+        "platforms": 2,
+        "guards": 1,
+        "target": 5
+      },
+      "layout_check_passed": true,
+      "key_requirements": [
+        {
+          "what": "只有 1 个守卫",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.guards",
+              "expected": 1,
+              "actual": 1
+            },
+            {
+              "item": "布局.guards",
+              "expected": 1,
+              "actual": 1
+            }
+          ]
+        },
+        {
+          "what": "装甲女兵作为守卫出场",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.cast 里 装甲女兵（guard）的次数",
+              "expected": 1,
+              "actual": 1
+            }
+          ]
+        },
+        {
+          "what": "中等地图",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.tier",
+              "expected": "medium",
+              "actual": "medium"
+            }
+          ]
+        }
+      ],
+      "request_satisfied": true,
+      "preview_hash": "00cab8e7226cadd9",
+      "final_hash": "00cab8e7226cadd9",
+      "preview_final_match": true,
+      "model_calls": {
+        "before_confirm": 3,
+        "after_confirm": 3
+      },
+      "tool_calls": [
+        "lookup_roster"
+      ],
+      "timings_ms": {
+        "prepare": 15,
+        "understand": 1384,
+        "brief": 1810,
+        "validate": 0,
+        "produce": 22,
+        "total": 3253,
+        "confirm": 3
+      }
+    },
+    {
+      "id": "N05",
+      "text": "大地图，三个高台，宝石只放在高台上，一共六颗。",
+      "people_checked": [],
+      "started_at": "2026-11-15T19:44:47.145Z",
+      "outcome": "model-first",
+      "first_attempt_valid": true,
+      "repairs": 0,
+      "program_adjusted": null,
+      "history": [],
+      "brief": {
+        "tier": "large",
+        "density": "mid",
+        "platforms": 3,
+        "collectibles": 6,
+        "distribution": "elevated",
+        "guards": 0,
+        "patrol": "loop",
+        "intent": "normal",
+        "visual": {
+          "theme": "grass",
+          "time": "day",
+          "weather": "clear"
+        },
+        "cast": [],
+        "title": "云端宝石收集挑战"
+      },
+      "layout": {
+        "collectibles": 6,
+        "onPlatforms": 6,
+        "platforms": 3,
+        "guards": 0,
+        "target": 6
+      },
+      "layout_check_passed": true,
+      "key_requirements": [
+        {
+          "what": "3 个高台",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.platforms",
+              "expected": 3,
+              "actual": 3
+            },
+            {
+              "item": "布局.platforms",
+              "expected": 3,
+              "actual": 3
+            }
+          ]
+        },
+        {
+          "what": "宝石只在高台上",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.distribution",
+              "expected": "elevated",
+              "actual": "elevated"
+            },
+            {
+              "item": "布局：宝石都在高台上",
+              "expected": 6,
+              "actual": 6
+            }
+          ]
+        },
+        {
+          "what": "一共 6 颗",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.collectibles",
+              "expected": 6,
+              "actual": 6
+            },
+            {
+              "item": "布局.collectibles",
+              "expected": 6,
+              "actual": 6
+            }
+          ]
+        }
+      ],
+      "request_satisfied": true,
+      "preview_hash": "e50e517490e95afc",
+      "final_hash": "e50e517490e95afc",
+      "preview_final_match": true,
+      "model_calls": {
+        "before_confirm": 2,
+        "after_confirm": 2
+      },
+      "tool_calls": [],
+      "timings_ms": {
+        "prepare": 12,
+        "understand": 767,
+        "brief": 1379,
+        "validate": 0,
+        "produce": 45,
+        "total": 2230,
+        "confirm": 3
+      }
+    },
+    {
+      "id": "N06",
+      "text": "中等大小的地图，两个守卫来回巡逻，下雨的夜晚。",
+      "people_checked": [],
+      "started_at": "2026-11-15T19:44:49.386Z",
+      "outcome": "model-first",
+      "first_attempt_valid": true,
+      "repairs": 0,
+      "program_adjusted": null,
+      "history": [],
+      "brief": {
+        "tier": "medium",
+        "density": "mid",
+        "platforms": 2,
+        "collectibles": 5,
+        "distribution": "scattered",
+        "guards": 2,
+        "patrol": "back-and-forth",
+        "intent": "normal",
+        "visual": {
+          "theme": "grass",
+          "time": "night",
+          "weather": "rain"
+        },
+        "cast": [],
+        "title": "雨夜寻宝之旅"
+      },
+      "layout": {
+        "collectibles": 5,
+        "onPlatforms": 0,
+        "platforms": 2,
+        "guards": 2,
+        "target": 5
+      },
+      "layout_check_passed": true,
+      "key_requirements": [
+        {
+          "what": "2 个守卫",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.guards",
+              "expected": 2,
+              "actual": 2
+            },
+            {
+              "item": "布局.guards",
+              "expected": 2,
+              "actual": 2
+            }
+          ]
+        },
+        {
+          "what": "来回巡逻",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.patrol",
+              "expected": "back-and-forth",
+              "actual": "back-and-forth"
+            }
+          ]
+        },
+        {
+          "what": "下雨的夜晚",
+          "satisfied": true,
+          "checks": [
+            {
+              "item": "说明书.visual.weather",
+              "expected": "rain",
+              "actual": "rain"
+            },
+            {
+              "item": "说明书.visual.time",
+              "expected": "night",
+              "actual": "night"
+            }
+          ]
+        }
+      ],
+      "request_satisfied": true,
+      "preview_hash": "6036256883a30a66",
+      "final_hash": "6036256883a30a66",
+      "preview_final_match": true,
+      "model_calls": {
+        "before_confirm": 2,
+        "after_confirm": 2
+      },
+      "tool_calls": [],
+      "timings_ms": {
+        "prepare": 22,
+        "understand": 795,
+        "brief": 1407,
+        "validate": 0,
+        "produce": 25,
+        "total": 2264,
+        "confirm": 2
+      }
+    },
+    {
+      "id": "R1",
+      "text": "小地图，两个守卫，宝石越多越好。",
+      "people_checked": [],
+      "started_at": "2026-11-15T19:45:27.921Z",
+      "outcome": "model-repaired",
+      "first_attempt_valid": false,
+      "repairs": 1,
+      "program_adjusted": null,
+      "history": [
+        "第 1 次（说明书错误）：guards：small 地图最多 1 个守卫，现在是 2：减少守卫，或换成更大的地图档位"
+      ],
+      "brief": {
+        "tier": "medium",
+        "density": "mid",
+        "platforms": 2,
+        "collectibles": 7,
+        "distribution": "scattered",
+        "guards": 2,
+        "patrol": "loop",
+        "intent": "normal",
+        "visual": {
+          "theme": "grass",
+          "time": "day",
+          "weather": "clear"
+        },
+        "cast": [],
+        "title": "宝石乐园初体验"
+      },
+      "layout": {
+        "collectibles": 7,
+        "onPlatforms": 0,
+        "platforms": 2,
+        "guards": 2,
+        "target": 7
+      },
+      "layout_check_passed": true,
+      "key_requirements": [
+        {
+          "what": "（只用来观察修复，不判定需求满足：小地图最多 1 个守卫）",
+          "satisfied": false,
+          "checks": [
+            {
+              "item": "说明书.tier",
+              "expected": "small",
+              "actual": "medium"
+            }
+          ]
+        }
+      ],
+      "request_satisfied": null,
+      "preview_hash": "fc8e54f12a8488d9",
+      "final_hash": "fc8e54f12a8488d9",
+      "preview_final_match": true,
+      "model_calls": {
+        "before_confirm": 3,
+        "after_confirm": 3
+      },
+      "tool_calls": [],
+      "timings_ms": {
+        "prepare": 6,
+        "understand": 842,
+        "brief": 2759,
+        "validate": 2,
+        "produce": 45,
+        "total": 3701,
+        "confirm": 4
+      }
+    }
+  ]
+}

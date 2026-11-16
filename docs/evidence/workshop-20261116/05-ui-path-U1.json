@@ -1,0 +1,75 @@
+{
+  "note": "经浏览器界面走的完整路径：按 README 用 npm run dev:workshop 启动（模型事先卸载），导入两个 Modelwright 角色，在工坊里勾选星璇，输入一句话 → 预览 → 确认保存 → 开始 → 用键盘玩到收集完 → 刷新后在“已保存”里找到它。键盘操作由脚本发出（按住 WASD，导航用项目自己的检查器算出的网格），不是人手操作。",
+  "text": "晴天的草地，小地图，三颗宝石放在地面上，没有守卫，让星璇跟着我。",
+  "roster": [
+    {
+      "name": "装甲女兵",
+      "role": "player",
+      "status": "ready"
+    },
+    {
+      "name": "星璇",
+      "role": "none",
+      "status": "ready"
+    }
+  ],
+  "server_stats": {
+    "outcome": "model-first",
+    "repairs": 0,
+    "model_calls": 3,
+    "timings_ms": {
+      "prepare": 4222,
+      "understand": 1728,
+      "brief": 2249,
+      "validate": 2,
+      "produce": 21,
+      "total": 8260
+    }
+  },
+  "ui_wait_ms_click_to_preview": 8847,
+  "brief": {
+    "tier": "small",
+    "collectibles": 3,
+    "distribution": "scattered",
+    "platforms": 0,
+    "guards": 0,
+    "visual": {
+      "theme": "grass",
+      "time": "day",
+      "weather": "clear"
+    },
+    "cast": [
+      {
+        "person": "星璇",
+        "role": "companion",
+        "line": "嘿！别发呆啦，快把地上的宝石捡起来，我们一起去下一个地方冒险！"
+      }
+    ],
+    "title": "晴空草地寻宝记"
+  },
+  "layout": {
+    "collectibles": 3,
+    "platforms": 0,
+    "guards": 0,
+    "target": 3
+  },
+  "key_requirements_satisfied": true,
+  "preview_hash": "447b76d99c919f46",
+  "final_hash": "447b76d99c919f46",
+  "saves": 1,
+  "play": {
+    "phase": "won",
+    "collected": 3,
+    "target": 3,
+    "seconds": 6.1,
+    "time_left": 27.050000000000338,
+    "companions_in_game": 1
+  },
+  "after_reload": {
+    "saved_found": true,
+    "workshop_requests": [
+      "/api/workshop/health"
+    ]
+  },
+  "console_errors": []
+}

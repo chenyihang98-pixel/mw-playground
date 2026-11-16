@@ -34,6 +34,9 @@ type RoleChoice = 'both' | PersonRole;
 const CAST_TITLE = '出场人物（没勾选的人不出场）';
 const CAST_HINT = '一个都不勾选时，这一关没有同伴，守卫用默认小人；主角仍按名册。';
 
+/** 生成进行时，等待提示下面的说明（F4）。 */
+const RUNNING_HINT = '第一次生成要先把模型加载进显卡；长时间没用之后可能要等几十秒。';
+
 const ROLE_CHOICES: readonly [RoleChoice, string][] = [
   ['both', '同伴或守卫'],
   ['companion', '只当同伴'],
@@ -226,9 +229,11 @@ export class WorkshopPanel {
         const box = el('div', { className: 'ws-running' });
         const spinner = el('span', { className: 'ws-spinner' });
         spinner.setAttribute('aria-hidden', 'true');
-        box.append(spinner, el('span', { text: `模型正在写说明书，程序随后生成并检查布局…（${String(seconds)} 秒）` }));
+        box.append(spinner, el('span', { text: `正在准备模型并写说明书，程序随后生成并检查布局…（${String(seconds)} 秒）` }));
         parts.push(
           box,
+          // F4：生成前要先加载模型（F2），冷启动时可能要等一阵；只在生成进行时显示
+          el('p', { className: 'mw-subtle ws-note', text: RUNNING_HINT }),
           button('停止生成', () => {
             this.controller.cancel();
           }, { icon: 'close' }),

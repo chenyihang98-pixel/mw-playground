@@ -1,0 +1,95 @@
+{
+  "note": "真实模型的一次工具调用。工具 lookup_roster 只读，返回本次请求带来的名册快照（参数 query 不参与筛选，工具总是返回整个快照）。人物在提示里用代号 r1、r2，服务再换回人物 ID。",
+  "text": "让装甲女兵来当守卫，一个守卫就够了，中等大小的地图。",
+  "calls": [
+    {
+      "n": 1,
+      "kind": "chat",
+      "ms": 756,
+      "input_message_types": [
+        "system",
+        "human"
+      ],
+      "tools_offered": [
+        "lookup_roster"
+      ],
+      "tool_calls_returned": [
+        {
+          "id": "9e56cb0d-880f-4161-b729-ff8dc6d1d0f4",
+          "name": "lookup_roster",
+          "args": {
+            "query": "装甲女兵"
+          }
+        }
+      ],
+      "tool_messages_sent": [],
+      "output": "玩家希望使用中等大小的地图，并设置一名名为“装甲女兵”的巡逻守卫。由于玩家指定了出场人物，我需要先查询名册确认该角色是否可用及其允许的分工。"
+    },
+    {
+      "n": 2,
+      "kind": "chat",
+      "ms": 628,
+      "input_message_types": [
+        "system",
+        "human",
+        "ai",
+        "tool"
+      ],
+      "tools_offered": [
+        "lookup_roster"
+      ],
+      "tool_calls_returned": [],
+      "tool_messages_sent": [
+        {
+          "toolCallId": "9e56cb0d-880f-4161-b729-ff8dc6d1d0f4",
+          "content": "- 代号 r1：装甲女兵；允许的分工：companion（同伴）、guard（守卫）"
+        }
+      ],
+      "output": "玩家希望使用中等大小的地图，并设置一名名为“装甲女兵”的巡逻守卫。经查询名册，“装甲女兵”允许担任守卫角色，符合玩家需求。目前玩家未提及宝石数量、分布、高台障碍及视觉主题等细节，后续可根据需要补充。"
+    },
+    {
+      "n": 3,
+      "kind": "structured",
+      "ms": 1810,
+      "input_message_types": [
+        "system",
+        "human"
+      ],
+      "tools_offered": [],
+      "tool_calls_returned": [],
+      "tool_messages_sent": [],
+      "output": {
+        "schemaVersion": 1,
+        "tier": "medium",
+        "density": "mid",
+        "platforms": 2,
+        "collectibles": 5,
+        "distribution": "scattered",
+        "guards": 1,
+        "patrol": "loop",
+        "intent": "normal",
+        "visual": {
+          "theme": "grass",
+          "time": "day",
+          "weather": "clear"
+        },
+        "title": "装甲女兵巡逻任务",
+        "opening": "",
+        "cast": [
+          {
+            "personId": "r1",
+            "role": "guard",
+            "line": "我是装甲女兵，这片区域由我负责守护。"
+          }
+        ]
+      }
+    }
+  ],
+  "final_cast": [
+    {
+      "person": "装甲女兵",
+      "role": "guard"
+    }
+  ],
+  "preview_final_match": true
+}
