@@ -4,8 +4,6 @@
 
 # Playing and settings
 
-The interface is Chinese only for now, so button names are given in Chinese with the meaning in brackets.
-
 ## Controls
 
 Collect the required number of gems before the timer runs out and you win. Run out of time and you lose. Touching a guard on patrol costs 10 seconds. For the next 2 seconds another touch costs nothing.
@@ -19,12 +17,22 @@ Collect the required number of gems before the timer runs out and you win. Run o
 | Pause / resume | Esc or P |
 
 - Platforms are too high to jump onto. Walk up the ramp
-- Clicking 开始 (start) locks the mouse to the game. Esc releases it and pauses at the same time
+- Clicking Start locks the mouse to the game. Esc releases it and pauses at the same time
 - Menus work with the keyboard alone: Tab to move, Enter or Space to choose, Esc to close a panel
+
+## Language
+
+The interface comes in English, Japanese and Chinese.
+
+- There is a language picker at the bottom of the start screen and in the pause menu. Picking one saves the choice and reloads the page. Your roster, saved levels and mute setting stay as they are
+- During play, press Esc to pause before switching
+- Add `?lang=en`, `?lang=ja` or `?lang=zh` to the URL to open in that language for that visit only. The saved choice is not changed
+- If you have never picked one, the game follows your browser language: Japanese for Japanese, Chinese for Chinese, English for everything else
+- File names, roster names and the titles of saved levels are shown as you entered them. Text written by the model and explanations returned by the workshop service are still in Chinese for now
 
 ## Importing a character
 
-Click 导入角色 (import character) and pick a file, or drag a file onto the window.
+Click Import character and pick a file, or drag a file onto the window.
 
 | Format | |
 |---|---|
@@ -48,8 +56,8 @@ After an import a card appears on the right. On it you can:
 - Change the display height (1.2 to 2.4 m, 1.75 m by default). This is visual only. Collision stays the same
 - Turn the model 90° left or right if it faces the wrong way
 - See what each clip was taken to be (idle, walk, run, jump, other) and fix it by hand. Looping can be changed too
-- Tick 锁定水平位移 (lock horizontal motion) when a clip moves the character by itself
-- 加入为新人物 (add to roster), or go straight to 设为主角 (set as player character)
+- Tick Lock horizontal movement when a clip moves the character by itself
+- Add to Roster, or go straight to Set as Player character
 
 Missing motions are filled in like this. No run: the walk clip is sped up. No walk: the run clip is slowed down. No idle: the first frame of the walk. With no movement clip at all (static models included), the whole model bobs up and down as it moves.
 
@@ -77,9 +85,9 @@ A level made in the workshop only features the characters you ticked. Tick nobod
 `npm run dev:workshop` starts the game (port 5173) and the local workshop service (port 8790) together. The service listens on 127.0.0.1 only.
 
 - Before the first generation the model is loaded into VRAM. That usually takes a few seconds, and can take tens of seconds after a long idle period
-- You can stop a generation with 停止生成 (stop generating)
+- You can stop a generation with Stop generating
 - The preview shows which model was used, whether it passed first time or how many fixes it took, and whether the code adjusted anything
-- After the preview you choose 确认 (confirm), 改一句话重来 (edit the sentence and retry) or 放弃 (discard)
+- After the preview you choose Confirm, Change the sentence or Discard
 
 ### Settings
 

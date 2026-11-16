@@ -35,7 +35,7 @@ A one-minute intro video with Japanese captions: import a character, write a sen
 | ![Preview](docs/media/preview.jpg) | ![Level cleared](docs/media/clear.jpg) |
 | Preview first. Nothing is saved until you confirm | All gems collected |
 
-<sub>The game's interface is Chinese only for now. Japanese and English are on the way.</sub>
+<sub>The interface can be switched between English, Japanese and Chinese. The screenshots and the video above show the Chinese one.</sub>
 
 ## What it does
 
@@ -45,6 +45,7 @@ A one-minute intro video with Japanese captions: import a character, write a sen
 - **Level Workshop**: one sentence in, a level out. You choose who may appear and whether they can be a companion or a guard
 - **Save and replay**: confirmed levels stay in the browser, and replaying them needs no model
 - **Works without a model**: if Ollama isn't running, the workshop says why and offers a random level. The rest of the game is unaffected
+- **Three languages**: the interface comes in English, Japanese and Chinese. Switch on the start screen or in the pause menu
 
 ## How the Level Workshop works
 
@@ -89,7 +90,7 @@ ollama pull qwen3.5:9b-q4_K_M
 npm run dev:workshop
 ```
 
-Open http://127.0.0.1:5173 in a browser. Click 导入角色 (import character) and pick a GLB, then open 选关 (level select). The Level Workshop is on the right.
+Open http://127.0.0.1:5173 in a browser. Click Import character and pick a GLB, then open Levels. The Level Workshop is on the right.
 
 You can play without a character file (the default player is a blocky figure). To try the game without the model, `npm run dev` is enough.
 
@@ -97,7 +98,7 @@ Keys, import limits and the settings you can change are in [Playing and settings
 
 ## Known issues
 
-- The interface is Chinese only for now (Japanese and English are on the way)
+- Text written by the model (level title, opening, lines) doesn't follow the interface language yet. It comes out in Chinese
 - The workshop is meant to run locally and handles one request at a time
 - An unconfirmed preview lives in the service's memory, so restarting the service loses it and you have to generate again. Confirmed levels are not affected
 - To get past the rules, the model sometimes changes something you asked for explicitly (the "small map" case above). The preview shows how many fixes it took, so look before you save
