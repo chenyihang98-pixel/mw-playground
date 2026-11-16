@@ -276,8 +276,11 @@ export function startGameApp(scene: SceneApp, initial: LevelPackage, uiRoot: HTM
 
   // ---------- 关卡（P5）----------
   const savedLevels = new SavedLevels(new IndexedDbRosterStore(SAVED_LEVELS_DB));
-  // 切换语言会刷新页面：先等名册和已保存关卡排队的写入都做完（F6 第 1 轮审查后加上）
-  setBeforeLangSwitch(() => Promise.all([roster.whenIdle(), savedLevels.whenIdle()]));
+  // 切换语言会刷新页面：先等名册和已保存关卡的写入同时做完（F6 第 1、2 轮审查后）
+  setBeforeLangSwitch({
+    idle: () => !roster.saving && !savedLevels.saving,
+    waitIdle: () => Promise.all([roster.whenIdle(), savedLevels.whenIdle()]),
+  });
 
   const builtinKindOf = (pkg: LevelPackage) => builtinEntries().find((e) => pkg.key === `builtin:${e.id}`)?.kind;
 

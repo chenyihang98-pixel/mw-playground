@@ -3,12 +3,12 @@
 // 保存不下来时，切换改用地址里的 ?lang=（只对这次访问有效）。
 
 import { setLang } from './index';
-import { LANG_TAGS, detectLang, switchLangWith, type Lang } from './lang';
+import { LANG_TAGS, detectLang, switchLangWith, type Lang, type WriteQueues } from './lang';
 
 const storage = () => window.localStorage;
 
-/** 切换前要等的事；app 注册成“名册和已保存关卡排队的写入都做完”。 */
-let beforeSwitch: () => Promise<unknown> = () => Promise.resolve();
+/** 切换前要等它们同时空闲的写入队列；app 注册成名册和已保存关卡。 */
+let queues: WriteQueues = { idle: () => true, waitIdle: () => Promise.resolve() };
 
 /**
  * 按地址、保存的选择、浏览器语言决定当前语言，并设好根元素的 lang（字体跟着它选，见 ui/theme.css）。
@@ -21,18 +21,18 @@ export function startLang(): Lang {
   return lang;
 }
 
-/** 注册切换前要等的事（app.ts：名册和已保存关卡的 whenIdle）。 */
-export function setBeforeLangSwitch(wait: () => Promise<unknown>): void {
-  beforeSwitch = wait;
+/** 注册切换前要等的写入队列（app.ts：名册和已保存关卡）。 */
+export function setBeforeLangSwitch(writeQueues: WriteQueues): void {
+  queues = writeQueues;
 }
 
 /**
- * 切换语言：等名册和已保存关卡排队的写入做完，保存选择，去掉地址里的 ?lang=，刷新页面。
+ * 切换语言：等名册和已保存关卡的写入同时做完，保存选择，去掉地址里的 ?lang=，刷新页面。
  * 名册、已保存的关卡在 IndexedDB，静音设置在 localStorage，刷新后都还在。保存选择失败时改用 ?lang=。
  */
 export function switchLang(lang: Lang): Promise<void> {
   return switchLangWith(lang, {
-    wait: beforeSwitch,
+    queues,
     storage,
     href: () => window.location.href,
     assign: (url) => {

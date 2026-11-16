@@ -122,36 +122,50 @@ describe('语言的决定顺序', () => {
     expect(detectLang({ search: '?lang=zh', languages: [], storage: empty })).toBe('zh');
   });
 
-  it('切换：写入做完才刷新，出错照切，存不下用 ?lang=', async () => {
+  it('切换：两个队列同时空闲才刷新，出错照切，存不下用 ?lang=', async () => {
     const map = new Map<string, string>();
     const storage = () => ({
       setItem: (k: string, v: string) => {
         map.set(k, v);
       },
     });
-    let release: () => void = () => undefined;
-    const pending = new Promise<void>((resolve) => {
-      release = resolve;
-    });
+    // 两个写入队列，和 Roster、SavedLevels 一样：写入做完就从队列里去掉
+    const roster = new Set<Promise<unknown>>();
+    const levels = new Set<Promise<unknown>>();
+    const write = (queue: Set<Promise<unknown>>) => {
+      let done: () => void = () => undefined;
+      const p = new Promise<void>((resolve) => {
+        done = resolve;
+      });
+      queue.add(p);
+      void p.then(() => queue.delete(p));
+      return done;
+    };
+    const drain = async (queue: Set<Promise<unknown>>) => {
+      while (queue.size > 0) await Promise.allSettled([...queue]);
+    };
+    const queues = { idle: () => roster.size === 0 && levels.size === 0, waitIdle: () => Promise.all([drain(roster), drain(levels)]) };
+    const tick = () => new Promise((r) => setTimeout(r, 10));
+
+    // 名册空闲、关卡在写时开始切换；等的时候名册又有了新的写入（第 2 轮审查的交错）
+    const levelDone = write(levels);
     const assigned: string[] = [];
-    const switching = switchLangWith('ja', {
-      wait: () => pending,
-      storage,
-      href: () => 'http://127.0.0.1:5173/?level=test-a&lang=en',
-      assign: (url) => assigned.push(url),
-    });
-    await new Promise((r) => setTimeout(r, 20));
-    // 写入还没做完：没有保存选择，也没有刷新
+    const switching = switchLangWith('ja', { queues, storage, href: () => 'http://127.0.0.1:5173/?level=test-a&lang=en', assign: (url) => assigned.push(url) });
+    await tick();
+    const rosterDone = write(roster);
+    levelDone();
+    await tick();
     expect(assigned).toEqual([]);
     expect(map.size).toBe(0);
-    release();
+    rosterDone();
     await switching;
     expect(map.get(LANG_STORAGE_KEY)).toBe('ja');
     expect(assigned).toEqual(['http://127.0.0.1:5173/?level=test-a']);
 
     // 等的过程中出错：照样切换
     const failed: string[] = [];
-    await switchLangWith('en', { wait: () => Promise.reject(new Error('写入失败')), storage, href: () => 'http://127.0.0.1:5173/', assign: (url) => failed.push(url) });
+    const broken = { idle: () => false, waitIdle: () => Promise.reject(new Error('写入失败')) };
+    await switchLangWith('en', { queues: broken, storage, href: () => 'http://127.0.0.1:5173/', assign: (url) => failed.push(url) });
     expect(failed).toEqual(['http://127.0.0.1:5173/']);
 
     // 保存不下来：改用 ?lang=
@@ -159,7 +173,7 @@ describe('语言的决定顺序', () => {
     const denied = () => {
       throw new DOMException('denied', 'SecurityError');
     };
-    await switchLangWith('en', { wait: () => Promise.resolve(), storage: denied, href: () => 'http://127.0.0.1:5173/?level=test-a', assign: (url) => blocked.push(url) });
+    await switchLangWith('en', { queues, storage: denied, href: () => 'http://127.0.0.1:5173/?level=test-a', assign: (url) => blocked.push(url) });
     expect(blocked).toEqual(['http://127.0.0.1:5173/?level=test-a&lang=en']);
   });
 

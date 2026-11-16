@@ -372,14 +372,21 @@ test('名册写入没做完时在开始界面切换：刷新后改动还在', as
   expect((await read(page)).roster.entries.map((e) => [e.fileName, e.role, e.status])).toEqual([['friend.glb', 'companion', 'ready']]);
 });
 
-test('关卡写入没做完时在暂停菜单切换：刷新后这一关还在', async ({ page }) => {
+test('关卡写入没做完时在暂停菜单切换，等的时候又改了名册：刷新后都还在', async ({ page }) => {
   const zh = messagesOf('zh');
   await page.goto('/?level=test-a');
   await ready(page);
+  await page.locator('#import-file').setInputFiles(files['friend.glb'] ?? '');
+  await expect.poll(async () => (await read(page)).import.card?.fileName).toBe('friend.glb');
+  await page.getByRole('button', { name: zh['import.addPerson'], exact: true }).click();
+  await expect.poll(async () => (await read(page)).roster.saving).toBe(false);
+  await page.getByRole('button', { name: zh['common.close'], exact: true }).filter({ visible: true }).first().click();
   await page.getByRole('button', { name: zh['levels.choose'] }).filter({ visible: true }).first().click();
   await page.getByRole('button', { name: zh['levels.random'], exact: true }).filter({ visible: true }).click();
   await expect.poll(async () => (await read(page)).levels.select.random.kind, { timeout: 20_000 }).toBe('preview');
 
+  // 名册的仓库占得比关卡久：关卡写完时，等待中改的分工还没写完
+  await holdStore(page, 'mw-playground', 'roster', 6000);
   await holdStore(page, 'mw-playground-levels', 'levels', 2500);
   await page.getByRole('button', { name: zh['random.confirmLabel'], exact: true }).click();
   await expect.poll(async () => (await read(page)).levels.saved.length).toBe(1);
@@ -389,10 +396,18 @@ test('关卡写入没做完时在暂停菜单切换：刷新后这一关还在',
   await page.keyboard.press('Escape');
   await expect.poll(async () => (await read(page)).game.phase).toBe('paused');
 
-  await Promise.all([page.waitForEvent('load', { timeout: 20_000 }), page.locator('#pause-lang').selectOption('ja')]);
+  const load = page.waitForEvent('load', { timeout: 20_000 });
+  await page.locator('#pause-lang').selectOption('ja');
+  expect((await read(page)).roster.saving).toBe(false);
+  await page.locator('#roster-toggle').click();
+  await page.getByRole('combobox', { name: zh['roster.roleOf'].replace('{name}', 'friend.glb') }).selectOption('companion');
+  expect((await read(page)).roster.saving).toBe(true);
+  await load;
   await ready(page);
   await expect(page.locator('html')).toHaveAttribute('lang', 'ja');
-  expect((await read(page)).levels.saved.map((e) => [e.id, e.status])).toEqual([[savedId, 'ready']]);
+  const after = await read(page);
+  expect(after.levels.saved.map((e) => [e.id, e.status])).toEqual([[savedId, 'ready']]);
+  expect(after.roster.entries.map((e) => [e.fileName, e.role])).toEqual([['friend.glb', 'companion']]);
 });
 
 test('navigator.languages 为空时入口按 en，不看 navigator.language', async ({ page }) => {

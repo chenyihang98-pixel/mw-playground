@@ -152,6 +152,11 @@ export class Roster {
     while (this.pending.size > 0) await Promise.allSettled([...this.pending]);
   }
 
+  /** 还有没写完的写入（F6：切换语言前要等它和已保存关卡同时空闲）。 */
+  get saving(): boolean {
+    return this.pending.size > 0;
+  }
+
   // ---------- 查询 ----------
 
   private find(key: string): Entry | undefined {

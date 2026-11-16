@@ -73,9 +73,17 @@ export function detectLang(env: { readonly search: string; readonly languages: r
   return resolveLang({ search: env.search, stored: readStoredLang(env.storage), languages: env.languages });
 }
 
+/** 刷新前要等的写入队列（app 注册成名册和已保存关卡）。 */
+export interface WriteQueues {
+  /** 现在所有队列都空闲。 */
+  readonly idle: () => boolean;
+  /** 等现在排着的写入做完（等完以后可能又有新的，所以要再看 idle）。 */
+  readonly waitIdle: () => Promise<unknown>;
+}
+
 export interface SwitchDeps {
-  /** 刷新前要等的事：名册和已保存关卡排队的写入做完（第 1 轮审查后加上；等的过程中出错也照样切换）。 */
-  readonly wait: () => Promise<unknown>;
+  /** 刷新前要等它们同时空闲（第 1、2 轮审查后；等的过程中出错也照样切换）。 */
+  readonly queues: WriteQueues;
   readonly storage: () => Pick<Storage, 'setItem'>;
   /** 当前地址（等完以后再读）。 */
   readonly href: () => string;
@@ -84,12 +92,13 @@ export interface SwitchDeps {
 }
 
 /**
- * 切换语言：先等排队的写入做完，再保存选择，去掉地址里的 ?lang=（不然它会盖过保存的选择），然后刷新页面。
- * 保存不下来时改用 ?lang=（只对这次访问有效）。
+ * 切换语言：等所有写入队列同时空闲，再保存选择，去掉地址里的 ?lang=（不然它会盖过保存的选择），然后刷新页面。
+ * 等其中一个队列的时候，另一个可能又有了新的写入，所以每次等完都重新看一遍，直到同时空闲；看到空闲后同步地保存和刷新，
+ * 中间不会插进别的事件。保存不下来时改用 ?lang=（只对这次访问有效）。
  */
 export async function switchLangWith(lang: Lang, deps: SwitchDeps): Promise<void> {
   try {
-    await deps.wait();
+    while (!deps.queues.idle()) await deps.queues.waitIdle();
   } catch {
     // 写入失败另有提示；语言照样切换
   }

@@ -180,6 +180,11 @@ export class SavedLevels {
     while (this.pending.size > 0) await Promise.allSettled([...this.pending]);
   }
 
+  /** 还有没写完的写入（F6：切换语言前要等它和名册同时空闲）。 */
+  get saving(): boolean {
+    return this.pending.size > 0;
+  }
+
   get loading(): boolean {
     return this.loadingNow;
   }
